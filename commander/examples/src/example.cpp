@@ -87,7 +87,8 @@ COMMANDER_REGISTER(m)
     // the types are convertible to json.
     m.def("status", get_status, "Get the status");
 
-
+    // Here is an example of an input list that includes a struct. e.g.
+    // set_configuration [{"a":1,"b":2.0,"c":"three"},1]
     m.def("set_configuration", set_configuration, "Set the configuration");
 }
 

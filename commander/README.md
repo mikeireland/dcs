@@ -31,7 +31,8 @@ COMMANDER_REGISTER(m) {
 }
 ```
 
-Now, all you need is to compile the source file and run the executable with for instance the
+Now, all you need is to compile the source file including the library flag -lcommander, including
+the lib directory of this repository in the -L flag and run the executable with for instance the
 `commander::Server`:
 
 ```cpp
@@ -52,16 +53,21 @@ and use it as follow:
 
 ### Dependencies and Deployment:
 
-`commander` requires only a C++ compiler. To install the examples in the build directory,
-you just need:
+`commander` requires a C++ compiler compatible with C++11, and the 4 libraries: nlohmann_json/3.10.5, 
+cppzmq/4.8.1, boost/1.78.0 and fmt/8.1.1. These can be installed as Ubuntu packages using:
+
+```bash
+sudo apt-get install nlohmann-json3-dev libfmt-dev libzmq3-dev libboost-all-dev
+``` 
+
+To complile the library in the src directory, just type:
 
 ```bash
 make
 ```
 
 However, if you don't want to hack the Makefile for a new system, then you also need 
-autoconf and autotools. In this case, both making in the build directory and installing
-is:
+to help us install autoconf and autotools. In this case, we'll want something like:
 
 ```bash
 ./configure
