@@ -1,0 +1,4 @@
+sphinx==4.5.0
+breathe==4.33.1
+sphinx-rtd-theme==1.0.0
+sphinx_rtd_dark_mode==1.2.4

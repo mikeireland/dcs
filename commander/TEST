@@ -1,0 +1,9 @@
+Needs:
+
+'nlohmann_json/3.10.5' (for json)
+
+'cppzmq/4.8.1' (for zmq, but is just zeromq enough)
+
+'boost/1.78.0' (for command line options - TO REMOVE)
+
+'fmt/8.1.1' (for easy string formatting)
