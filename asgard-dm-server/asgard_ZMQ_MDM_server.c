@@ -362,6 +362,8 @@ int main() {
 	cmdOK = 1;
 	if (allocated == 0) {
 	  printf("set the desired number of channels\n");
+	  zmq_send(responder, "ERR", 3, 0);
+	  sprintf(status, "%s", "nosetup");
 	}
 	else {
 	  if (keepgoing == 0) {
