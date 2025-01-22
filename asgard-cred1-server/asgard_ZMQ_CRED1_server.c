@@ -199,66 +199,66 @@ int shm_setup(CREDSTRUCT* camconf) {
   return 0;
 }
 
-/* /\* ========================================================================= */
-/*  *                      read pdv command line response */
-/*  * ========================================================================= *\/ */
-/* int read_pdv_cli(EdtDev *ed, char *outbuf) { */
-/*   int     ret = 0; */
-/*   u_char  lastbyte, waitc; */
-/*   int     length=0; */
+/* =========================================================================
+ *                      read pdv command line response
+ * ========================================================================= */
+int read_pdv_cli(EdtDev *ed, char *outbuf) {
+  int     ret = 0;
+  u_char  lastbyte, waitc;
+  int     length=0;
   
-/*   outbuf[0] = '\0'; */
-/*   do { */
-/*     ret = pdv_serial_read(ed, buf, SERBUFSIZE); */
-/*     if (verbose) */
-/*       printf("read returned %d\n", ret); */
+  outbuf[0] = '\0';
+  do {
+    ret = pdv_serial_read(ed, buf, SERBUFSIZE);
+    if (verbose)
+      printf("read returned %d\n", ret);
 	
-/*     if (*buf) */
-/*       lastbyte = (u_char)buf[strlen(buf)-1]; */
+    if (*buf)
+      lastbyte = (u_char)buf[strlen(buf)-1];
 	
-/*     if (ret != 0) { */
-/*       buf[ret + 1] = 0; */
-/*       strcat(outbuf, buf); */
-/*       length += ret; */
-/*     } */
+    if (ret != 0) {
+      buf[ret + 1] = 0;
+      strcat(outbuf, buf);
+      length += ret;
+    }
 	
-/*     if (ed->devid == PDVFOI_ID) */
-/*       ret = pdv_serial_wait(ed, 500, 0); */
-/*     else if (pdv_get_waitchar(ed, &waitc) && (lastbyte == waitc)) */
-/*       ret = 0; /\* jump out if waitchar is enabled/received *\/ */
-/*     else ret = pdv_serial_wait(ed, 500, 64); */
-/*   } while (ret > 0); */
-/* } */
+    if (ed->devid == PDVFOI_ID)
+      ret = pdv_serial_wait(ed, 500, 0);
+    else if (pdv_get_waitchar(ed, &waitc) && (lastbyte == waitc))
+      ret = 0; /* jump out if waitchar is enabled/received */
+    else ret = pdv_serial_wait(ed, 500, 64);
+  } while (ret > 0);
+}
 
-/* /\* ========================================================================= */
-/*  *                    generic send a camera CLI command */
-/*  * ========================================================================= *\/ */
-/* int camera_command(EdtDev *ed, const char *cmd) { */
-/*   char tmpbuf[SERBUFSIZE]; */
-/*   char outbuf[2000]; */
+/* =========================================================================
+ *                    generic send a camera CLI command
+ * ========================================================================= */
+int camera_command(EdtDev *ed, const char *cmd) {
+  char tmpbuf[SERBUFSIZE];
+  char outbuf[2000];
 
-/*   read_pdv_cli(ed, outbuf); // flush */
-/*   sprintf(tmpbuf, "%s\r", cmd); */
-/*   pdv_serial_command(ed, tmpbuf); */
-/*   if (verbose) */
-/*     printf("command: %s", tmpbuf); */
-/*   return 0; */
-/* } */
+  read_pdv_cli(ed, outbuf); // flush
+  sprintf(tmpbuf, "%s\r", cmd);
+  pdv_serial_command(ed, tmpbuf);
+  if (verbose)
+    printf("command: %s", tmpbuf);
+  return 0;
+}
 
-/* /\* ========================================================================= */
-/*  *                 generic camera CLI query (expects float) */
-/*  * ========================================================================= *\/ */
-/* float server_query_float(EdtDev *ed, const char *cmd) { */
-/*   char outbuf[2000]; */
-/*   float fval; */
+/* =========================================================================
+ *                 generic camera CLI query (expects float)
+ * ========================================================================= */
+float server_query_float(EdtDev *ed, const char *cmd) {
+  char outbuf[2000];
+  float fval;
 
-/*   server_command(ed, cmd); */
-/*   usleep(100000); // why this much? to be adjusted! */
-/*   read_pdv_cli(ed, outbuf); */
-/*   sscanf(outbuf, "%f", &fval); */
+  server_command(ed, cmd);
+  usleep(100000); // why this much? to be adjusted!
+  read_pdv_cli(ed, outbuf);
+  sscanf(outbuf, "%f", &fval);
 
-/*   return fval; */
-/* } */
+  return fval;
+}
 
 /* =========================================================================
  *                     Camera image fetching thread
