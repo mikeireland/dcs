@@ -32,7 +32,7 @@
 // #include <ImageStruct.h>    // libImageStreamIO header
 #include <ImageStreamIO.h>  // libImageStreamIO header
 
-// #include <edtinc.h>         // EDT-PCI board API
+#include <edtinc.h>         // EDT-PCI board API
 
 
 /* =========================================================================
@@ -40,7 +40,7 @@
  * ========================================================================= */
 typedef struct {		
   int FGchannel;          // frame grabber channel 
-  int width, height, depth;
+  uint32_t width, height, depth;
   int timeout;
   char cameratype[16];
   float tint;             // integration time for each read	
@@ -71,29 +71,32 @@ typedef struct {
  *                           function prototypes
  * ========================================================================= */
 void *fetch_imgs();
-int init_cam_configuration(CREDSTRUCT *camconf);
-int shm_setup(CREDSTRUCT *camconf);
-int read_pdv_cli(EdtDev *ed, char *outbuf);
-int camera_command(EdtDev *ed, const char *cmd);
-float camera_query_float(EdtDev *ed, const char *cmd);
+int init_cam_configuration();
+void shm_setup();
+int read_pdv_cli(EdtDev ed, char *outbuf);
+int camera_command(EdtDev ed, const char *cmd);
+float camera_query_float(EdtDev ed, const char *cmd);
 int processing_cli_commands(char* cmd);
 
 /* =========================================================================
  *                            Global variables
  * ========================================================================= */
+#define SERBUFSIZE 512
 #define LINESIZE 256
-#define CMDSIZE 200
+#define CMDSIZE 50   // max ZMQ command size
 #define OUTSIZE 200  // not sure a dedicated constant is warranted, but...
 
-int simmode = 1;   // flag to set to "1" to *not* connect to the board!
-int verbose = 0;   // flag to output messages in shell
-int baud = 115200; // serial connexion baud rate
-EdtDev *ed;        // handle for the serial connexion to camera CLI
-PdvDev *pdv_p;     // handle for data camera link
+static char buf[SERBUFSIZE];
 
-int unit = 0, channel = 0;
+int simmode = 1;     // flag to set to "1" to *not* connect to the board!
+int verbose = 0;     // flag to output messages in shell
+int baud = 115200;   // serial connexion baud rate
+EdtDev ed = NULL;    // handle for the serial connexion to camera CLI
+PdvDev pdv_p = NULL; // handle for data camera link
 
-IMAGE *imarray = NULL;    // shared memory img pointer
+int unit = 0;
+
+IMAGE *shm_img = NULL;    // shared memory img pointer
 int width, height, depth; // frame info from camera link
 char *cameratype;         // from camera link
 int keepgoing = 0;        // flag to control the image fetching loop
@@ -105,65 +108,33 @@ char dashline[80] =
 
 
 /* =========================================================================
- *       Open the serial CLI and the data-link communication channels
- * ========================================================================= */
-
-// ----- start with the serial CLI -----
-ed = pdv_open_channel(EDT_INTERFACE, unit, channel);
-if (ed == NULL) {
-  pdv_perror(EDT_INTERFACE);
-  return -1;
- }
-printf("device name is: %s\n", ed->edt_devname);
-pdv_set_baud(ed, baud);
-printf("serial timeout: %d\n", ed->dd_p->serial_timeout);
-
-// ----- and then, the data-link -----
-pdv_p = pdv_open_channel(EDT_INTERFACE, unit, channel);
-if (pdv_p == NULL) {
-  sprintf(errstr, "pdv_open_channel(%s%d_%d)", edt_devname, unit, channel);
-  pdv_perror(errstr);
-  return (1);
- }
-pdv_flush_fifo(pdv_p);
-  
-
-/* =========================================================================
  *             initializes internal camera configuration data structure
  * by getting info from the data link?
  * ========================================================================= */
-int init_cam_configuration(CREDSTRUCT *camconf) {
+int init_cam_configuration() {
   camconf = (CREDSTRUCT*) malloc(sizeof(CREDSTRUCT));
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
 
-  // shot in the dark here: I'm not sure the cameralink can know its size without
-  // having been told first. The size information may need to be recovered from
-  // serial CLI queries
-
   printf("\n%s", dashline);
-  printf("Querying the data-link first...\n\n");
-  printf("\n%s", dashline);
-  camconf->width = pdv_get_width(pdv_p);
-  camconf->height = pdv_get_height(pdv_p);
+  camconf->width = (uint32_t) pdv_get_width(pdv_p);
+  camconf->height = (uint32_t) pdv_get_height(pdv_p);
   camconf->depth = pdv_get_depth(pdv_p);
 
-  camconf->timeout = pdv_get_timeout(pdv_p);
-  sprintf(camconf->cameratype, "%s", pdv_get_cameratype(pdv_p));
+  camconf->timeout = pdv_serial_get_timeout(ed);
+  sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
   
-  printf("image size  : %d x %d\n", width, height);
-  printf("Timeout     : %d\n", timeout);
-  printf("Camera type : %s\n", cameratype);
+  printf("image size  : %d x %d\n", camconf->width, camconf->height);
+  printf("Timeout     : %d\n", camconf->timeout);
+  printf("Camera type : %s\n", camconf->cameratype);
 
-  printf("\n%s", dashline);
-  printf("Querying the serial CLI then\n\n");
   printf("\n%s", dashline);
 
   sprintf(cmd_cli, "status raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
-  sprintf("status = %s\n", out_cli);
-  printf("\n%s", dashline);  
+  printf("status = %s\n", out_cli);
+  return 0;
 }
 
 /* =========================================================================
@@ -171,7 +142,7 @@ int init_cam_configuration(CREDSTRUCT *camconf) {
  * 
  * Parameters: (xsz, ysz) the total (x, y) camera readout dimensions
  * ========================================================================= */
-int shm_setup(CREDSTRUCT* camconf) {
+void shm_setup() {
   int NBIMG = 1;
   int shared = 1;
   int NBkw = 10;
@@ -181,28 +152,31 @@ int shm_setup(CREDSTRUCT* camconf) {
   char shmname[20];
 
   imsize = (uint32_t *) malloc(sizeof(uint32_t) * naxis);
-  imsize[0] = camconf->width;
-  imsize[1] = camconf->height;
 
-  if (imarray != NULL) {
-    ImageStreamIO_destroyIm(imarray);
-    free(imarray);
-    imarray = NULL;
+  // WHY is this the source of a bug ??? !!!
+  // printf("width = %d\n", camconf->width);
+  imsize[0] = 640; // camconf->width;
+  imsize[1] = 512; // camconf->height;
+
+
+  if (shm_img != NULL) {
+    ImageStreamIO_destroyIm(shm_img);
+    free(shm_img);
+    shm_img = NULL;
   }
-  imarray = (IMAGE*) malloc(sizeof(IMAGE) * NBIMG);
+  shm_img = (IMAGE*) malloc(sizeof(IMAGE) * NBIMG);
   sprintf(shmname, "%s", "cred1"); // root-name of the shm
-  ImageStreamIO_createIm_gpu(imarray, shmname, naxis, imsize, atype, -1,
+  ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
   free(imsize);
 
   // =========================== add keywords ==============================
-  return 0;
 }
 
 /* =========================================================================
  *                      read pdv command line response
  * ========================================================================= */
-int read_pdv_cli(EdtDev *ed, char *outbuf) {
+int read_pdv_cli(EdtDev ed, char *outbuf) {
   int     ret = 0;
   u_char  lastbyte, waitc;
   int     length=0;
@@ -221,19 +195,25 @@ int read_pdv_cli(EdtDev *ed, char *outbuf) {
       strcat(outbuf, buf);
       length += ret;
     }
-	
-    if (ed->devid == PDVFOI_ID)
+    
+    if (pdv_serial_get_waitchar(ed, &waitc) && (lastbyte == waitc))
+      ret = 0;  // Jump out if 'waitchar' is enabled or received.
+    else
+      ret = pdv_serial_wait(ed, 500, 64);
+    
+    /*if (ed->devid == PDVFOI_ID)
       ret = pdv_serial_wait(ed, 500, 0);
-    else if (pdv_get_waitchar(ed, &waitc) && (lastbyte == waitc))
-      ret = 0; /* jump out if waitchar is enabled/received */
-    else ret = pdv_serial_wait(ed, 500, 64);
+    else if (pdv_serial_get_waitchar(ed, &waitc) && (lastbyte == waitc))
+      ret = 0; // jump out if waitchar is enabled/received
+    else ret = pdv_serial_wait(ed, 500, 64);*/
   } while (ret > 0);
+  return 0;
 }
 
 /* =========================================================================
  *                    generic send a camera CLI command
  * ========================================================================= */
-int camera_command(EdtDev *ed, const char *cmd) {
+int camera_command(EdtDev ed, const char *cmd) {
   char tmpbuf[SERBUFSIZE];
   char outbuf[2000];
 
@@ -248,11 +228,11 @@ int camera_command(EdtDev *ed, const char *cmd) {
 /* =========================================================================
  *                 generic camera CLI query (expects float)
  * ========================================================================= */
-float server_query_float(EdtDev *ed, const char *cmd) {
+float camera_query_float(EdtDev ed, const char *cmd) {
   char outbuf[2000];
   float fval;
 
-  server_command(ed, cmd);
+  camera_command(ed, cmd);
   usleep(100000); // why this much? to be adjusted!
   read_pdv_cli(ed, outbuf);
   sscanf(outbuf, "%f", &fval);
@@ -265,8 +245,17 @@ float server_query_float(EdtDev *ed, const char *cmd) {
  * ========================================================================= */
 void* fetch_imgs() {
   int ii = 0;
-  int overrun = 0, overruns = 0;
-  int timeout, timeouts, last_timeouts = 0;
+  uint8_t *image_p = NULL;
+  int width, height, nbpix;
+  unsigned short int *imageushort;
+  int numbufs = 4;
+  
+  width = camconf->width;
+  height = camconf->height;
+  nbpix = width * height;
+  
+  // int overrun = 0, overruns = 0;
+  // int timeout, timeouts, last_timeouts = 0;
   
   // =====================================
   /* Set up higher priority to the attached process?
@@ -291,10 +280,23 @@ void* fetch_imgs() {
   */
   // =====================================
 
+  pdv_multibuf(pdv_p, numbufs);
+
+  pdv_start_images(pdv_p, numbufs);
+  
   // ----- image fetching loop starts here -----
   while (keepgoing > 0) {
+    image_p = pdv_wait_images(pdv_p, 1);
+    imageushort = (unsigned short *) image_p;
+    shm_img->md->write = 1; // signaling about to write
+    /* for (ii = 0; ii < nbpix; ii++) { */
+    /*   shm_img->array.UI16[ii] = imageushort[ii]; */
+    /* } */
+    memcpy(&shm_img->array.UI16[0], (unsigned short *) image_p,
+	   sizeof(unsigned short) * nbpix);
+    shm_img->md->write = 0; // signaling done writing
+    
     ii += 1;
-    sleep(0.01);
     printf("\rcntr = %5d", ii);
     fflush(stdout);
   }
@@ -306,6 +308,7 @@ void* fetch_imgs() {
  *                      Processing of FLI's CLI commands
  * ========================================================================= */
 int processing_cli_commands(char* cmd) {
+  char out_cli[OUTSIZE];  // holder for CLI responses  
   printf("FLI CLI >> %s\n", cmd);
 
   /* -----------------------------------------------------
@@ -313,6 +316,9 @@ int processing_cli_commands(char* cmd) {
 
 
      ----------------------------------------------------- */
+  camera_command(ed, cmd);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
   return 0;
 }
 
@@ -322,11 +328,33 @@ int processing_cli_commands(char* cmd) {
 int main() {
   char cmdstring[CMDSIZE]; // holder for commands sent to this program
   char serialcmd[CMDSIZE]; // holder for commands sent to the camera CLI
+  char errstr[2*CMDSIZE];
+  char edt_devname[CMDSIZE];
   int cmdOK = 0;
   int res = 0;
   pthread_t tid_fetch; // thread ID for the image fetching to SHM
 
-  // ----- ZMQ setup specifics -----
+  // ----- start with the serial CLI -----
+  ed = pdv_open(EDT_INTERFACE, unit);
+  if (ed == NULL) {
+    edt_msg_perror(EDTAPP_MSG_WARNING, EDT_INTERFACE);
+    return -1;
+  }
+  
+  pdv_serial_read_enable(ed);
+  pdv_serial_set_baud(ed, baud);
+    
+  // ----- and then, the data-link -----
+  pdv_p = pdv_open(EDT_INTERFACE, unit);
+  strcpy(edt_devname, EDT_INTERFACE);
+  if (pdv_p == NULL) {
+    sprintf(errstr, "pdv_open(%s, %d)", edt_devname, unit);
+    edt_msg_perror(EDTAPP_MSG_WARNING, errstr);
+    return (1);
+  }
+  pdv_flush_fifo(pdv_p);
+
+// ----- ZMQ setup specifics -----
   int server_port = 6667;  // ZMQ server port number
   char address[15];        // to construct full ZMQ server TCP address
   char status[8] = "idle"; // to answer ZMQ status queries
@@ -337,8 +365,9 @@ int main() {
   int rc = zmq_bind(responder, address);
   assert(rc == 0);
 
-  init_cam_configuration(camconf);
-  shm_setup(camconf);
+  init_cam_configuration();
+
+  //printf("shm_img naxis = %d\n", shm_img->naxis);
 
   // --------------------- set-up the prompt --------------------
   
@@ -358,10 +387,13 @@ int main() {
   printf("ZMQ MDM driver server on port # %4d !\n", server_port);
   printf("%s", dashline);
 
+  shm_setup();
+  
   // ------------------ start the command line ------------------
   for (;;) {
     cmdOK = 0; // ready to accept a new command
-    zmq_recv(responder, cmdstring, 10, 0); // received a command!
+    memset(cmdstring, ' ', CMDSIZE);
+    zmq_recv(responder, cmdstring, CMDSIZE, 0); // received a command!
 
     // -------------- process the ZMQ commands ------------------
 
@@ -370,7 +402,8 @@ int main() {
     if (cmdOK == 0)
       if (strncmp(cmdstring, "!", 1) == 0) {
 	cmdOK = 1;
-	memmove(serialcmd, cmdstring + 1, strlen(cmdstring) - 1);
+	memmove(serialcmd, cmdstring + 1, strlen(cmdstring)-1);
+	printf("before processing, cmd = %s\n", serialcmd);
 	res = processing_cli_commands(serialcmd);
 	if (res == 0)
 	  zmq_send(responder, "OK", 2, 0);
@@ -422,10 +455,10 @@ int main() {
       if (strncmp(cmdstring, "quit", strlen("quit")) == 0) {
 	cmdOK = 1;
 
-	if (imarray != NULL) {
-	  ImageStreamIO_destroyIm(imarray);
-	  free(imarray);
-	  imarray = NULL;
+	if (shm_img != NULL) {
+	  ImageStreamIO_destroyIm(shm_img);
+	  free(shm_img);
+	  shm_img = NULL;
 	}
 	
 	zmq_send(responder, "BYE!", 4, 0);

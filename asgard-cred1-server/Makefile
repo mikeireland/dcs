@@ -19,6 +19,10 @@ endif
 # CFLAGS  += -I $(BMC_INCDIR)
 # LDFLAGS += -L $(BMC_LIBDIR) -lBMC -lBMC_PCIeAPI -lBMC_USBAPI
 
+# adding the PCI EDT specific compilation options
+CFLAGS  += -I /opt/EDTpdv
+LDFLAGS += -L /opt/EDTpdv -lpdv
+
 # the makefile instructions
 
 all: $(EXEC)
