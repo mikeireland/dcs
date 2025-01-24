@@ -153,11 +153,8 @@ void shm_setup() {
 
   imsize = (uint32_t *) malloc(sizeof(uint32_t) * naxis);
 
-  // WHY is this the source of a bug ??? !!!
-  // printf("width = %d\n", camconf->width);
-  imsize[0] = 640; // camconf->width;
-  imsize[1] = 512; // camconf->height;
-
+  imsize[0] = camconf->width;
+  imsize[1] = camconf->height;
 
   if (shm_img != NULL) {
     ImageStreamIO_destroyIm(shm_img);
@@ -244,19 +241,17 @@ float camera_query_float(EdtDev ed, const char *cmd) {
  *                     Camera image fetching thread
  * ========================================================================= */
 void* fetch_imgs() {
-  int ii = 0;
   uint8_t *image_p = NULL;
   int width, height, nbpix;
-  unsigned short int *imageushort;
-  int numbufs = 4;
+  // unsigned short int *imageushort;
+  int numbufs = 256;
+  bool timeoutrecovery = false;
+  int timeouts;
   
   width = camconf->width;
   height = camconf->height;
   nbpix = width * height;
-  
-  // int overrun = 0, overruns = 0;
-  // int timeout, timeouts, last_timeouts = 0;
-  
+    
   // =====================================
   /* Set up higher priority to the attached process?
 
@@ -279,26 +274,40 @@ void* fetch_imgs() {
 #endif
   */
   // =====================================
-
-  pdv_multibuf(pdv_p, numbufs);
-
-  pdv_start_images(pdv_p, numbufs);
+  
   
   // ----- image fetching loop starts here -----
+
   while (keepgoing > 0) {
-    image_p = pdv_wait_images(pdv_p, 1);
-    imageushort = (unsigned short *) image_p;
-    shm_img->md->write = 1; // signaling about to write
-    /* for (ii = 0; ii < nbpix; ii++) { */
-    /*   shm_img->array.UI16[ii] = imageushort[ii]; */
-    /* } */
-    memcpy(&shm_img->array.UI16[0], (unsigned short *) image_p,
-	   sizeof(unsigned short) * nbpix);
-    shm_img->md->write = 0; // signaling done writing
-    
-    ii += 1;
-    printf("\rcntr = %5d", ii);
-    fflush(stdout);
+    pdv_timeout_restart(pdv_p, true);
+    pdv_flush_fifo(pdv_p);
+    pdv_multibuf(pdv_p, numbufs);
+    pdv_start_images(pdv_p, numbufs);
+    timeoutrecovery = false;
+
+    while (!timeoutrecovery) {
+      image_p = pdv_wait_images(pdv_p, 1);
+      pdv_start_images(pdv_p, numbufs);
+
+      shm_img->md->write = 1;              // signaling about to write
+      memcpy(shm_img->array.UI16,          // copy image to shared memory
+	     (unsigned short *) image_p,
+	     sizeof(unsigned short) * nbpix);
+      shm_img->md->write = 0;              // signaling done writing
+      ImageStreamIO_sempost(shm_img, -1);  // post semaphores
+      shm_img->md->cnt0++;                 // increment internal counter
+      shm_img->md->cnt1++;                 // idem
+
+      printf("\rcntr = %10ld", shm_img->md->cnt0);
+      fflush(stdout);
+
+      timeouts = pdv_timeouts(pdv_p);
+      if (timeouts > 0)
+	timeoutrecovery = true;
+
+      if (keepgoing == 0)
+	break;
+    }
   }
   printf("\nFetching stopped\n");
   return NULL;
@@ -314,7 +323,11 @@ int processing_cli_commands(char* cmd) {
   /* -----------------------------------------------------
      Take care of the commands sent to the camera
 
+     I'm not going to bother here for now. Mike will do
+     things the "commander" way.
 
+     At the moment, this just prints the CLI output to the
+     terminal
      ----------------------------------------------------- */
   camera_command(ed, cmd);
   read_pdv_cli(ed, out_cli);
