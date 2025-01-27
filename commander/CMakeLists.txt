@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(commander
     src/registry.cpp
     src/server.cpp
+    src/module.cpp
     src/server/interactive.cpp
     src/server/single_command.cpp
     src/server/socket.cpp
