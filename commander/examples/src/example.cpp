@@ -74,11 +74,15 @@ void overloaded_function(float f) {
     fmt::print("float: {}\n", f);
 }
 
+namespace co = commander;
+
 COMMANDER_REGISTER(m)
 {
+    using namespace co::literals;
+
     // You can register a function or any other callable object as
     // long as the signature is deductible from the type.
-    m.def("add", add, "A function that adds two numbers");
+    m.def("add", add, "A function that adds two numbers", "i"_arg, "j"_arg = 42);
 
     // You still can register an overloaded function by providing the signature as shown below.
     m.def("overloaded_function", static_cast<void (*)(int)>(overloaded_function), "An overloaded function");

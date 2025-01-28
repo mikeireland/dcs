@@ -1,87 +1,17 @@
-#ifndef COMMANDER_MODULE_H
-#define COMMANDER_MODULE_H
+#pragma once
 
+#include <commander/argument.h>
 #include <commander/function_parser.h>
 #include <commander/registry.h>
 
 #include <boost/range/adaptors.hpp>
 
-#include <fmt/core.h>
+#include <nlohmann/json.hpp>
 
-#include <string>
+#include <fmt/core.h>
 #include <unordered_map>
 
-namespace commander
-{
 
-    struct Argument
-    {
-        std::string name;
-        std::string description;
-        // std::string type;
-        // std::string default_value;
-    };
-
-    struct Command
-    {
-        std::string description;
-
-        // std::vector<Argument> arguments;
-
-        // std::vector<std::string> arg_names() {
-        //     std::vector<std::string> names;
-        //     for (auto &arg : arguments) {
-        //         names.push_back(arg.name);
-        //     }
-        //     return names;
-        // }
-    };
-
-}
-
-// template <> struct fmt::formatter<commander::Argument> {
-
-//   constexpr auto parse(format_parse_context& ctx) -> decltype(ctx.begin()) {
-//     // Parse the presentation format and store it in the formatter:
-//     auto it = ctx.begin(), end = ctx.end();
-
-//     // Check if reached the end of the range:
-//     // if (it != end && *it != '}') throw fmt::format_error("invalid format");
-
-//     // Return an iterator past the end of the parsed range:
-//     return it;
-//   }
-
-//   // Formats the point p using the parsed format specification (presentation)
-//   // stored in this formatter.
-//   template <typename FormatContext>
-//   auto format(const commander::Command& cmd, FormatContext& ctx) -> decltype(ctx.out()) {
-//     // ctx.out() is an output iterator to write to.
-//     return format_to(ctx.out(), "{}", cmd.description);
-//   }
-// };
-
-template <> struct fmt::formatter<commander::Command> {
-
-  constexpr auto parse(format_parse_context& ctx) -> decltype(ctx.begin()) {
-    // Parse the presentation format and store it in the formatter:
-    auto it = ctx.begin(), end = ctx.end();
-
-    // Check if reached the end of the range:
-    // if (it != end && *it != '}') throw fmt::format_error("invalid format");
-
-    // Return an iterator past the end of the parsed range:
-    return it;
-  }
-
-  // Formats the point p using the parsed format specification (presentation)
-  // stored in this formatter.
-  template <typename FormatContext>
-  auto format(const commander::Command& cmd, FormatContext& ctx) -> decltype(ctx.out()) {
-    // ctx.out() is an output iterator to write to.
-    return format_to(ctx.out(), "{}", cmd.description);
-  }
-};
 
 namespace commander
 {
@@ -99,16 +29,16 @@ namespace commander
     struct ModuleObject
     {
         Module& module_;
-        std::string prefix;
+        string prefix;
         In in;
 
         template<typename Fn, typename... Args>
-        ModuleObject& def(const std::string& name, Fn&& fn, const std::string& description = "", Args&&... args);
+        ModuleObject& def(const string& name, Fn&& fn, const string& description = "", Args&&... args);
 
     };
 
     template<typename In>
-    ModuleObject(Module&, std::string, In) -> ModuleObject<In>;
+    ModuleObject(Module&, string, In) -> ModuleObject<In>;
 
     /**
      * @brief Struct for registering commands.
@@ -127,44 +57,39 @@ namespace commander
     {
 
         /// @brief A hash map of all commands
-        std::unordered_map<std::string, json_function> functions;
+        std::unordered_map<string, json_function> functions;
         /// @brief A hash map of all arguments
-        std::unordered_map<std::string, Command> commands;
+        std::unordered_map<string, Command> commands;
 
-        Module():
-            functions(),
-            commands()
-        {
-            register_functions(*this);
+        Module();
 
-            def("help", [this]() {
-                return get_help();
-            });
-            def("command_names", [this]() {
-                return command_names();
-            });
-            def("description", [this](std::string name) {
-                return description(name);
-            });
-        }
+        /**
+         * @brief Get the help message.
+         *
+         * @return string The help message.
+         */
+        string get_help() const;
 
-        std::string get_help() const {
-            std::string help;
-            for (auto& [name, cmd]: commands)
-                help = fmt::format("{}{}: {}\n", help, name, cmd);
-            return help;
-        }
+        /**
+         * @brief Get all command names.
+         *
+         * @return std::vector<string> A vector of all command names.
+         */
+        vector<string> command_names() const;
 
-        std::vector<std::string> command_names() const {
-            std::vector<std::string> names; names.reserve(commands.size());
-            for(auto& e : commands | boost::adaptors::map_keys)
-                names.push_back(e);
-            return names;
-        }
+        /**
+         * @brief Get the description of a command.
+         *
+         * @param name The name of the command.
+         * @return string The description of the command.
+         */
+        string description(const string& name) const;
 
-        std::string description(const std::string& name) {
-            return commands.at(name).description;
-        }
+        json signature(const string& name) const;
+
+        json arguments(const string& name) const;
+
+        json return_type(const string& name) const;
 
         /**
          * @brief Register a function.
@@ -185,18 +110,21 @@ namespace commander
          * @return Module& A reference to the current module.
          */
         template<typename Fn, typename... Args>
-        Module& def(const std::string& name, Fn&& fn, const std::string &description = "", Args&&... args)
+        Module& def(const string& name, Fn&& fn, const string &description = "", Args&&... args)
         {
             Command command{description}; //, parse_args(fn, std::forward<Args>(args)...)};
 
-            functions.emplace(name, parse(std::forward<Fn>(fn)));
+            // Adds all arguments to the command
+            (command.arguments.push_back(args), ...);
+
+            functions.emplace(name, parse(std::forward<Fn>(fn), command));
             commands.emplace(name, command);
 
             return *this;
         }
 
         template<typename T>
-        auto instance(std::string name)
+        auto instance(string name)
         {
             auto static_instance = []() -> T& {
                 static T instance;
@@ -206,35 +134,29 @@ namespace commander
         }
 
         template<typename Instance>
-        auto instance(std::string name, Instance&& instance)
+        auto instance(string name, Instance&& instance)
         {
             return ModuleObject{*this, name, instance};
         }
 
-        json execute(const std::string& name, const json& args)
-        {
-            try {
-                return functions.at(name)(args);
-            } catch (const std::exception& e) {
-                return json{{"error", e.what()}};
-            }
-        }
+        json execute(const string& name, const json& args);
     };
 
     template<typename Instance>
     template<typename Fn, typename... Args>
-    ModuleObject<Instance>& ModuleObject<Instance>::def(const std::string& name, Fn&& fn, const std::string& description, Args&&... args)
+    ModuleObject<Instance>& ModuleObject<Instance>::def(const string& name, Fn&& fn, const string& description, Args&&... args)
     {
         Command command{description}; //, parse_args(fn, std::forward<Args>(args)...)};
 
+        // Adds all arguments to the command
+        (command.arguments.push_back(args), ...);
+
         auto full_name = fmt::format("{}.{}", prefix, name);
 
-        module_.functions.emplace(full_name, parse(std::forward<Fn>(fn), in));
+        module_.functions.emplace(full_name, parse(std::forward<Fn>(fn), in, command));
         module_.commands.emplace(full_name, command);
 
         return *this;
     }
 
 } // namespace commander
-
-#endif //COMMANDER_MODULE_H

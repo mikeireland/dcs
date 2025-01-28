@@ -7,8 +7,6 @@ all: $(BIN)
 
 %: %.cpp
 	$(CC) -o $@ $< $(CFLAGS) $(LFLAGS)
-	
+
 clean:
 	rm -f $(BIN)
-	
-

@@ -1,6 +1,7 @@
 #include <commander/server/interactive.h>
 
 #include <fmt/core.h>
+#include <fmt/ranges.h>
 #include <iostream>
 
 namespace commander::server
@@ -25,16 +26,28 @@ namespace commander::server
             std::string name;
             json args;
 
-            if (pos == std::string::npos)
-                name = command;
-            else
-            {
-                name = command.substr(0, pos);
-                args = json::parse(command.substr(pos + 1));
-            }
+            try {
 
-            auto res = module_.execute(name, args);
-            fmt::print("{}\n> ", res.dump());
+
+                if (pos == std::string::npos)
+                    name = command;
+                else
+                {
+                    name = command.substr(0, pos);
+                    command = fmt::format("[{}]", command.substr(pos + 1));
+                    args = json::parse(command);
+                }
+
+                auto json = module_.execute(name, args);
+
+                if (json.is_string())
+                    fmt::print("{}\n> ", json.get<string>());
+                else
+                    fmt::print("{}\n> ", json.dump());
+
+            } catch (const std::exception& e) {
+                fmt::print("Error: {}\n> ", e.what());
+            }
         }
     }
 
