@@ -8,7 +8,11 @@ all: $(OBJ)
 %.o: %.cpp
 	$(CC) -c -o $@ $< $(CFLAGS)
 
+install:
+	cp ../../lib/libcommander.a /usr/local/lib
+	cp -r ../include/commander /usr/local/include
+
 clean:
 	rm -f *.o
 	rm -f server/*.o
-	rm -f clieng/*.o
+	rm -f client/*.o

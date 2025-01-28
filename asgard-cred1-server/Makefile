@@ -1,11 +1,13 @@
-CC=gcc
+CC=g++
 
 # FYI: it turns out that the order in which the libraries are linked matters!
-# they probably are linked in the reverse order, and lpthread should be the last
-# or linking errors do occur
+# they probably are linked in the reverse order, and lpthread should be after
+# ImageStreamIO.
 
-CFLAGS  = -W -Wall -ggdb
-LDFLAGS = -lm -lzmq -lImageStreamIO -lpthread
+# Do I reall need to link to boost_program_options?
+
+CFLAGS  = -std=c++17 -W -Wall -ggdb 
+LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt 
 EXEC    = asgard_cam_server
 OBJECTS = asgard_ZMQ_CRED1_server.o
 

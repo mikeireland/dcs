@@ -10,6 +10,7 @@
  * ========================================================================= */
 
 #include <stdio.h>
+#define SIMULATE
 
 #ifdef __GNUC__
 #  if(__GNUC__ > 3 || __GNUC__ ==3)
@@ -17,6 +18,7 @@
 #  endif
 #endif
 
+// With commander, are all of these needed???
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -28,6 +30,8 @@
 #include <zmq.h>
 #include <assert.h>
 #include <unistd.h>
+
+#include <commander/commander.h> // commander header
 
 // #include <ImageStruct.h>    // libImageStreamIO header
 #include <ImageStreamIO.h>  // libImageStreamIO header
@@ -102,6 +106,9 @@ char *cameratype;         // from camera link
 int keepgoing = 0;        // flag to control the image fetching loop
 
 CREDSTRUCT *camconf;     // structure holding relevant camera configuration options
+
+pthread_t tid_fetch; // thread ID for the image fetching to SHM
+char status_cstr[8] = "idle"; // to answer ZMQ status queries
 
 char dashline[80] =
   "-----------------------------------------------------------------------------\n";
@@ -240,7 +247,7 @@ float camera_query_float(EdtDev ed, const char *cmd) {
 /* =========================================================================
  *                     Camera image fetching thread
  * ========================================================================= */
-void* fetch_imgs() {
+void* fetch_imgs(void *dummy) {
   uint8_t *image_p = NULL;
   int width, height, nbpix;
   // unsigned short int *imageushort;
@@ -335,18 +342,55 @@ int processing_cli_commands(char* cmd) {
   return 0;
 }
 
+// Here are the functions that will be registered with the commander server
+void fetch(){
+ 	if (keepgoing == 0) {
+	  keepgoing = 1; // raise the flag
+	  printf("Triggering the fetching data\n");
+	  pthread_create(&tid_fetch, NULL, fetch_imgs, NULL);
+	}
+  sprintf(status_cstr, "%s", "running");
+}
+
+std::string cli(std::string cmd) {
+  char serialcmd[CMDSIZE]; // holder for commands sent to the camera CLI
+  int res = 0;
+  //memmove(serialcmd, cmd.c_str(), cmd.length());
+  memmove(serialcmd, cmd.c_str(), cmd.length());
+  //res = processing_cli_commands(serialcmd);
+  return "NOT IMPLEMENTED YET";
+}
+
+std::string status() {
+  return status_cstr;
+}
+
+void stop(){
+  if (keepgoing == 1) {
+    keepgoing = 0;
+  }
+  sprintf(status_cstr, "%s", "idle");
+}
+ 
+namespace co=commander;
+
+COMMANDER_REGISTER(m)
+{
+  using namespace co::literals;
+  m.def("fetch", fetch, "Trigger fetching data from the camera.");
+  m.def("cli", cli, "Directly send a command to the camera Command Line Interface.");
+  m.def("status", status, "Get the current status of the camera.");
+  m.def("stop", stop, "Stop fetching data from the camera.");
+}
+
 /* =========================================================================
  *                               Main program
  * ========================================================================= */
-int main() {
-  char cmdstring[CMDSIZE]; // holder for commands sent to this program
-  char serialcmd[CMDSIZE]; // holder for commands sent to the camera CLI
+int main(int argc, char **argv) {
   char errstr[2*CMDSIZE];
   char edt_devname[CMDSIZE];
-  int cmdOK = 0;
-  int res = 0;
-  pthread_t tid_fetch; // thread ID for the image fetching to SHM
-
+  
+#ifndef SIMULATE
   // ----- start with the serial CLI -----
   ed = pdv_open(EDT_INTERFACE, unit);
   if (ed == NULL) {
@@ -367,18 +411,11 @@ int main() {
   }
   pdv_flush_fifo(pdv_p);
 
-// ----- ZMQ setup specifics -----
-  int server_port = 6667;  // ZMQ server port number
-  char address[15];        // to construct full ZMQ server TCP address
-  char status[8] = "idle"; // to answer ZMQ status queries
-  
-  sprintf(address, "tcp://*:%d", server_port);
-  void *context = zmq_ctx_new();
-  void *responder = zmq_socket(context, ZMQ_REP);
-  int rc = zmq_bind(responder, address);
-  assert(rc == 0);
-
   init_cam_configuration();
+
+  shm_setup();
+#endif
+
 
   //printf("shm_img naxis = %d\n", shm_img->naxis);
 
@@ -397,96 +434,20 @@ int main() {
   printf("                | |__| (_| | | | | | |  __/ | | (_| |                      \n");
   printf("                 \\____\\__,_|_| |_| |_|\\___|_|  \\__,_|                      \n");
   printf("\n%s", dashline);
-  printf("ZMQ MDM driver server on port # %4d !\n", server_port);
-  printf("%s", dashline);
+   
+  // start the commander server
+  co::Server s(argc, argv);
 
-  shm_setup();
+  s.run();
   
-  // ------------------ start the command line ------------------
-  for (;;) {
-    cmdOK = 0; // ready to accept a new command
-    memset(cmdstring, ' ', CMDSIZE);
-    zmq_recv(responder, cmdstring, CMDSIZE, 0); // received a command!
-
-    // -------------- process the ZMQ commands ------------------
-
-    // First Light CLI commands will be prefixed by a "!"
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "!", 1) == 0) {
-	cmdOK = 1;
-	memmove(serialcmd, cmdstring + 1, strlen(cmdstring)-1);
-	printf("before processing, cmd = %s\n", serialcmd);
-	res = processing_cli_commands(serialcmd);
-	if (res == 0)
-	  zmq_send(responder, "OK", 2, 0);
-	else
-	  zmq_send(responder, "WTF?", 4, 0);
-      }
-
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "coucou", strlen("coucou")) == 0) {
-	cmdOK = 1;
-	zmq_send(responder, "coucou", 6, 0);
-	sprintf(status, "%s", "idle");
-      }
-
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "fetch", strlen("fetch")) == 0) {
-	cmdOK = 1;
-	if (keepgoing == 0) {
-	  keepgoing = 1; // raise the flag
-	  printf("Triggering the fetching data\n");
-	  pthread_create(&tid_fetch, NULL, fetch_imgs, NULL);
-	}
-	zmq_send(responder, "OK", 2, 0);
-	sprintf(status, "%s", "running");
-      }
-
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "stop", strlen("stop")) == 0) {
-	cmdOK = 1;
-	if (keepgoing == 1) {
-	  keepgoing = 0;
-	}
-	zmq_send(responder, "OK", 2, 0);
-	sprintf(status, "%s", "idle");
-      }
-
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "status", strlen("status")) == 0) {
-	cmdOK = 1;
-	zmq_send(responder, status, strlen(status), 0);
-      }
-
-    // =====================================================
-    if (cmdOK == 0)
-      if (strncmp(cmdstring, "quit", strlen("quit")) == 0) {
-	cmdOK = 1;
-
-	if (shm_img != NULL) {
+  // -------------------------
+  // clean-end of the program
+  // -------------------------  
+  printf("%s\n", status_cstr);
+  if (shm_img != NULL) {
 	  ImageStreamIO_destroyIm(shm_img);
 	  free(shm_img);
 	  shm_img = NULL;
 	}
-	
-	zmq_send(responder, "BYE!", 4, 0);
-	break;
-      }
-
-    // =====================================================    
-    if (cmdOK == 0) {
-      printf("Unkown command\n");
-      zmq_send(responder, "WTF?", 4, 0);
-    }
-  }
-  // -------------------------
-  // clean-end of the program
-  // -------------------------  
-  printf("%s\n", status);
   exit(0);
 }
