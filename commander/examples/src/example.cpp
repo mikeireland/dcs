@@ -98,6 +98,6 @@ COMMANDER_REGISTER(m)
 
 int main(int argc, char* argv[]) {
     co::Server s(argc, argv);
-
+    fmt::print("Starting server\n");
     s.run();
 }

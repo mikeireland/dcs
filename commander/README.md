@@ -42,11 +42,17 @@ int main(int argc, char* argv[]) {
 }
 ```
 
-and use it as follow:
+and use it as follows:
 
 ```bash
 ./example --command add [2,3]
 5
+```
+
+To run as a socket, you have to give the full address of the socket port, e.g.:
+
+```bash
+./example --socket tcp://127.0.0.1:3000
 ```
 
 ## Installation
