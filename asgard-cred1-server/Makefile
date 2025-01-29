@@ -4,7 +4,6 @@ CC=g++
 # they probably are linked in the reverse order, and lpthread should be after
 # ImageStreamIO.
 
-# Do I reall need to link to boost_program_options?
 
 CFLAGS  = -std=c++17 -W -Wall -ggdb 
 LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt 
