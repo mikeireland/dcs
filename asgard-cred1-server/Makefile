@@ -6,7 +6,7 @@ CC=g++
 
 
 CFLAGS  = -std=c++17 -W -Wall -ggdb 
-LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt 
+LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt -lcjson
 EXEC    = asgard_cam_server
 OBJECTS = asgard_ZMQ_CRED1_server.o
 

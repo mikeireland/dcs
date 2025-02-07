@@ -10,7 +10,7 @@
  * ========================================================================= */
 
 #include <stdio.h>
-#define SIMULATE
+// #define SIMULATE
 
 #ifdef __GNUC__
 #  if(__GNUC__ > 3 || __GNUC__ ==3)
@@ -18,26 +18,12 @@
 #  endif
 #endif
 
-// With commander, are all of these needed???
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <math.h>
-#include <pthread.h>
-#include <zmq.h>
-#include <assert.h>
-#include <unistd.h>
-
 #include <commander/commander.h> // commander header
-
-// #include <ImageStruct.h>    // libImageStreamIO header
-#include <ImageStreamIO.h>  // libImageStreamIO header
-
-#include <edtinc.h>         // EDT-PCI board API
-
+#include <ImageStreamIO.h>       // libImageStreamIO header
+#include <edtinc.h>              // EDT-PCI board API
+#include <pthread.h>
+#include <unistd.h>              // for access?
+#include <cjson/cJSON.h>         // for configuration file(s)
 
 /* =========================================================================
  *          Local data structure to keep track of camera settings
@@ -47,7 +33,6 @@ typedef struct {
   uint32_t width, height, depth;
   int timeout;
   char cameratype[16];
-  float tint;             // integration time for each read	
   int   NDR;              // number of reads per reset	
   char readmode[16];      // readout mode
   char status[16];        // camera overall status
@@ -62,7 +47,7 @@ typedef struct {
   int col0; // range 1 -  10 (granularity = 32)
   int col1; // range 1 -  10 (granularity = 32)
 
-  int sensibility;
+  // int sensibility;
   // 0: low
   // 1: medium
   // 2: high
@@ -72,15 +57,29 @@ typedef struct {
 } CREDSTRUCT;
 
 /* =========================================================================
+ *   Local data structure to split the shm into other shm sub-arrays
+ *        for the 4 baldr beams and the 2 heimdallr interferograms
+ *        these are read/written to/from a json configuration file
+ * 
+ * each array stores: x0, y0, x1, y1 (in that order) coordinates in the
+ * full image reference frame!
+ * ========================================================================= */
+typedef struct {
+  char name[6];
+  int x0, y0, xsz, ysz;
+} subarray;
+
+/* =========================================================================
  *                           function prototypes
  * ========================================================================= */
-void *fetch_imgs();
+void *fetch_imgs(void *dummy);
 int init_cam_configuration();
 void shm_setup();
 int read_pdv_cli(EdtDev ed, char *outbuf);
 int camera_command(EdtDev ed, const char *cmd);
 float camera_query_float(EdtDev ed, const char *cmd);
-int processing_cli_commands(char* cmd);
+char *read_json_file(const char *filename);
+
 
 /* =========================================================================
  *                            Global variables
@@ -93,6 +92,7 @@ int processing_cli_commands(char* cmd);
 static char buf[SERBUFSIZE];
 
 int simmode = 1;     // flag to set to "1" to *not* connect to the board!
+int splitmode = 0;   // flag to check if split mode is activated
 int verbose = 0;     // flag to output messages in shell
 int baud = 115200;   // serial connexion baud rate
 EdtDev ed = NULL;    // handle for the serial connexion to camera CLI
@@ -113,6 +113,34 @@ char status_cstr[8] = "idle"; // to answer ZMQ status queries
 char dashline[80] =
   "-----------------------------------------------------------------------------\n";
 
+/* =========================================================================
+ *                  JSON configuration file processing
+ * ========================================================================= */
+
+// ============================================================
+char *read_json_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Failed to open file");
+        return NULL;
+    }
+    
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    rewind(file);
+
+    char *data = (char *)malloc(length + 1);
+    if (!data) {
+        perror("Failed to allocate memory");
+        fclose(file);
+        return NULL;
+    }
+
+    fread(data, 1, length, file);
+    data[length] = '\0';  // Null-terminate the string
+    fclose(file);
+    return data;
+}
 
 /* =========================================================================
  *             initializes internal camera configuration data structure
@@ -137,6 +165,22 @@ int init_cam_configuration() {
 
   printf("\n%s", dashline);
 
+  // -----------------------------
+  sprintf(cmd_cli, "cropping rows");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
+  sscanf(out_cli, "rows: %d-%d", &camconf->row0, &camconf->row1);
+  
+  sprintf(cmd_cli, "cropping columns");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
+  sscanf(out_cli, "columns: %d-%d", &camconf->col0, &camconf->col1);
+
+  camconf->width = camconf->col1 - camconf->col0 + 1;
+  camconf->height = camconf->row1 - camconf->row0 + 1;
+  
   sprintf(cmd_cli, "status raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
@@ -155,13 +199,8 @@ void shm_setup() {
   int NBkw = 10;
   long naxis = 2;
   uint8_t atype = _DATATYPE_UINT16;
-  uint32_t *imsize;
   char shmname[20];
-
-  imsize = (uint32_t *) malloc(sizeof(uint32_t) * naxis);
-
-  imsize[0] = camconf->width;
-  imsize[1] = camconf->height;
+  uint32_t imsize[2] = {camconf->width, camconf->height};
 
   if (shm_img != NULL) {
     ImageStreamIO_destroyIm(shm_img);
@@ -172,7 +211,6 @@ void shm_setup() {
   sprintf(shmname, "%s", "cred1"); // root-name of the shm
   ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
-  free(imsize);
 
   // =========================== add keywords ==============================
 }
@@ -305,8 +343,8 @@ void* fetch_imgs(void *dummy) {
       shm_img->md->cnt0++;                 // increment internal counter
       shm_img->md->cnt1++;                 // idem
 
-      printf("\rcntr = %10ld", shm_img->md->cnt0);
-      fflush(stdout);
+      // printf("\rcntr = %10ld", shm_img->md->cnt0);
+      // fflush(stdout);
 
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > 0)
@@ -316,33 +354,13 @@ void* fetch_imgs(void *dummy) {
 	break;
     }
   }
-  printf("\nFetching stopped\n");
+  // printf("\nFetching stopped\n");
   return NULL;
 }
 
 /* =========================================================================
- *                      Processing of FLI's CLI commands
+ *      Functions that will be registered with the commander server
  * ========================================================================= */
-int processing_cli_commands(char* cmd) {
-  char out_cli[OUTSIZE];  // holder for CLI responses  
-  printf("FLI CLI >> %s\n", cmd);
-
-  /* -----------------------------------------------------
-     Take care of the commands sent to the camera
-
-     I'm not going to bother here for now. Mike will do
-     things the "commander" way.
-
-     At the moment, this just prints the CLI output to the
-     terminal
-     ----------------------------------------------------- */
-  camera_command(ed, cmd);
-  read_pdv_cli(ed, out_cli);
-  printf("%s\n", out_cli);
-  return 0;
-}
-
-// Here are the functions that will be registered with the commander server
 void fetch(){
  	if (keepgoing == 0) {
 	  keepgoing = 1; // raise the flag
@@ -352,19 +370,24 @@ void fetch(){
   sprintf(status_cstr, "%s", "running");
 }
 
+// ---------------
 std::string cli(std::string cmd) {
-  char serialcmd[CMDSIZE]; // holder for commands sent to the camera CLI
-  int res = 0;
-  //memmove(serialcmd, cmd.c_str(), cmd.length());
-  memmove(serialcmd, cmd.c_str(), cmd.length());
-  //res = processing_cli_commands(serialcmd);
-  return "NOT IMPLEMENTED YET";
+  /* -------------------------------------------------------------------------
+                Processing Camera command-line interface exchanges.
+     ------------------------------------------------------------------------- */
+  char out_cli[OUTSIZE];  // holder for CLI responses  
+  
+  camera_command(ed, cmd.c_str());
+  read_pdv_cli(ed, out_cli);
+  return out_cli;
 }
 
+// ---------------
 std::string status() {
   return status_cstr;
 }
 
+// ---------------
 void stop(){
   if (keepgoing == 1) {
     keepgoing = 0;
@@ -372,6 +395,18 @@ void stop(){
   sprintf(status_cstr, "%s", "idle");
 }
  
+// ---------------
+std::string split(std::string onoff) {
+  if (strncmp(onoff.c_str(), "on", strlen("on")) == 0) {
+    splitmode = 1;
+    printf("image splitting mode turned on\n");
+  } else {
+    splitmode = 0;
+    printf("image splitting mode disabled\n");
+  }
+  return "OK";
+}  
+
 namespace co=commander;
 
 COMMANDER_REGISTER(m)
@@ -381,6 +416,7 @@ COMMANDER_REGISTER(m)
   m.def("cli", cli, "Directly send a command to the camera Command Line Interface.");
   m.def("status", status, "Get the current status of the camera.");
   m.def("stop", stop, "Stop fetching data from the camera.");
+  m.def("split", split, "activates or deactivates the image splitting mode");
 }
 
 /* =========================================================================
@@ -389,7 +425,11 @@ COMMANDER_REGISTER(m)
 int main(int argc, char **argv) {
   char errstr[2*CMDSIZE];
   char edt_devname[CMDSIZE];
-  
+  const char* homedir = getenv("HOME");
+  char split_conf_fname[LINESIZE];
+  subarray readout[4];
+  int ii = 0;
+
 #ifndef SIMULATE
   // ----- start with the serial CLI -----
   ed = pdv_open(EDT_INTERFACE, unit);
@@ -416,9 +456,36 @@ int main(int argc, char **argv) {
   shm_setup();
 #endif
 
+  // --------- configuration of the image splitting -------------
+  sprintf(split_conf_fname, "%s/.config/camera_split.json", homedir);
 
-  //printf("shm_img naxis = %d\n", shm_img->naxis);
+  if (access(split_conf_fname, F_OK) == 0) {
+    printf("Configuration file %s found!\n", split_conf_fname);
+    char *json_data = read_json_file(split_conf_fname);
+    cJSON *json_root = cJSON_Parse(json_data);
+    free(json_data);
 
+    ii = 0;
+    // iterate over objects
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, json_root) {
+      const char *name = item->string;
+      sprintf(readout[ii].name, "%s", name);
+      readout[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
+      readout[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
+      readout[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
+      readout[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
+      printf("%s: x0 = %d, y0 = %d, xsz = %d, ysz = %d\n",
+	     readout[ii].name, readout[ii].x0, readout[ii].y0,
+	     readout[ii].xsz, readout[ii].ysz);
+      ii++;
+    }
+  } else {
+    printf("%s doesn't exist!\n", split_conf_fname);
+    splitmode = 0;
+  }
+  
+  
   // --------------------- set-up the prompt --------------------
   
   //-
@@ -445,9 +512,9 @@ int main(int argc, char **argv) {
   // -------------------------  
   printf("%s\n", status_cstr);
   if (shm_img != NULL) {
-	  ImageStreamIO_destroyIm(shm_img);
-	  free(shm_img);
-	  shm_img = NULL;
-	}
+    ImageStreamIO_destroyIm(shm_img);
+    free(shm_img);
+    shm_img = NULL;
+  }
   exit(0);
 }
