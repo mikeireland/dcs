@@ -22,7 +22,7 @@
 #include <ImageStreamIO.h>       // libImageStreamIO header
 #include <edtinc.h>              // EDT-PCI board API
 #include <pthread.h>
-#include <unistd.h>              // for access?
+#include <unistd.h>              // for access and usleep
 #include <cjson/cJSON.h>         // for configuration file(s)
 
 /* =========================================================================
@@ -37,9 +37,9 @@ typedef struct {
   char readmode[16];      // readout mode
   char status[16];        // camera overall status
   float temperature;      // current cryostat temperature
-  float maxFps;           // maximum frame rate
+  float maxfps;           // maximum frame rate
   float fps;              // current number of frames in Hz
-  float gain;             // 
+  float gain;             // camera gain
   // cropping parameters
   int cropmode;          // 0: OFF, 1: ON
   int row0; // range 1 - 256 (granularity = 1)
@@ -93,6 +93,7 @@ static char buf[SERBUFSIZE];
 
 int simmode = 1;     // flag to set to "1" to *not* connect to the board!
 int splitmode = 0;   // flag to check if split mode is activated
+uint32_t nbreads = 100;   // the number of reads without detector reset
 int verbose = 0;     // flag to output messages in shell
 int baud = 115200;   // serial connexion baud rate
 EdtDev ed = NULL;    // handle for the serial connexion to camera CLI
@@ -152,6 +153,63 @@ int init_cam_configuration() {
   char out_cli[OUTSIZE];  // holder for CLI responses
 
   printf("\n%s", dashline);
+
+  /* -----------------------------------------------------------------------
+     The right way to do things would be to set the camera settings using
+     the CLI first:
+
+     After reading the relevant information in a TOML file
+     (columns, rows only - the rest should be dynamically allocated?
+
+     "set cropping columns ..."
+     "set cropping rows ..."
+     "set mode globalresetburts"
+     "set nbreadsworeset 100" (default)
+     "set rawimages on"
+     "set gain x"
+     "maxfps"
+     "set fps maxfps"
+     ---------------------------------------------------------------------- */
+
+  // -----------------------------
+  sprintf(cmd_cli, "set cropping rows 20-219"); // on CRED3: multiples of 4
+  camera_command(ed, cmd_cli);
+
+  sprintf(cmd_cli, "cropping rows");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
+
+  // -----------------------------
+  sprintf(cmd_cli, "set cropping columns 32-159"); // on CRED3: multiples of 32
+  camera_command(ed, cmd_cli);
+
+  sprintf(cmd_cli, "cropping columns");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
+
+  // -----------------------------
+  // sprintf(cmd_cli, "set mode globalresetbursts");
+  // camera_command(ed, cmd_cli);
+  // sprintf(cmd_cli, "set nbreadsworeset %d", nbreads);
+  // camera_command(ed, cmd_cli);
+  // sprintf(cmd_cli, "set rawimages on");
+  // camera_command(ed, cmd_cli);
+  
+  sprintf(cmd_cli, "maxfps raw");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  sscanf(out_cli, "%f", &camconf->maxfps);
+  sprintf(cmd_cli, "set fps %.1f", camconf->maxfps);
+  camera_command(ed, cmd_cli);
+  sprintf(cmd_cli, "fps raw");
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+  printf("%s\n", out_cli);
+  
+  // -----------------------------
+  
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
   camconf->height = (uint32_t) pdv_get_height(pdv_p);
   camconf->depth = pdv_get_depth(pdv_p);
@@ -159,28 +217,34 @@ int init_cam_configuration() {
   camconf->timeout = pdv_serial_get_timeout(ed);
   sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
   
-  printf("image size  : %d x %d\n", camconf->width, camconf->height);
+  printf("frame size  : %d x %d\n", camconf->width, camconf->height);
   printf("Timeout     : %d\n", camconf->timeout);
   printf("Camera type : %s\n", camconf->cameratype);
 
   printf("\n%s", dashline);
 
   // -----------------------------
-  sprintf(cmd_cli, "cropping rows");
+  sprintf(cmd_cli, "cropping rows raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
-  printf("%s\n", out_cli);
-  sscanf(out_cli, "rows: %d-%d", &camconf->row0, &camconf->row1);
+  sscanf(out_cli, "%d-%d", &camconf->row0, &camconf->row1);
+  printf("OUTPUT CLI: %s\n", out_cli);
   
-  sprintf(cmd_cli, "cropping columns");
-  camera_command(ed, cmd_cli);
-  read_pdv_cli(ed, out_cli);
-  printf("%s\n", out_cli);
-  sscanf(out_cli, "columns: %d-%d", &camconf->col0, &camconf->col1);
+  printf("WTF? row0 = %d, row1 = %d\n", camconf->row0, camconf->row1);
 
+  sprintf(cmd_cli, "cropping columns raw");
+  camera_command(ed, cmd_cli);
+  usleep(100);
+  read_pdv_cli(ed, out_cli);
+  printf("OUTPUT CLI: %s\n", out_cli);
+  sscanf(out_cli, "%d-%d", &camconf->col0, &camconf->col1);
+
+  printf("WTF? col0 = %d, col1 = %d\n", camconf->col0, camconf->col1);
+  
   camconf->width = camconf->col1 - camconf->col0 + 1;
   camconf->height = camconf->row1 - camconf->row0 + 1;
-  
+
+  printf("VERIF: width x height = %d x %d\n", camconf->width, camconf->height);
   sprintf(cmd_cli, "status raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
@@ -194,20 +258,20 @@ int init_cam_configuration() {
  * Parameters: (xsz, ysz) the total (x, y) camera readout dimensions
  * ========================================================================= */
 void shm_setup() {
-  int NBIMG = 1;
+  // int NBIMG = 1;
   int shared = 1;
   int NBkw = 10;
-  long naxis = 2;
+  long naxis = 3;
   uint8_t atype = _DATATYPE_UINT16;
   char shmname[20];
-  uint32_t imsize[2] = {camconf->width, camconf->height};
+  uint32_t imsize[3] = {camconf->width, camconf->height, nbreads};
 
   if (shm_img != NULL) {
     ImageStreamIO_destroyIm(shm_img);
     free(shm_img);
     shm_img = NULL;
   }
-  shm_img = (IMAGE*) malloc(sizeof(IMAGE) * NBIMG);
+  shm_img = (IMAGE*) malloc(sizeof(IMAGE)); // * NBIMG);
   sprintf(shmname, "%s", "cred1"); // root-name of the shm
   ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
@@ -288,10 +352,11 @@ float camera_query_float(EdtDev ed, const char *cmd) {
 void* fetch_imgs(void *dummy) {
   uint8_t *image_p = NULL;
   int width, height, nbpix;
-  // unsigned short int *imageushort;
+  unsigned short int *liveimg;
   int numbufs = 256;
   bool timeoutrecovery = false;
   int timeouts;
+  unsigned int liveindex = 0;
   
   width = camconf->width;
   height = camconf->height;
@@ -331,17 +396,25 @@ void* fetch_imgs(void *dummy) {
     timeoutrecovery = false;
 
     while (!timeoutrecovery) {
+
+      liveindex = shm_img->md->cnt1;
+      if (liveindex == shm_img->md->size[2])
+	liveindex = 0;
+
+      liveimg = shm_img->array.UI16 + liveindex * nbpix;
+
       image_p = pdv_wait_images(pdv_p, 1);
       pdv_start_images(pdv_p, numbufs);
 
       shm_img->md->write = 1;              // signaling about to write
-      memcpy(shm_img->array.UI16,          // copy image to shared memory
+      //memcpy(shm_img->array.UI16,          // copy image to shared memory
+      memcpy(liveimg,                      // copy image to shared memory
 	     (unsigned short *) image_p,
 	     sizeof(unsigned short) * nbpix);
       shm_img->md->write = 0;              // signaling done writing
       ImageStreamIO_sempost(shm_img, -1);  // post semaphores
       shm_img->md->cnt0++;                 // increment internal counter
-      shm_img->md->cnt1++;                 // idem
+      shm_img->md->cnt1 = liveindex + 1;   // idem
 
       // printf("\rcntr = %10ld", shm_img->md->cnt0);
       // fflush(stdout);
