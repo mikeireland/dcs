@@ -38,3 +38,4 @@ mrproper: clean
 
 install:
 	install -D $(EXEC) $(PREFIX)/bin/
+	install -D 17DW019* /opt/Boston\ Micromachines/Profiles/
