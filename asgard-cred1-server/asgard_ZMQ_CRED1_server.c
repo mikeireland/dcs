@@ -180,8 +180,9 @@ int init_cam_configuration() {
 
   // -----------------------------
   // -----------------------------
-  sprintf(cmd_cli, "set cropping columns 32-223"); // on CRED3: multiples of 32
-  sprintf(cmd_cli, "set cropping columns 0-639"); // on CRED3: multiples of 32
+  // sprintf(cmd_cli, "set cropping columns 32-223"); // on CRED3: multiples of 32
+  // sprintf(cmd_cli, "set cropping columns 0-639"); // on CRED3: multiples of 32
+  sprintf(cmd_cli, "set cropping columns 1-10"); // on CRED1: groupings of 32
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
   
@@ -190,8 +191,9 @@ int init_cam_configuration() {
   /* read_pdv_cli(ed, out_cli); */
   /* printf("%s\n", out_cli); */
 
-  sprintf(cmd_cli, "set cropping rows 20-219"); // on CRED3: multiples of 4
-  sprintf(cmd_cli, "set cropping rows 0-511"); // on CRED3: multiples of 4
+  // sprintf(cmd_cli, "set cropping rows 20-219"); // on CRED3: multiples of 4
+  // sprintf(cmd_cli, "set cropping rows 0-511"); // on CRED3: multiples of 4
+  sprintf(cmd_cli, "set cropping rows 0-255"); // on CRED1
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
   /* sprintf(cmd_cli, "cropping rows"); */
@@ -241,7 +243,7 @@ int init_cam_configuration() {
 	 camconf->row0, camconf->row1,
 	 camconf->col0, camconf->col1);
   
-  camconf->width = camconf->col1 - camconf->col0 + 1;
+  camconf->width = 32 * (camconf->col1 - camconf->col0 + 1);
   camconf->height = camconf->row1 - camconf->row0 + 1;
 
   printf(">> resized window size = %d x %d\n",
