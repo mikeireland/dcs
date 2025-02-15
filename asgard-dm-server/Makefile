@@ -1,9 +1,9 @@
-CC=gcc
+CC=g++
 
-CFLAGS  = -W -Wall -ggdb
-LDFLAGS = -lpthread -lm -lzmq -lImageStreamIO
+CFLAGS  = -std=c++17 -W -Wall -Wextra
+LDFLAGS = -lcommander -lpthread -lzmq -lImageStreamIO -lboost_program_options -lfmt
 EXEC    = asgard_DM_server
-OBJECTS = asgard_ZMQ_MDM_server.o
+OBJECTS = asgard_commander_MDM_server.o
 
 # PREFIX is environment variable, but if it is not set, then set default value
 ifeq ($(PREFIX),)

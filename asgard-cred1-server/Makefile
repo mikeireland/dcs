@@ -15,11 +15,6 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-# adding the BMC specific things as they are setup on this machine
-
-# CFLAGS  += -I $(BMC_INCDIR)
-# LDFLAGS += -L $(BMC_LIBDIR) -lBMC -lBMC_PCIeAPI -lBMC_USBAPI
-
 # adding the PCI EDT specific compilation options
 CFLAGS  += -I /opt/EDTpdv
 LDFLAGS += -L /opt/EDTpdv -lpdv
