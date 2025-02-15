@@ -56,7 +56,7 @@ DM *hdms[4];  // the handles for the different deformable mirrors
 BMCRC rv;    // result of every interaction with the driver (check status)
 uint32_t *map_lut[4];  // the DM actuator mappings
 
-int simmode = 1;  // flag to set to "1" to not attempt to connect to the driver
+int simmode = 0;  // flag to set to "1" to not attempt to connect to the driver
 int timelog = 0;  // flag to set to "1" to log DM response timing
 char drv_status[8] = "idle"; // to keep track of server status
 
@@ -313,11 +313,20 @@ void reset(int dmid, int channel) {
   if (dmid <= ndm) {
     if (dmid > 0) {
       if (channel < 0) {
-	printf("Reset all channels of DM %d!\n", dmid);
-	// reset all channels!
+	printf("Reset all virtual channels of DM %d!\n", dmid);
+	for (int kk = 0; kk < nch; kk++) {
+	  live_channel = shmarray[dmid-1][kk].array.D;  // live pointer
+	  shmarray[dmid-1][kk].md->write = 1;  // signaling about to write
+	  memcpy(live_channel,
+		 (double *) reset_map,
+		 sizeof(double) * nvact);
+	  shmarray[dmid-1][kk].md->cnt0++;
+	  ImageStreamIO_sempost(&shmarray[dmid-1][kk], -1);
+	  shmarray[dmid-1][kk].md->write = 0;  // done writing
+	}
       }
-      if (channel < nch) {
-	printf("Reset channel %d of DM %d\n", channel, dmid);
+      else if (channel < nch) {
+	printf("Reset virtual channel %d of DM %d\n", channel, dmid);
 	live_channel = shmarray[dmid-1][channel].array.D;  // live pointer
 	shmarray[dmid-1][channel].md->write = 1;  // signaling about to write
 	memcpy(live_channel,
