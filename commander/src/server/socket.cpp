@@ -39,23 +39,25 @@ namespace commander::server
             std::string name;
             json args;
 
-            if (pos == std::string::npos)
-                name = command;
-            else
-            {
-                name = command.substr(0, pos);
-                args = json::parse(command.substr(pos + 1));
+            try {
+                if (pos == std::string::npos)
+                    name = command;
+                else
+                {
+                    name = command.substr(0, pos);
+                    args = json::parse(command.substr(pos + 1));
+                }
+
+                auto res = module_.execute(name, args).dump();
+
+                fmt::print("Sending response: {}\n", res);
+
+                sock.send(zmq::message_t(res.c_str(), res.size()), zmq::send_flags::none);
+            } catch (const std::exception& e) {
+                std::string error = fmt::format("Error: {}", e.what());
+                fmt::print("{}\n", error);
+                sock.send(zmq::message_t(error.c_str(), error.size()), zmq::send_flags::none);
             }
-
-            auto res = module_.execute(name, args).dump();
-
-            fmt::print("Sending response: {}\n", res);
-
-            sock.send(zmq::message_t(res.c_str(), res.size()), zmq::send_flags::none);
-
         }
-
     }
-
-
 }

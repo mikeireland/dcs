@@ -13,10 +13,19 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
     // Allocate memory for the subimage and the Fourier transform
     subim = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
     window = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
+    power_spectrum = (double*) fftw_malloc(sizeof(double) * subim_sz * (subim_sz / 2 + 1));
+    power_spectra[0] = (double*) fftw_malloc(sizeof(double) * subim_sz * (subim_sz / 2 + 1) * MAX_N_PS_BOXCAR);
     // Initialise the window to 1.0 everywhere
     for (unsigned int ii=0; ii<subim_sz; ii++) {
         for (unsigned int jj=0; jj<subim_sz; jj++) {
             window[ii*subim_sz + jj] = 1.0;
+        }
+        // Also initialise the power spectrum array
+        for (unsigned int jj=0; jj<subim_sz * (subim_sz / 2 + 1); jj++) {
+            for (int kk=0; kk<MAX_N_PS_BOXCAR; kk++) {
+                power_spectra[kk][ii*subim_sz + jj] = 0.0;
+            }
+            power_spectrum[ii*subim_sz + jj] = 0.0;
         }
     }
     ft = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * subim_sz * (subim_sz / 2 + 1));
@@ -57,6 +66,21 @@ void* ForwardFt::start(void* arg) {
             }
             // Do the FFT, and then indicate that the frame has been processed
             fftw_execute(self->plan);
+
+            // Compute the power spectrum. Other than SNR purposes, this isn't 
+            // time critical, but doesn't take long wo we can do it here.
+            int next_ps_ix = (self->subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
+            for (unsigned int ii=0; ii<self->subim_sz; ii++) {
+                for (unsigned int jj=0; jj<self->subim_sz / 2 + 1; jj++) {
+                    self->power_spectra[next_ps_ix][ii*self->subim_sz + jj] = 
+                        self->ft[ii*(self->subim_sz/2 + 1) + jj][0] * self->ft[ii*(self->subim_sz/2 + 1) + jj][0] +
+                        self->ft[ii*(self->subim_sz/2 + 1) + jj][1] * self->ft[ii*(self->subim_sz/2 + 1) + jj][1];
+                    self->power_spectrum[ii*self->subim_sz + jj] += 
+                        self->power_spectra[next_ps_ix][ii*self->subim_sz + jj]/MAX_N_PS_BOXCAR -
+                        self->power_spectra[self->ps_index][ii*self->subim_sz + jj]/MAX_N_PS_BOXCAR;
+                }
+            }
+            self->ps_index = next_ps_ix;
             self->cnt++;
 
             //std::cout << self->subarray->name << ": " << self->cnt << std::endl;
