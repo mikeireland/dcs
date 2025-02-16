@@ -2,7 +2,7 @@
  * Example code to write image in shared memory
  *
  * compile with:
- * gcc ImCreate_test.c ImageStreamIO.c -lm -lpthread
+ * gcc ImCreate_ft.c ImageStreamIO.c -o imft -lm -lpthread -lfftw3
  *
  * Required files in compilation directory :
  * ImCreate_test.c   : source code (this file)
@@ -25,6 +25,10 @@
 #include <stdlib.h>
 #include <complex.h>
 #include <fftw3.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include "ImageStreamIO.h"
 
 const float hole_radius = 1.5;      // Radius of the hole in pupil pixels
@@ -34,9 +38,15 @@ float phase=0.0;
 
 int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_plan plan, float wavenum_scale, float flux_scale)
 {
-    float x,y, pamp, rnoise;                    // Image column and row indices
+    float x,y, rnoise;                    // Image column and row indices
+    fftw_complex hole_phasors[4];              // Phasors for the holes
 
     imarray->md->write = 1;         // Poor-man's mutex when writing
+
+    // Make our hole phasors
+    for (int kk=0; kk<4; kk++)
+        hole_phasors[kk] = cexp(I*kk*sin(phase)*wavenum_scale);
+
     // Fill the pupil with the holes
     for(int jj=0; jj<SZ; jj++)            // loop rows
     {
@@ -44,15 +54,14 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
         for(int ii=0; ii<SZ; ii++)     // loop columns
         {
             x = (((ii + SZ/2) % SZ) - SZ/2.0);
-            pamp = 0.0;
+            pupil[jj*SZ + ii] = 0.0;
             for (int kk=0; kk<4; kk++)
             {
                 if (sqrt((x-hole_x[kk]*wavenum_scale)*(x-hole_x[kk]*wavenum_scale) + (y-hole_y[kk]*wavenum_scale)*(y-hole_y[kk]*wavenum_scale)) < 1.5*wavenum_scale)
                 {
-                    pamp += 1.0;
+                    pupil[jj*SZ + ii] += hole_phasors[kk];
                 }
             }
-            pupil[jj*SZ + ii] = pamp;
         }
     }
     // Use our FFT plan to transform the pupil to the image
@@ -112,7 +121,8 @@ int main()
     {
         make_image(imarray, pupil_K1, image_K1, plan_K1, 1.0, 1.0);
         make_image(imarray+1, pupil_K2, image_K2, plan_K2, 0.9, 0.5);
-
+        phase += 0.1;
+        phase = fmod(phase, 2*M_PI);
         usleep(dtus);           // Wait 10ms
     }
     return 0;

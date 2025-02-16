@@ -14,6 +14,7 @@ int servo_mode=SERVO_PID;
 PIDSettings pid_settings;
 ControlU control_us[N_TEL];
 Baseline baselines[N_BL];
+Bispectrum bispectra[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 pthread_mutex_t baseline_mutex, beam_mutex;

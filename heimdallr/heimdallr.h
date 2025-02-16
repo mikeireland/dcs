@@ -17,9 +17,13 @@
 #define SERVO_STOP 2
 
 #define MAX_N_GD_BOXCAR 16
+#define MAX_N_BS_BOXCAR 256   // Maximum number of frames to average for bispectrum
+#define MAX_N_PS_BOXCAR 256   // Maximum number of frames to average for power spectrum
+
 
 #define N_TEL 4 // Number of telescopes
 #define N_BL 6  // Number of baselines
+#define N_CP 4  // Number of closure phases
 
 #define DELAY_MOVE_USEC 200000 // Time to wait for the delay line to move
 
@@ -47,6 +51,30 @@ const char beam_baselines[N_TEL][N_TEL-1] = {
     {2, 4, 5}
 };
 
+const double M_pseudo_inverse[N_TEL][N_BL] = {
+    {-0.25, -0.25, -0.25, 0, 0, 0},
+    {0.25, 0, 0, -0.25, -0.25, 0},
+    {0, 0.25, 0, 0.25, 0, -0.25},
+    {0, 0, 0.25, 0, 0.25, 0.25}
+};
+
+const char closure2bl[N_CP][3] = {
+    {0, 3, 1},
+    {0, 4, 2},
+    {1, 5, 2},
+    {3, 5, 4}
+};
+
+// These are from Lacour et al. 2019, so we'll keep the same definitions.
+const char M[N_BL][N_TEL] = {
+    {-1, 1, 0, 0},
+    {-1, 0, 1, 0},
+    {-1, 0, 0, 1},
+    {0, -1, 1, 0},
+    {0, -1, 0, 1},
+    {0, 0, -1, 1}
+};
+
 //----- Structures and typedefs------
 typedef std::complex<double> dcomp;
 
@@ -56,14 +84,26 @@ struct ControlU{
     double dm_piston;
 };
 
+struct FTParams{
+    double *power_spectrum;
+
+}
+
 struct Baseline{
     double gd;
     double pd;
     double gd_snr;
     double pd_snr;
     dcomp gd_phasors[MAX_N_GD_BOXCAR];
-    int n_gd_boxcar;
     dcomp gd_phasor, pd_phasor;
+    int n_gd_boxcar, ix_gd_boxcar;
+};
+
+struct Bispectrum{
+    dcomp bs_phasors[MAX_N_BS_BOXCAR];
+    dcomp bs_phasor;
+    double closure_phase;
+    int n_bs_boxcar, ix_bs_boxcar;
 };
 
 struct PIDSettings{
@@ -81,6 +121,7 @@ extern int servo_mode;
 extern PIDSettings pid_settings;
 extern ControlU control_us[N_TEL];
 extern Baseline baselines[N_BL];
+extern Bispectrum bispectra[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern pthread_mutex_t baseline_mutex, beam_mutex;
@@ -97,6 +138,11 @@ public:
 
     // The Fourier transformed image.
     fftw_complex *ft;
+
+    /// The power spectrum of the image, and the array to boxcar average.
+    double *power_spectra[MAX_N_PS_BOXCAR];
+    double *power_spectrum;
+    int ps_index = MAX_N_PS_BOXCAR-1;
 
     // The size of the subimage, needed to determine which Fourier components to use.
     unsigned int subim_sz;
