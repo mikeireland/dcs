@@ -437,10 +437,6 @@ void* fetch_imgs(void *arg) {
 
     while (!timeoutrecovery) {
 
-      liveindex = shm_img->md->cnt1+1;
-      if (liveindex >= shm_img->md->size[2])
-	liveindex = 0;
-
       liveimg = shm_img->array.UI16 + liveindex * nbpix;  // live pointer
 
       image_p = pdv_wait_images(pdv_p, 1);
@@ -453,6 +449,10 @@ void* fetch_imgs(void *arg) {
       shm_img->md->write = 0;              // signaling done writing
       ImageStreamIO_sempost(shm_img, -1);  // post semaphores
       shm_img->md->cnt0++;                 // increment internal counter
+      
+      liveindex++; // = shm_img->md->cnt1+1;
+      if (liveindex >= shm_img->md->size[2])
+	liveindex = 0;
       shm_img->md->cnt1 = liveindex;       // idem
 
       // printf("\rcntr = %10ld", shm_img->md->cnt0);
