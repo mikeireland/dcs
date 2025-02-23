@@ -101,7 +101,7 @@ void* fringe_tracker(void* arg){
 
             // Compute the unwrapped phase delay and signal to noise. We don't expect to 
             // actually use this unwrapped phase delay, but it is useful for debugging.
-            double pdiff = (std::arg(K1_phasor[bl])/2/M_PI - baselines[bl].pd + 0.5) % 1 - 0.5;
+            double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - baselines[bl].pd + 0.5), 1.0) - 0.5;
             baselines[bl].pd += pdiff;
         }
         // Now we have the group delays, we can regularise by multipliying by the  

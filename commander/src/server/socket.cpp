@@ -42,10 +42,13 @@ namespace commander::server
             try {
                 if (pos == std::string::npos)
                     name = command;
+                    if (command == "exit")
+                        break;
                 else
                 {
                     name = command.substr(0, pos);
-                    args = json::parse(command.substr(pos + 1));
+                    command = fmt::format("[{}]", command.substr(pos + 1));
+                    args = json::parse(command);
                 }
 
                 auto res = module_.execute(name, args).dump();

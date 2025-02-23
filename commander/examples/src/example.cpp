@@ -23,11 +23,75 @@ Status get_status() {
     return {42, "Nominal"};
 }
 
+// A test function for a vector of floats
+void float_vector(std::vector<float> v) {
+    fmt::print("vector: {}\n", fmt::join(v, ", "));
+}
+
 struct configuration {
     int a;
     float b;
     std::string c;
 };
+
+struct name_value {
+    std::string name;
+    double value;
+};
+
+// convert name_value to and from json
+namespace nlohmann {
+    template <>
+    struct adl_serializer<name_value> {
+        static void to_json(json& j, const name_value& p) {
+            j = json{{"name", p.name}, {"value", p.value}};
+        }
+
+        static void from_json(const json& j, name_value& p) {
+            j.at("name").get_to(p.name);
+            j.at("value").get_to(p.value);
+        }
+    };
+}
+
+void set_name_value(name_value nv) {
+    fmt::print("name: {}, value: {}\n", nv.name, nv.value);
+}
+
+void name_value_vector(std::vector<name_value> nv) {
+    for (const auto& n : nv) {
+        fmt::print("name: {}, value: {}\n", n.name, n.value);
+    }
+}
+
+struct command {
+    std::string name;
+    std::string time;
+    std::vector<name_value> parameters;
+};
+
+// convert command to and from json
+namespace nlohmann {
+    template <>
+    struct adl_serializer<command> {
+        static void to_json(json& j, const command& p) {
+            j = json{{"name", p.name}, {"time", p.time}, {"parameters", p.parameters}};
+        }
+
+        static void from_json(const json& j, command& p) {
+            j.at("name").get_to(p.name);
+            j.at("time").get_to(p.time);
+            j.at("parameters").get_to(p.parameters);
+        }
+    };
+}
+
+void RTS(command c) {
+    fmt::print("command name: {}, time: {}\n", c.name, c.time);
+    for (const auto& nv : c.parameters) {
+        fmt::print("parameter name: {}, value: {}\n", nv.name, nv.value);
+    }
+}
 
 // convert configuration to and from json
 namespace nlohmann {
@@ -94,6 +158,11 @@ COMMANDER_REGISTER(m)
     // Here is an example of an input list that includes a struct. e.g.
     // set_configuration [{"a":1,"b":2.0,"c":"three"},1]
     m.def("set_configuration", set_configuration, "Set the configuration");
+
+    m.def("RTS", RTS, "Receive a Real Time System command");
+    m.def("set_name_value", set_name_value, "Set a name value pair");
+    m.def("float_vector", float_vector, "A function that takes a vector of floats");
+    m.def("name_value_vector", name_value_vector, "A function that takes a vector of name value pairs");
 }
 
 int main(int argc, char* argv[]) {

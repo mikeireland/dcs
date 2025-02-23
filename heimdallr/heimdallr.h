@@ -84,11 +84,6 @@ struct ControlU{
     double dm_piston;
 };
 
-struct FTParams{
-    double *power_spectrum;
-
-}
-
 struct Baseline{
     double gd;
     double pd;
@@ -110,6 +105,14 @@ struct PIDSettings{
     pthread_mutex_t mutex;
     double gain;
     double dl_feedback_gain;
+};
+
+// An encoded 2D image in row-major form.
+struct EncodedImage
+{
+    unsigned int szx, szy;
+    std::string type;
+    std::string message;
 };
 
 // -------- Extern global definitions ------------
