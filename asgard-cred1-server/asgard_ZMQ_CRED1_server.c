@@ -296,6 +296,7 @@ void shm_setup() {
   ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
 
+  // shm_img->md->cnt0 = -1; // so that first image is index 0 ?
   // =========================== add keywords ==============================
 
   if (splitmode == 1) { // should be done anyways no ?
@@ -318,6 +319,7 @@ void shm_setup() {
       ImageStreamIO_createIm_gpu(&shm_ROI[ii], readout[ii].name, naxis,
   				 roisize, atype, -1, shared,
   				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
+      // shm_ROI[ii].md->cnt0 = -1; // so that first image is index 0 ?
     }
   }
   printf("Shared memory structures created!\n");
@@ -450,13 +452,8 @@ void* fetch_imgs(void *arg) {
       ImageStreamIO_sempost(shm_img, -1);  // post semaphores
       shm_img->md->cnt0++;                 // increment internal counter
       
-      liveindex++; // = shm_img->md->cnt1+1;
-      if (liveindex >= shm_img->md->size[2])
-	liveindex = 0;
+      liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
       shm_img->md->cnt1 = liveindex;       // idem
-
-      // printf("\rcntr = %10ld", shm_img->md->cnt0);
-      // fflush(stdout);
 
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > 0)
@@ -557,6 +554,25 @@ void split() {
   pthread_create(&tid_split, NULL, split_imgs, NULL);
 }  
 
+void update_fps(float fps) {
+    /* -------------------------------------------------------------------------
+     * server level command to update the camera fps and synchronize the
+     * shared memory with the new settings
+   * ------------------------------------------------------------------------- */
+  int wasrunning = 0;  // to keep track
+  char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
+  char out_cli[OUTSIZE];  // holder for CLI responses
+
+  if (keepgoing == 1) {
+    keepgoing = 0; // to interrupt the fetching process
+    wasrunning = 1; //
+  }
+  sprintf(cmd_cli, "set fps %.2f", fps);
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+
+  if (wasrunning == 1) fetch();
+}
 namespace co=commander;
 
 COMMANDER_REGISTER(m)
@@ -567,6 +583,7 @@ COMMANDER_REGISTER(m)
   m.def("status", status, "Get the current status of the camera.");
   m.def("stop", stop, "Stop fetching data from the camera.");
   m.def("split", split, "Trigger the update of ROI data shared memory");
+  m.def("fps", update_fps, "Updates the camera FPS and syncs SHM");
 }
 
 /* =========================================================================
@@ -633,7 +650,7 @@ int main(int argc, char **argv) {
   }
   
   shm_setup();
-  
+
   // --------------------- set-up the prompt --------------------
   
   //-
