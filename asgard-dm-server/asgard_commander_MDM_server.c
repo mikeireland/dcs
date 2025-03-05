@@ -172,7 +172,6 @@ double* map2D_2_cmd(double *map2D) {
 void* dm_control_loop(void *_dmid) {
   uint64_t cntrs[nch];
   int ii, kk;  // array indices
-  int updated = 0;
   double *cmd; //
   double tmp_map[nvact];  // to store the combination of channels
   struct timespec now; // clock readout
@@ -190,56 +189,51 @@ void* dm_control_loop(void *_dmid) {
     cntrs[ii] = shmarray[dmid-1][nch].md->cnt0;  // init shm counters
 
   while (keepgoing > 0) {
-    updated = 0;
-    
+
+    ImageStreamIO_semwait(&shmarray[dmid-1][nch], 1);  // waiting for a DM update!
+
     for (ii = 0; ii < nch; ii++) {
-      // look for updates to the shm counters
-      if (shmarray[dmid-1][ii].md->cnt0 > cntrs[ii]) {
-	updated += 1;
-	cntrs[ii] = shmarray[dmid-1][ii].md->cnt0;
-      }
-      usleep(1);
+      cntrs[ii] = shmarray[dmid-1][ii].md->cnt0; // update counter values
     }
-    if (updated > 0) { // a counter was updated
-      // log_action("MultiDM updated!");
-      
-      // -------- combine the channels -----------
-      for (ii = 0; ii < nvact; ii++) {
-	tmp_map[ii] = 0.0; // init temp sum array
-	for (kk = 0; kk < nch; kk++) {
-	  tmp_map[ii] += shmarray[dmid-1][kk].array.D[ii];
-	}
+
+    // -------- combine the channels -----------
+    for (ii = 0; ii < nvact; ii++) {
+      tmp_map[ii] = 0.0; // init temp sum array
+      for (kk = 0; kk < nch; kk++) {
+	tmp_map[ii] += shmarray[dmid-1][kk].array.D[ii];
       }
-      for (ii = 0; ii < nvact; ii++) {
-	if (tmp_map[ii] < 0.0)
-	  tmp_map[ii] = 0.0;
-	if (tmp_map[ii] > 1.0)
-	  tmp_map[ii] = 1.0;
-      }
-      
-      // ------- update the shared memory ---------
-      shmarray[dmid-1][nch].md->write = 1;   // signaling about to write
-      for (ii = 0; ii < nvact; ii++) // update the combined channel
-	shmarray[dmid-1][nch].array.D[ii] = tmp_map[ii];
-      shmarray[dmid-1][nch].md->cnt1 = 0;
-      shmarray[dmid-1][nch].md->cnt0++;
-      ImageStreamIO_sempost(&shmarray[dmid-1][nch], -1);
-      shmarray[dmid-1][nch].md->write = 0;  // signaling done writing
-      
-      // ------ converting into a command the driver --------
-      // sending to the DM
-      if (simmode != 1) {
-	cmd = map2D_2_cmd(shmarray[dmid-1][nch].array.D);
-	rv = BMCSetArray(hdms[dmid-1], cmd, map_lut[dmid-1]);  // send cmd to DM
-	if (rv) {
-	  printf("%s\n\n", BMCErrorString(rv));
-	}
-	free(cmd);
-      }
-      clock_gettime(CLOCK_REALTIME, &now);   // get time after issuing a command
-      if (timelog)
-	fprintf(fd, "%f\n", 1.0*now.tv_sec + 1e-9*now.tv_nsec);
     }
+
+    // ensure values are within acceptable (0, 1) range
+    for (ii = 0; ii < nvact; ii++) {
+      if (tmp_map[ii] < 0.0)
+	tmp_map[ii] = 0.0;
+      if (tmp_map[ii] > 1.0)
+	tmp_map[ii] = 1.0;
+    }
+
+    // ------- update the shared memory ---------
+    shmarray[dmid-1][nch].md->write = 1;   // signaling about to write
+    for (ii = 0; ii < nvact; ii++) // update the combined channel
+      shmarray[dmid-1][nch].array.D[ii] = tmp_map[ii];
+    shmarray[dmid-1][nch].md->cnt1 = 0;
+    shmarray[dmid-1][nch].md->cnt0++;
+    // ImageStreamIO_sempost(&shmarray[dmid-1][nch], -1);
+    shmarray[dmid-1][nch].md->write = 0;  // signaling done writing
+
+    // ------ converting into a command the driver --------
+    // sending to the DM
+    if (simmode != 1) {
+      cmd = map2D_2_cmd(shmarray[dmid-1][nch].array.D);
+      rv = BMCSetArray(hdms[dmid-1], cmd, map_lut[dmid-1]);  // send cmd to DM
+      if (rv) {
+	printf("%s\n\n", BMCErrorString(rv));
+      }
+      free(cmd);
+    }
+    clock_gettime(CLOCK_REALTIME, &now);   // get time after issuing a command
+    if (timelog)
+      fprintf(fd, "%f\n", 1.0*now.tv_sec + 1e-9*now.tv_nsec);
   }
   if (timelog)
     fclose(fd); // closing the timing log file
@@ -397,7 +391,6 @@ COMMANDER_REGISTER(m) {
   m.def("get_nch", get_nch, "Returns the number of virtual channels per DM.");
   m.def("set_nch", set_nch, "Updates the number of virtual channels per DM.");
   m.def("reset", reset, "Resets DM #arg_0 channel #arg_1 (or if arg_1=-1).");
-  m.def("quit", quit, "Clean exit of the program.");
 }
 
 /* =========================================================================
@@ -440,6 +433,5 @@ int main(int argc, char **argv) {
   // --------------------------
   //  clean ending the program
   // --------------------------
-  exit(0);
+  quit();
 }
-  
