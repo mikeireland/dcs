@@ -124,7 +124,7 @@ char dashline[80] =
 char savedir[200];  // the directory where the data will be saved
 
 int nroi = 6; // number of regions of interest on the detector
-subarray *readout;
+subarray *readout = NULL;
 
 /* =========================================================================
  *                  JSON configuration file processing
@@ -153,6 +153,41 @@ char *read_json_file(const char *filename) {
     data[length] = '\0';  // Null-terminate the string
     fclose(file);
     return data;
+}
+
+/* =========================================================================
+ *      Split configuration is read (for now) from a JSON file.
+ *   The procedure updates a shared readout configuration data structure.
+ * ========================================================================= */
+void refresh_image_splitting_configuration() {
+  char split_conf_fname[LINESIZE];
+  int ii;
+  sprintf(split_conf_fname, "%s/.config/cred1_split.json", getenv("HOME"));
+  if (access(split_conf_fname, F_OK) == 0) {
+    printf("Configuration file %s found!\n", split_conf_fname);
+    char *json_data = read_json_file(split_conf_fname);
+    cJSON *json_root = cJSON_Parse(json_data);
+    free(json_data);
+
+    ii = 0;
+    readout = (subarray *) malloc(nroi * sizeof(subarray));
+    // iterate over objects
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, json_root) {
+      const char *name = item->string;
+      sprintf(readout[ii].name, "%s", name);
+      readout[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
+      readout[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
+      readout[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
+      readout[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
+      ii++;
+    }
+    splitmode = 1;
+
+  } else {
+    printf("%s doesn't exist!\n", split_conf_fname);
+    splitmode = 0;
+  }
 }
 
 /* =========================================================================
@@ -551,6 +586,8 @@ void fetch(){
 
     if (splitmode == 1) {
       printf("ROI splitting mechanism is ON\n");
+      free(readout);
+      refresh_image_splitting_configuration();
       pthread_create(&tid_split, NULL, split_imgs, NULL);
     }
   }
@@ -655,7 +692,6 @@ int main(int argc, char **argv) {
   char errstr[2*CMDSIZE];
   char edt_devname[CMDSIZE];
   const char* homedir = getenv("HOME");
-  char split_conf_fname[LINESIZE];
   int ii = 0;
 
   sprintf(savedir, "%s/Music/", homedir);  // cubes saved in ~/Music/ for now
@@ -685,32 +721,7 @@ int main(int argc, char **argv) {
 #endif
 
   // --------- configuration of the image splitting -------------
-  sprintf(split_conf_fname, "%s/.config/cred1_split.json", getenv("HOME"));
-
-  if (access(split_conf_fname, F_OK) == 0) {
-    printf("Configuration file %s found!\n", split_conf_fname);
-    splitmode = 1;
-    char *json_data = read_json_file(split_conf_fname);
-    cJSON *json_root = cJSON_Parse(json_data);
-    free(json_data);
-
-    ii = 0;
-    readout = (subarray *) malloc(nroi * sizeof(subarray));
-    // iterate over objects
-    cJSON *item = NULL;
-    cJSON_ArrayForEach(item, json_root) {
-      const char *name = item->string;
-      sprintf(readout[ii].name, "%s", name);
-      readout[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
-      readout[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
-      readout[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
-      readout[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
-      ii++;
-    }
-  } else {
-    printf("%s doesn't exist!\n", split_conf_fname);
-    splitmode = 0;
-  }
+  refresh_image_splitting_configuration();
   
   shm_setup();
   tosave = (unsigned short int*) malloc(camconf->nbpix_cub * sizeof(unsigned short int));
