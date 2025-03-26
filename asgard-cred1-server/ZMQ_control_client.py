@@ -31,7 +31,7 @@ while True:
     
     #  Get the reply.
     resp = socket.recv().decode("ascii")
-    print(f"== Reply: [{resp}]")
-
+    # print(f"== Reply: [{resp}]")
+    print(resp)
     if resp == "BYE!":
         break

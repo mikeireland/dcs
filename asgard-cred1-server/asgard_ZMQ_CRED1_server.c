@@ -26,6 +26,7 @@
 #include <cjson/cJSON.h>         // for configuration file(s)
 #include <fitsio.h>
 #include <time.h>
+#include <sys/stat.h>
 
 /* =========================================================================
  *          Local data structure to keep track of camera settings
@@ -33,11 +34,12 @@
 typedef struct {		
   int FGchannel;          // frame grabber channel 
   uint32_t width, height, depth;
-  uint32_t nbpix_frm;    // the number of pixels in a "frame"
-  uint32_t nbpix_cub;    // the number of pixels in a "cube"
+  uint32_t nbpix_frm;     // the number of pixels in a "frame"
+  uint32_t nbpix_cub;     // the number of pixels in a "cube"
+  uint32_t nbreads;       // the number of reads without detector reset
+  uint32_t nbr_hlf;       // the number of reads saved in a FITS cube
   int timeout;
   char cameratype[16];
-  int   NDR;              // number of reads per reset	
   char readmode[16];      // readout mode
   char status[16];        // camera overall status
   float temperature;      // current cryostat temperature
@@ -94,8 +96,6 @@ static char buf[SERBUFSIZE];
 
 int simmode = 1;     // flag to set to "1" to *not* connect to the board!
 int splitmode = 0;   // flag to check if split mode is activated
-uint32_t nbreads = 200;   // the number of reads without detector reset
-uint32_t nbr_hlf = 100;   // the number of reads saved in a FITS cube
 
 int verbose = 0;     // flag to output messages in shell
 int baud = 115200;   // serial connexion baud rate
@@ -108,14 +108,14 @@ IMAGE *shm_img = NULL;    // shared memory img pointer
 IMAGE *shm_ROI = NULL;    // pointer to the different shared memory ROI
 unsigned short *tosave = NULL; // holder for the cube to be saved to FITS
 
-int width, height, depth; // frame info from camera link
-char *cameratype;         // from camera link
 int keepgoing = 0;        // flag to control the image fetching loop
 int savemode = 0;         // flag to control the FITS data save mode
-
-CREDSTRUCT *camconf;     // structure holding relevant camera configuration options
+long savecube_index = 0;   // to keep track of saved cubes
+CREDSTRUCT *camconf;      // structure holding relevant camera configuration options
 
 pthread_t tid_fetch; // thread ID for the image fetching to SHM
+pthread_t tid_split; // thread ID for the image ROI splitting
+
 char status_cstr[8] = "idle"; // to answer ZMQ status queries
 
 char dashline[80] =
@@ -184,28 +184,13 @@ int init_cam_configuration() {
      "set fps maxfps"
      ---------------------------------------------------------------------- */
 
-  // -----------------------------
-  // -----------------------------
-  // sprintf(cmd_cli, "set cropping columns 32-223"); // on CRED3: multiples of 32
-  // sprintf(cmd_cli, "set cropping columns 0-639"); // on CRED3: multiples of 32
   sprintf(cmd_cli, "set cropping columns 1-10"); // on CRED1: groupings of 32
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
   
-  /* sprintf(cmd_cli, "cropping columns"); */
-  /* camera_command(ed, cmd_cli); */
-  /* read_pdv_cli(ed, out_cli); */
-  /* printf("%s\n", out_cli); */
-
-  // sprintf(cmd_cli, "set cropping rows 20-219"); // on CRED3: multiples of 4
-  // sprintf(cmd_cli, "set cropping rows 0-511"); // on CRED3: multiples of 4
   sprintf(cmd_cli, "set cropping rows 0-255"); // on CRED1
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
-  /* sprintf(cmd_cli, "cropping rows"); */
-  /* camera_command(ed, cmd_cli); */
-  /* read_pdv_cli(ed, out_cli); */
-  /* printf("%s\n", out_cli); */
 
   usleep(100);
   
@@ -219,14 +204,11 @@ int init_cam_configuration() {
   
   
   // -----------------------------
-  
+  camconf->nbreads = 200;
+  camconf->nbr_hlf = 100;
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
   camconf->height = (uint32_t) pdv_get_height(pdv_p);
   camconf->depth = pdv_get_depth(pdv_p);
-
-  camconf->nbpix_frm = camconf->width * camconf->height;
-  camconf->nbpix_cub = camconf->nbpix_frm * nbr_hlf;  // saved cube size!
-
   camconf->timeout = pdv_serial_get_timeout(ed);
   sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
   
@@ -237,6 +219,7 @@ int init_cam_configuration() {
   printf("\n%s", dashline);
 
   // -----------------------------
+  /*
   sprintf(cmd_cli, "cropping rows raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
@@ -251,15 +234,17 @@ int init_cam_configuration() {
   printf("rows = %d-%d, cols = %d-%d\n",
 	 camconf->row0, camconf->row1,
 	 camconf->col0, camconf->col1);
-  
   camconf->width = 32 * (camconf->col1 - camconf->col0 + 1);
   camconf->height = camconf->row1 - camconf->row0 + 1;
 
+  */
+  
   camconf->nbpix_frm = camconf->width * camconf->height;
-  camconf->nbpix_cub = camconf->nbpix_frm * camconf->depth;
+  camconf->nbpix_cub = camconf->nbpix_frm * camconf->nbr_hlf;
 
   printf(">> resized window size = %d x %d\n",
 	 camconf->width, camconf->height);
+  printf(">> saving cubes of %d images\n", camconf->nbr_hlf);
   // -----------------------------
   
   sprintf(cmd_cli, "maxfps raw");
@@ -278,7 +263,6 @@ int init_cam_configuration() {
   sprintf(cmd_cli, "status raw");
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
-  //printf("status = %s\n", out_cli);
   return 0;
 }
 
@@ -288,13 +272,12 @@ int init_cam_configuration() {
  * Parameters: (xsz, ysz) the total (x, y) camera readout dimensions
  * ========================================================================= */
 void shm_setup() {
-  // int NBIMG = 1;
   int shared = 1;
   int NBkw = 10;
   long naxis = 3;
   uint8_t atype = _DATATYPE_UINT16;
   char shmname[20];
-  uint32_t imsize[3] = {camconf->width, camconf->height, nbreads};
+  uint32_t imsize[3] = {camconf->width, camconf->height, camconf->nbreads};
   uint32_t roisize[2];
 
   if (shm_img != NULL) {
@@ -308,13 +291,13 @@ void shm_setup() {
   ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
 
-  // shm_img->md->cnt0 = -1; // so that first image is index 0 ?
   // =========================== add keywords ==============================
+  /*
   strcpy(shm_img[0].kw[0].name, "fps");
   shm_img[0].kw[0].type = 'D';
   shm_img[0].kw[0].value.numf = camconf->fps;
   strcpy(shm_img[0].kw[0].comment, "frame rate (in Hz)");
-
+  */
   if (splitmode == 1) { // should be done anyways no ?
 
     if (shm_ROI != NULL) {
@@ -327,15 +310,12 @@ void shm_setup() {
     shm_ROI = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
 
     for (int ii = 0; ii < nroi; ii++) {
-      // printf("creating the %s ROI shared memory structure\n", readout[ii].name);
       roisize[0] = readout[ii].xsz;
       roisize[1] = readout[ii].ysz;
 
-      // should data-type change to float here after?
       ImageStreamIO_createIm_gpu(&shm_ROI[ii], readout[ii].name, naxis,
   				 roisize, atype, -1, shared,
   				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
-      // shm_ROI[ii].md->cnt0 = -1; // so that first image is index 0 ?
     }
   }
   printf("Shared memory structures created!\n");
@@ -416,20 +396,27 @@ void* save_cube_to_fits(void *_cube) {
   int status;
   int bitpix = USHORT_IMG;
   long naxis = 3;
-  long naxes[3] = {camconf->width, camconf->height, nbr_hlf};
+  long naxes[3] = {camconf->width, camconf->height, camconf->nbr_hlf};
 
   long fpixel; //, nel;
   unsigned short *cube = (unsigned short*) _cube;
   struct timespec tnow;  // time since epoch
   struct tm *uttime;     // calendar time
 
+  struct stat st;
+  
   char fname[300];  // path + name of the fits file to write
   // get the time - to give the file a unique name
   clock_gettime(CLOCK_REALTIME, &tnow);  // elapsed time since epoch
   uttime = gmtime(&tnow.tv_sec);         // translate into calendar time
 
-  sprintf(fname, "%s/%04d%02d%02dT%02d:%02d:%02d.%09ld.fits", savedir,
-	  1900 + uttime->tm_year, 1 + uttime->tm_mon, uttime->tm_mday,
+  // cubes saved in ~/Music/ for now
+  sprintf(savedir, "%s/Music/%04d%02d%02d/", getenv("HOME"),
+	  1900 + uttime->tm_year, 1 + uttime->tm_mon, uttime->tm_mday); 
+
+  if (stat(savedir, &st) == -1)
+    mkdir(savedir, 0700);
+  sprintf(fname, "%s/T%02d:%02d:%02d.%09ld.fits", savedir,
 	  uttime->tm_hour, uttime->tm_min, uttime->tm_sec, tnow.tv_nsec);
 
   // create a fits file
@@ -441,7 +428,10 @@ void* save_cube_to_fits(void *_cube) {
 
   // fill in the proper keywords
   // fits_update_key(fptr, TLONG, "EXPOSURE", &tint, "Exposure time", &status);
+  fits_update_key(fptr, TLONG, "CINDEX", &savecube_index, "Cube index", &status);
   fits_close_file(fptr, &status);
+  savecube_index++;
+  return NULL;
 }
 
 /* =========================================================================
@@ -454,8 +444,8 @@ void* fetch_imgs(void *arg) {
   bool timeoutrecovery = false;
   int timeouts;
   unsigned int liveindex = 0;
-  int nbpix_frm = camconf->nbpix_frm; // camconf->width * camconf->height;
-  int nbpix_cub = camconf->nbpix_cub;
+  long nbpix_frm = camconf->nbpix_frm;
+  long nbpix_cub = camconf->nbpix_cub;
 
   pthread_t tid_save; // thread ID for the saving of a data-cube
   
@@ -486,19 +476,20 @@ void* fetch_imgs(void *arg) {
       liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
       shm_img->md->cnt1 = liveindex;       // idem
 
-      if (liveindex == nbr_hlf) {
-	// save the first half of the live data-cube
-	memcpy(tosave, (unsigned short *) shm_img->array.UI16,
-	       nbpix_cub * sizeof(unsigned short));
-	pthread_create(&tid_save, NULL, save_cube_to_fits, tosave);
+      if (savemode > 0) {
+	if (liveindex == camconf->nbr_hlf) {
+	  // save the first half of the live data-cube
+	  memcpy(tosave, (unsigned short *) shm_img->array.UI16,
+		 nbpix_cub * sizeof(unsigned short));
+	  pthread_create(&tid_save, NULL, save_cube_to_fits, tosave);
+	}
+	if (liveindex == 0) {
+	  // save the second half of the live data-cube
+	  memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
+		 nbpix_cub * sizeof(unsigned short));
+	  pthread_create(&tid_save, NULL, save_cube_to_fits, tosave);
+	}
       }
-      if (liveindex == 0) {
-	// save the second half of the live data-cube
-	memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
-	       nbpix_cub * sizeof(unsigned short));
-	pthread_create(&tid_save, NULL, save_cube_to_fits, tosave);
-      }
-      
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > 0)
 	timeoutrecovery = true;
@@ -518,7 +509,7 @@ void* split_imgs(void* arg) {
   int nbpix = camconf->width * camconf->height;
   unsigned short int *liveroi, *liveimg;
   int ixsz, xsz, ysz, x0, y0;
-  
+
   while (keepgoing > 0) {
     ImageStreamIO_semwait(shm_img, 1);  // waiting for image update
     liveimg = shm_img->array.UI16 + shm_img->md->cnt1 * nbpix;
@@ -557,6 +548,11 @@ void fetch(){
     keepgoing = 1; // raise the flag
     printf("Triggering the fetching data\n");
     pthread_create(&tid_fetch, NULL, fetch_imgs, NULL);
+
+    if (splitmode == 1) {
+      printf("ROI splitting mechanism is ON\n");
+      pthread_create(&tid_split, NULL, split_imgs, NULL);
+    }
   }
   sprintf(status_cstr, "%s", "running");
 }
@@ -589,15 +585,6 @@ void stop(){
   sprintf(status_cstr, "%s", "idle");
 }
  
-void split() {
-  /* -------------------------------------------------------------------------
-   *      Trigger the thread splitting the raw image into its different ROI
-   * ------------------------------------------------------------------------- */
-  pthread_t tid_split; // thread ID for the image ROI splitting
-  printf("Triggering the ROI splitting mechanism\n");
-  pthread_create(&tid_split, NULL, split_imgs, NULL);
-}
-
 void update_fps(float fps) {
     /* -------------------------------------------------------------------------
      * server level command to update the camera fps and synchronize the
@@ -618,19 +605,34 @@ void update_fps(float fps) {
   if (wasrunning == 1) fetch();
 }
 
-void set_savemode(int smode) {
+void set_savemode(int _mode) {
     /* -------------------------------------------------------------------------
      * Start or interrupt the FITS saving of data cubes acquired by the camera
      * ------------------------------------------------------------------------- */
-  if (smode <= 0) {
+  if (_mode <= 0) {
     savemode = 0;
-    printf("Savemode was turned off");
+    printf("Savemode was turned OFF\n");
   }
   else {
     savemode = 1;
-    printf("Savemode was turned off");
+    printf("Savemode was turned ON\n");
   }
 }
+
+void set_splitmode(int _mode) {
+  /* -------------------------------------------------------------------------
+   *      Trigger the thread splitting the raw image into its different ROI
+   * ------------------------------------------------------------------------- */
+  if (_mode <= 0) {
+    splitmode = 0;
+    printf("Splitmode was turned OFF\n");
+  }
+  else {
+    splitmode = 1;
+    printf("Splitmode was turned ON\n");
+  }
+}
+
 
 namespace co=commander;
 
@@ -641,7 +643,7 @@ COMMANDER_REGISTER(m)
   m.def("cli", cli, "Directly send a command to the camera Command Line Interface.");
   m.def("status", status, "Get the current status of the camera.");
   m.def("stop", stop, "Stop fetching data from the camera.");
-  m.def("split", split, "Trigger the update of ROI data shared memory");
+  m.def("split", set_splitmode, "Trigger the update of ROI data shared memory");
   m.def("fps", update_fps, "Updates the camera FPS and syncs SHM");
   m.def("savemode", set_savemode, "Set/unset the FITS cube savemode");
 }
@@ -683,7 +685,7 @@ int main(int argc, char **argv) {
 #endif
 
   // --------- configuration of the image splitting -------------
-  sprintf(split_conf_fname, "%s/.config/camera_split.json", homedir);
+  sprintf(split_conf_fname, "%s/.config/cred1_split.json", getenv("HOME"));
 
   if (access(split_conf_fname, F_OK) == 0) {
     printf("Configuration file %s found!\n", split_conf_fname);
