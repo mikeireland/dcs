@@ -6,7 +6,7 @@ CC=g++
 
 
 CFLAGS  = -std=c++17 -W -Wall -Wextra
-LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt -lcjson
+LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt -lcjson -lcfitsio
 EXEC    = asgard_cam_server
 OBJECTS = asgard_ZMQ_CRED1_server.o
 
@@ -39,3 +39,4 @@ mrproper: clean
 
 install:
 	install -D $(EXEC) $(PREFIX)/bin/
+	copy cred1_split.json ~/.config/
