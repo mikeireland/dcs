@@ -39,4 +39,4 @@ mrproper: clean
 
 install:
 	install -D $(EXEC) $(PREFIX)/bin/
-	copy cred1_split.json ~/.config/
+	cp cred1_split.json ~/.config/

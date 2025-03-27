@@ -1,16 +1,14 @@
 /* =========================================================================
  * Asgard camera control server - Frantz Martinache
  * 
- * The control server is ZMQ server so that other processes can easily 
- * interface to it, exchanging simple text messages.
- * 
  * The program mostly handles the creation, update and destruction of the
  * shared memory data structure (ImageStreamIO library by O. Guyon) used to
  * share frames acquired with the camera through the PCI ET interface.
+ *
+ * The interactive prompt takes advantage of the commander library
  * ========================================================================= */
 
 #include <stdio.h>
-// #define SIMULATE
 
 #ifdef __GNUC__
 #  if(__GNUC__ > 3 || __GNUC__ ==3)
@@ -42,19 +40,18 @@ typedef struct {
   char cameratype[16];
   char readmode[16];      // readout mode
   char status[16];        // camera overall status
-  float temperature;      // current cryostat temperature
   float maxfps;           // maximum frame rate
   float fps;              // current number of frames in Hz
   float gain;             // camera gain
+
   // cropping parameters
   int cropmode;          // 0: OFF, 1: ON
-  int row0; // range 1 - 256 (granularity = 1)
-  int row1; // range 1 - 256 (granularity = 1)
-  int col0; // range 1 -  10 (granularity = 32)
-  int col1; // range 1 -  10 (granularity = 32)
-  
-  long frameindex;
-  
+  int hei_max_row;       // highest Heimdallr useful pixel
+  int bal_min_row;       // lowest Baldr useful pixel
+  int nrows_cropped;     // number of rows cropped when reading
+
+  int save_mode;         // flag to control the FITS data save mode
+  int ndmr_mode;         // non destructive readout mode flag
 } CREDSTRUCT;
 
 /* =========================================================================
@@ -74,15 +71,34 @@ typedef struct {
 /* =========================================================================
  *                           function prototypes
  * ========================================================================= */
+
+// threads
 void *fetch_imgs(void *arg);
 void *split_imgs(void *arg);
-int init_cam_configuration();
-void shm_setup();
+void *save_cube_to_fits(void *_cube);
+
+// camera serial interaction commands
 int read_pdv_cli(EdtDev ed, char *outbuf);
 int camera_command(EdtDev ed, const char *cmd);
+
+// configuration functions
+void refresh_image_splitting_configuration();
+int init_cam_configuration(int crop_mode);
+void optimize_cropping_parameters();
+void shm_setup(int roi_too);
+void free_shm(int roi_too);
 float camera_query_float(EdtDev ed, const char *cmd);
 char *read_json_file(const char *filename);
 
+// commander triggered functions
+void fetch();
+void stop();
+void update_fps(float fps);
+void update_gain(float gain);
+void set_save_mode(int _mode);
+void set_split_mode(int _mode);
+void set_crop_mode(int _mode);
+void set_ndmr_mode(int _mode);
 
 /* =========================================================================
  *                            Global variables
@@ -94,7 +110,6 @@ char *read_json_file(const char *filename);
 
 static char buf[SERBUFSIZE];
 
-int simmode = 1;     // flag to set to "1" to *not* connect to the board!
 int splitmode = 0;   // flag to check if split mode is activated
 
 int verbose = 0;     // flag to output messages in shell
@@ -109,7 +124,6 @@ IMAGE *shm_ROI = NULL;    // pointer to the different shared memory ROI
 unsigned short *tosave = NULL; // holder for the cube to be saved to FITS
 
 int keepgoing = 0;        // flag to control the image fetching loop
-int savemode = 0;         // flag to control the FITS data save mode
 long savecube_index = 0;   // to keep track of saved cubes
 CREDSTRUCT *camconf;      // structure holding relevant camera configuration options
 
@@ -124,7 +138,7 @@ char dashline[80] =
 char savedir[200];  // the directory where the data will be saved
 
 int nroi = 6; // number of regions of interest on the detector
-subarray *readout = NULL;
+subarray *ROI = NULL;
 
 /* =========================================================================
  *                  JSON configuration file processing
@@ -170,75 +184,86 @@ void refresh_image_splitting_configuration() {
     free(json_data);
 
     ii = 0;
-    readout = (subarray *) malloc(nroi * sizeof(subarray));
+    ROI = (subarray *) malloc(nroi * sizeof(subarray));
     // iterate over objects
     cJSON *item = NULL;
     cJSON_ArrayForEach(item, json_root) {
       const char *name = item->string;
-      sprintf(readout[ii].name, "%s", name);
-      readout[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
-      readout[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
-      readout[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
-      readout[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
+      sprintf(ROI[ii].name, "%s", name);
+      ROI[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
+      ROI[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
+      ROI[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
+      ROI[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
       ii++;
     }
-    splitmode = 1;
-
+    // update y0 coordinates of the Baldr ROI if cropmode is on
+    if (camconf->cropmode == 1) {
+      for (int ii = 0; ii < nroi; ii++) {
+	if (strncmp(ROI[ii].name, "baldr", strlen("baldr")) == 0) {
+	  ROI[ii].y0 -= camconf->nrows_cropped;
+	}
+      }
+    }
   } else {
     printf("%s doesn't exist!\n", split_conf_fname);
-    splitmode = 0;
+    // split mode should not be possible here... do I want to bother?
+    // splitmode = 0;
   }
 }
 
 /* =========================================================================
+ *      figure out the most aggressive possible cropping parameters
+ * ========================================================================= */
+void optimize_cropping_parameters() {
+  int ii;
+  camconf->bal_min_row = 255;  // reset values to initial
+  camconf->hei_max_row = 0;    // 
+
+  for (int ii = 0; ii < nroi; ii++) {
+    if (strncmp(ROI[ii].name, "baldr", strlen("baldr")) == 0)
+      if (ROI[ii].y0 <= camconf->bal_min_row)
+	camconf->bal_min_row = ROI[ii].y0;
+    
+    if (strncmp(ROI[ii].name, "hei_", strlen("hei_")) == 0)
+      if (ROI[ii].y0 + ROI[ii].xsz >= camconf->hei_max_row)
+	camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
+  }
+  printf("Aggressive cropping parameters are: %d and %d",
+	 camconf->hei_max_row, camconf->bal_min_row);
+}
+
+/* =========================================================================
  *             initializes internal camera configuration data structure
- * by getting info from the data link?
  * ========================================================================= */
 int init_cam_configuration() {
-  camconf = (CREDSTRUCT*) malloc(sizeof(CREDSTRUCT));
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
   char fluff[50];         // to discard
 
   printf("\n%s", dashline);
 
-  /* -----------------------------------------------------------------------
-     The right way to do things would be to set the camera settings using
-     the CLI first:
-
-     After reading the relevant information in a TOML file
-     (columns, rows only - the rest should be dynamically allocated?
-
-     "set cropping columns ..."
-     "set cropping rows ..."
-     "set mode globalresetburts"
-     "set nbreadsworeset 100" (default)
-     "set rawimages on"
-     "set gain x"
-     "maxfps"
-     "set fps maxfps"
-     ---------------------------------------------------------------------- */
-
+  // ------
   sprintf(cmd_cli, "set cropping columns 1-10"); // on CRED1: groupings of 32
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
   
-  sprintf(cmd_cli, "set cropping rows 0-255"); // on CRED1
+  // ------
+  if (camconf->cropmode == 0) 
+    sprintf(cmd_cli, "set cropping rows 1-256");
+  else
+    sprintf(cmd_cli, "set cropping rows 1-%d,%d-256",
+	    camconf->hei_max_row, camconf->bal_min_row);
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);  // to flush ?
 
-  usleep(100);
-  
-  // -----------------------------
-  // sprintf(cmd_cli, "set mode globalresetbursts");
-  // camera_command(ed, cmd_cli);
-  // sprintf(cmd_cli, "set nbreadsworeset %d", nbreads);
-  // camera_command(ed, cmd_cli);
-  // sprintf(cmd_cli, "set rawimages on");
-  // camera_command(ed, cmd_cli);
-  
-  
-  // -----------------------------
+  // ------
+  sprintf(cmd_cli, "set mode globalresetcds");  // engineering mode
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);  // to flush
+  camconf->ndmr_mode = 0;
+  camconf->save_mode = 0;
+
+  // -----
   camconf->nbreads = 200;
   camconf->nbr_hlf = 100;
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
@@ -247,32 +272,14 @@ int init_cam_configuration() {
   camconf->timeout = pdv_serial_get_timeout(ed);
   sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
   
-  printf("frame size  : %d x %d\n", camconf->width, camconf->height);
-  printf("Timeout     : %d\n", camconf->timeout);
-  printf("Camera type : %s\n", camconf->cameratype);
+  printf("detector size  : %d x %d\n",
+	 pdv_get_width(pdv_p), pdv_get_height(pdv_p));
+  printf("Timeout        : %d\n", camconf->timeout);
+  printf("Camera type    : %s\n", camconf->cameratype);
 
   printf("\n%s", dashline);
 
   // -----------------------------
-  /*
-  sprintf(cmd_cli, "cropping rows raw");
-  camera_command(ed, cmd_cli);
-  read_pdv_cli(ed, out_cli);
-  sscanf(out_cli, "%d-%d%s", &camconf->row0, &camconf->row1, fluff);
-
-  sprintf(cmd_cli, "cropping columns raw");
-  camera_command(ed, cmd_cli);
-  usleep(100);
-  read_pdv_cli(ed, out_cli);
-  sscanf(out_cli, "%d-%d%s", &camconf->col0, &camconf->col1, fluff);
-
-  printf("rows = %d-%d, cols = %d-%d\n",
-	 camconf->row0, camconf->row1,
-	 camconf->col0, camconf->col1);
-  camconf->width = 32 * (camconf->col1 - camconf->col0 + 1);
-  camconf->height = camconf->row1 - camconf->row0 + 1;
-
-  */
   
   camconf->nbpix_frm = camconf->width * camconf->height;
   camconf->nbpix_cub = camconf->nbpix_frm * camconf->nbr_hlf;
@@ -304,9 +311,9 @@ int init_cam_configuration() {
 /* =========================================================================
  *      Allocates shared memory data structures for the new settings
  * 
- * Parameters: (xsz, ysz) the total (x, y) camera readout dimensions
+ * Depending on the value of roi_too, ROI shm will also created
  * ========================================================================= */
-void shm_setup() {
+void shm_setup(int roi_too) {
   int shared = 1;
   int NBkw = 10;
   long naxis = 3;
@@ -315,26 +322,29 @@ void shm_setup() {
   uint32_t imsize[3] = {camconf->width, camconf->height, camconf->nbreads};
   uint32_t roisize[2];
 
+  // =========================== primary SHM ===============================
   if (shm_img != NULL) {
     ImageStreamIO_destroyIm(shm_img);
     free(shm_img);
     shm_img = NULL;
   }
-
   shm_img = (IMAGE*) malloc(sizeof(IMAGE));
   sprintf(shmname, "%s", "cred1"); // root-name of the shm
   ImageStreamIO_createIm_gpu(shm_img, shmname, naxis, imsize, atype, -1,
 			     shared, IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
 
   // =========================== add keywords ==============================
-  /*
-  strcpy(shm_img[0].kw[0].name, "fps");
+  /* strcpy(shm_img[0].kw[0].name, "fps");
   shm_img[0].kw[0].type = 'D';
   shm_img[0].kw[0].value.numf = camconf->fps;
-  strcpy(shm_img[0].kw[0].comment, "frame rate (in Hz)");
-  */
-  if (splitmode == 1) { // should be done anyways no ?
+  strcpy(shm_img[0].kw[0].comment, "frame rate (in Hz)"); */
 
+  // ================= memory chunk to save to disk ========================
+  tosave = (unsigned short *) malloc(camconf->nbpix_cub *
+				     sizeof(unsigned short));
+
+  // =========================== create ROIs ===============================
+  if (roi_too == 1) {
     if (shm_ROI != NULL) {
       ImageStreamIO_destroyIm(shm_ROI);
       free(shm_ROI);
@@ -343,17 +353,40 @@ void shm_setup() {
 
     naxis = 2;
     shm_ROI = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
-
+  
     for (int ii = 0; ii < nroi; ii++) {
-      roisize[0] = readout[ii].xsz;
-      roisize[1] = readout[ii].ysz;
-
-      ImageStreamIO_createIm_gpu(&shm_ROI[ii], readout[ii].name, naxis,
-  				 roisize, atype, -1, shared,
-  				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
+      roisize[0] = ROI[ii].xsz;
+      roisize[1] = ROI[ii].ysz;
+      ImageStreamIO_createIm_gpu(&shm_ROI[ii], ROI[ii].name, naxis,
+				 roisize, atype, -1, shared,
+				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
     }
   }
   printf("Shared memory structures created!\n");
+}
+
+/* =========================================================================
+ *   Free the memory allocated to the shared memory data structures
+ * 
+ * Depending on the value of roi_too, ROI shm are also deleted
+ * ========================================================================= */
+void free_shm(int roi_too) {
+  if (shm_img != NULL) {
+    ImageStreamIO_destroyIm(shm_img);
+    free(shm_img);
+    shm_img = NULL;
+  }
+  free(tosave);  // the holder for the data to save to disk
+
+  if (roi_too == 1) {
+    if (shm_ROI != NULL) {
+      for (ii= 0; ii < nroi; ii++) {
+	ImageStreamIO_destroyIm(&shm_ROI[ii]);
+      }
+      free(shm_ROI);
+      shm_ROI = NULL;
+    }
+  }
 }
 
 /* =========================================================================
@@ -511,7 +544,10 @@ void* fetch_imgs(void *arg) {
       liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
       shm_img->md->cnt1 = liveindex;       // idem
 
-      if (savemode > 0) {
+      // another approach here would be to have a thread running in // when savemode=1
+      // this thread would use an internal semaphore to know when to save a FITS file
+
+      if (camconf->save_mode == 1) {
 	if (liveindex == camconf->nbr_hlf) {
 	  // save the first half of the live data-cube
 	  memcpy(tosave, (unsigned short *) shm_img->array.UI16,
@@ -541,21 +577,20 @@ void* fetch_imgs(void *arg) {
  * ========================================================================= */
 void* split_imgs(void* arg) {
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
-  int nbpix = camconf->width * camconf->height;
-  unsigned short int *liveroi, *liveimg;
+  unsigned short *liveroi, *liveimg;
   int ixsz, xsz, ysz, x0, y0;
 
   while (keepgoing > 0) {
     ImageStreamIO_semwait(shm_img, 1);  // waiting for image update
-    liveimg = shm_img->array.UI16 + shm_img->md->cnt1 * nbpix;
+    liveimg = shm_img->array.UI16 + shm_img->md->cnt1 * camconf->nbpix_frm;
     ixsz = shm_img->md->size[0];
     
     for (ri = 0; ri < nroi; ri++) {
       liveroi = shm_ROI[ri].array.UI16; // live ROI data pointer
       xsz = shm_ROI[ri].md->size[0];
       ysz = shm_ROI[ri].md->size[1];
-      x0 = readout[ri].x0;
-      y0 = readout[ri].y0;
+      x0 = ROI[ri].x0;
+      y0 = ROI[ri].y0;
 
       shm_ROI[ri].md->write = 1;
       for (jj = 0; jj < ysz; jj++) {
@@ -572,13 +607,15 @@ void* split_imgs(void* arg) {
   return NULL;
 }
 
+
 /* =========================================================================
- *      Functions that will be registered with the commander server
+ *              Functions registered with the commander server
  * ========================================================================= */
-void fetch(){
-  /* -------------------------------------------------------------------------
-   *          Trigger the thread fetching images to shared memory
-   * ------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------
+ *          Trigger the thread fetching images to shared memory
+ * ------------------------------------------------------------------------- */
+void fetch() {
   if (keepgoing == 0) {
     keepgoing = 1; // raise the flag
     printf("Triggering the fetching data\n");
@@ -586,7 +623,7 @@ void fetch(){
 
     if (splitmode == 1) {
       printf("ROI splitting mechanism is ON\n");
-      free(readout);
+      free(ROI);
       refresh_image_splitting_configuration();
       pthread_create(&tid_split, NULL, split_imgs, NULL);
     }
@@ -594,10 +631,10 @@ void fetch(){
   sprintf(status_cstr, "%s", "running");
 }
 
+/* -------------------------------------------------------------------------
+ *            Processing Camera command-line interface exchanges.
+ * ------------------------------------------------------------------------- */
 std::string cli(std::string cmd) {
-  /* -------------------------------------------------------------------------
-   *            Processing Camera command-line interface exchanges.
-   * ------------------------------------------------------------------------- */
   char out_cli[OUTSIZE];  // holder for CLI responses  
   
   camera_command(ed, cmd.c_str());
@@ -605,28 +642,39 @@ std::string cli(std::string cmd) {
   return out_cli;
 }
 
+/* -------------------------------------------------------------------------
+ *                          Returns server status
+ * ------------------------------------------------------------------------- */
 std::string status() {
-  /* -------------------------------------------------------------------------
-   *                          Returns server status
-   *  ------------------------------------------------------------------------- */
   return status_cstr;
 }
 
-void stop(){
-  /* -------------------------------------------------------------------------
-   *                      Interrupts the fetching process
-   *  ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ *                      Interrupts the fetching process
+ * ------------------------------------------------------------------------- */
+void stop() {
   if (keepgoing == 1) {
     keepgoing = 0;
   }
   sprintf(status_cstr, "%s", "idle");
 }
- 
+
+/* -------------------------------------------------------------------------
+ *                            Quits the program
+ * ------------------------------------------------------------------------- */
+void quit() {
+  if (keepgoing == 1) {
+    keepgoing = 0;
+  }
+  free(ROI);
+  free_shm(1); // erase everything, including ROI SHMs!
+  exit(0);
+}
+
+/* -------------------------------------------------------------------------
+ *           server level command to update the camera frame rate
+ * ------------------------------------------------------------------------- */
 void update_fps(float fps) {
-    /* -------------------------------------------------------------------------
-     * server level command to update the camera fps and synchronize the
-     * shared memory with the new settings
-     * ------------------------------------------------------------------------- */
   int wasrunning = 0;  // to keep track
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
@@ -639,27 +687,49 @@ void update_fps(float fps) {
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
 
-  if (wasrunning == 1) fetch();
+  if (wasrunning == 1)
+    fetch();
 }
 
-void set_savemode(int _mode) {
-    /* -------------------------------------------------------------------------
-     * Start or interrupt the FITS saving of data cubes acquired by the camera
-     * ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ * server level command to update the camera gain
+ * currently, no value verification so don't be stupid
+ * ------------------------------------------------------------------------- */
+void update_gain(float gain) {
+  int wasrunning = 0;  // to keep track
+  char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
+  char out_cli[OUTSIZE];  // holder for CLI responses
+
+  if (keepgoing == 1) {
+    keepgoing = 0; // to interrupt the fetching process
+    wasrunning = 1; //
+  }
+  sprintf(cmd_cli, "set gain %.2f", gain);
+  camera_command(ed, cmd_cli);
+  read_pdv_cli(ed, out_cli);
+
+  if (wasrunning == 1)
+    fetch();
+}
+
+/* -------------------------------------------------------------------------
+ * Start or interrupt the FITS saving of data cubes acquired by the camera
+ * ------------------------------------------------------------------------- */
+void set_save_mode(int _mode) {
   if (_mode <= 0) {
-    savemode = 0;
+    camconf->save_mode = 0;
     printf("Savemode was turned OFF\n");
   }
   else {
-    savemode = 1;
+    camconf->save_mode = 1;
     printf("Savemode was turned ON\n");
   }
 }
 
-void set_splitmode(int _mode) {
-  /* -------------------------------------------------------------------------
-   *      Trigger the thread splitting the raw image into its different ROI
-   * ------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ *      Trigger the thread splitting the raw image into its different ROI
+ * ------------------------------------------------------------------------- */
+void set_split_mode(int _mode) {
   if (_mode <= 0) {
     splitmode = 0;
     printf("Splitmode was turned OFF\n");
@@ -670,6 +740,65 @@ void set_splitmode(int _mode) {
   }
 }
 
+/* -------------------------------------------------------------------------
+ *     Switches the (speed optimized) cropped use mode of the CRED1 for
+ * the Heimdallr/BALDR instrument setup.
+ * ------------------------------------------------------------------------- */
+void set_crop_mode(int _mode) {
+  int ii, wasrunning = 0;
+
+  // if the acquisition is running, interrupt it and remember it was running
+  if (keepgoing == 1) {
+    keepgoing = 0;  // interrupt the acquisition
+    wasrunning = 1; // keep that in mind
+  }
+
+  // update the cropmode internal flag according to the command
+  if (_mode <=0) camconf->cropmode = 0;
+  else camconf->cropmode = 1;
+
+  // configure the detector readout
+  optimize_cropping_parameters();   // figure out the rows to eliminate
+  init_cam_configuration();         // configure the readout
+  shm_setup(0);                     // reallocate main SHM memory
+
+  // 5. update the y-coordinate values of the BALDR ROIs in accordance with cropmode
+  camconf->nrows_cropped = 0;
+  if (camconf->cropmode == 1) {
+    camconf->nrows_cropped = camconf->bal_min_row - camconf->hei_max_row;
+  }
+
+  // back to prior business
+  if (wasrunning == 1) {
+    fetch();
+  }
+}
+
+/* -------------------------------------------------------------------------
+ *     Set up the CRED1 readout to non-destructive readout mode
+ *
+ * not fully functional yet and available for preliminary debugging.
+ * implementation of time signatures for the different channels is missing
+ * ------------------------------------------------------------------------- */
+void set_ndmr_mode(int _mode) {
+  char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
+  char out_cli[OUTSIZE];  // holder for CLI responses
+
+  if (_mode <= 0) {  // ------ engineering mode -----
+    sprintf(cmd_cli, "set mode globalresetcds");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+  }
+  else {  // ------------------- science mode ------------------
+    sprintf(cmd_cli, "set mode globalresetbursts");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+
+    sprintf(cmd_cli, "set nbreadworeset %d", camconf->nbreads);
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+  } 
+}
 
 namespace co=commander;
 
@@ -677,12 +806,15 @@ COMMANDER_REGISTER(m)
 {
   using namespace co::literals;
   m.def("fetch", fetch, "Trigger fetching data from the camera.");
-  m.def("cli", cli, "Directly send a command to the camera Command Line Interface.");
+  m.def("cli", cli, "Direct interface to the camera Command Line Interface.");
   m.def("status", status, "Get the current status of the camera.");
   m.def("stop", stop, "Stop fetching data from the camera.");
-  m.def("split", set_splitmode, "Trigger the update of ROI data shared memory");
-  m.def("fps", update_fps, "Updates the camera FPS and syncs SHM");
-  m.def("savemode", set_savemode, "Set/unset the FITS cube savemode");
+  m.def("set_fps", update_fps, "Updates the camera FPS and syncs SHM");
+  m.def("set_gain", update_gain, "Updates the camera gain");
+  m.def("split_mode", set_split_mode, "Set/unset the multi ROI use mode");
+  m.def("save_mode", set_save_mode, "Set/unset the FITS cube save mode");
+  m.def("crop_mode", set_crop_mode, "Set/unset the cropped readout mode");
+  m.def("ndmr_mode", set_ndmr_mode, "Set/unset the multiple readout mode");
 }
 
 /* =========================================================================
@@ -695,7 +827,7 @@ int main(int argc, char **argv) {
   int ii = 0;
 
   sprintf(savedir, "%s/Music/", homedir);  // cubes saved in ~/Music/ for now
-#ifndef SIMULATE
+
   // ----- start with the serial CLI -----
   ed = pdv_open(EDT_INTERFACE, unit);
   if (ed == NULL) {
@@ -716,20 +848,15 @@ int main(int argc, char **argv) {
   }
   pdv_flush_fifo(pdv_p);
 
+  // initial camera server setup
+  camconf = (CREDSTRUCT*) malloc(sizeof(CREDSTRUCT));
+  camconf->cropmode = 0; // for initial setup
   init_cam_configuration();
-
-#endif
-
-  // --------- configuration of the image splitting -------------
   refresh_image_splitting_configuration();
-  
-  shm_setup();
-  tosave = (unsigned short int*) malloc(camconf->nbpix_cub * sizeof(unsigned short int));
+  shm_setup(1);  // setup everything, including the ROI SHMs
 
   // --------------------- set-up the prompt --------------------
   
-  //-
-
   printf("\n%s", dashline);
   printf(" _   _      _               _       _ _           ____        _     _      \n");
   printf("| | | | ___(_)_ __ ___   __| | __ _| | |_ __     | __ )  __ _| | __| |_ __ \n");
@@ -741,31 +868,18 @@ int main(int argc, char **argv) {
   printf("                | |__| (_| | | | | | |  __/ | | (_| |                      \n");
   printf("                 \\____\\__,_|_| |_| |_|\\___|_|  \\__,_|                      \n");
   printf("\n%s", dashline);
-   
-  // start the commander server
-  co::Server s(argc, argv);
 
+  // --------------------------
+  // start the commander server
+  // --------------------------
+  co::Server s(argc, argv);
   s.run();
   
-  // -------------------------
+  // ------------------------
   // clean-end of the program
-  // -------------------------  
+  // ------------------------ 
   printf("%s\n", status_cstr);
-  free(readout);
-  if (shm_img != NULL) {
-    ImageStreamIO_destroyIm(shm_img);
-    free(shm_img);
-    shm_img = NULL;
-  }
-
-  if (shm_ROI != NULL) {
-    for (ii= 0; ii < nroi; ii++) {
-      ImageStreamIO_destroyIm(&shm_ROI[ii]);
-    }
-    free(shm_ROI);
-    shm_ROI = NULL;
-  }
-
-  free(tosave);  // the holder for the data to save
+  free(ROI);
+  free_shm(1); // erase everything, including ROI SHMs!
   exit(0);
 }
