@@ -215,7 +215,6 @@ void refresh_image_splitting_configuration() {
  *      figure out the most aggressive possible cropping parameters
  * ========================================================================= */
 void optimize_cropping_parameters() {
-  int ii;
   camconf->bal_min_row = 255;  // reset values to initial
   camconf->hei_max_row = 0;    // 
 
@@ -228,7 +227,10 @@ void optimize_cropping_parameters() {
       if (ROI[ii].y0 + ROI[ii].xsz >= camconf->hei_max_row)
 	camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
   }
-  printf("Aggressive cropping parameters are: %d and %d",
+  camconf->bal_min_row -= 2;
+  camconf->hei_max_row += 2;
+
+  printf("Cropping parameters are: %d and %d",
 	 camconf->hei_max_row, camconf->bal_min_row);
 }
 
@@ -248,13 +250,29 @@ int init_cam_configuration() {
   read_pdv_cli(ed, out_cli);  // to flush ?
   
   // ------
-  if (camconf->cropmode == 0) 
+  if (camconf->cropmode == 0) {
     sprintf(cmd_cli, "set cropping rows 1-256");
-  else
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);  // to flush
+
+    sprintf(cmd_cli, "set cropping off");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);  // to flush
+
+    camconf->nrows_cropped = 0;    
+  }
+  else {
     sprintf(cmd_cli, "set cropping rows 1-%d,%d-256",
 	    camconf->hei_max_row, camconf->bal_min_row);
-  camera_command(ed, cmd_cli);
-  read_pdv_cli(ed, out_cli);  // to flush ?
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);  // to flush
+
+    sprintf(cmd_cli, "set cropping on");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);  // to flush
+
+    camconf->nrows_cropped = camconf->bal_min_row - camconf->hei_max_row;
+  }
 
   // ------
   sprintf(cmd_cli, "set mode globalresetcds");  // engineering mode
@@ -267,30 +285,25 @@ int init_cam_configuration() {
   camconf->nbreads = 200;
   camconf->nbr_hlf = 100;
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
-  camconf->height = (uint32_t) pdv_get_height(pdv_p);
+  camconf->height = (uint32_t) pdv_get_height(pdv_p) - camconf->nrows_cropped;
   camconf->depth = pdv_get_depth(pdv_p);
   camconf->timeout = pdv_serial_get_timeout(ed);
   sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
   
-  printf("detector size  : %d x %d\n",
-	 pdv_get_width(pdv_p), pdv_get_height(pdv_p));
-  printf("Timeout        : %d\n", camconf->timeout);
-  printf("Camera type    : %s\n", camconf->cameratype);
-
-  printf("\n%s", dashline);
-
-  // -----------------------------
-  
   camconf->nbpix_frm = camconf->width * camconf->height;
   camconf->nbpix_cub = camconf->nbpix_frm * camconf->nbr_hlf;
 
-  printf(">> resized window size = %d x %d\n",
+  printf("Camera type    : %s\n", camconf->cameratype);
+  printf("detector size  : %d x %d pixels\n",
+	 pdv_get_width(pdv_p), pdv_get_height(pdv_p));
+  printf("Timeout        : %d ms\n", camconf->timeout);
+  printf("Frame size     : %d x %d pixels\n",
 	 camconf->width, camconf->height);
-  printf(">> saving cubes of %d images\n", camconf->nbr_hlf);
-  // -----------------------------
+  printf("Save cube size : %d images\n", camconf->nbr_hlf);
   
   sprintf(cmd_cli, "maxfps raw");
   camera_command(ed, cmd_cli);
+
   read_pdv_cli(ed, out_cli);
   sscanf(out_cli, "%f%s", &camconf->maxfps, fluff);
   sprintf(cmd_cli, "set fps %.1f", camconf->maxfps);
@@ -300,7 +313,9 @@ int init_cam_configuration() {
   camera_command(ed, cmd_cli);
   read_pdv_cli(ed, out_cli);
   sscanf(out_cli, "%f%s", &camconf->fps, fluff);
-  printf("FPS set to: %f Hz\n", camconf->fps);
+
+  printf("FPS            : %f Hz\n", camconf->fps);
+  printf("%s", dashline);
 
   sprintf(cmd_cli, "status raw");
   camera_command(ed, cmd_cli);
@@ -362,7 +377,6 @@ void shm_setup(int roi_too) {
 				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
     }
   }
-  printf("Shared memory structures created!\n");
 }
 
 /* =========================================================================
@@ -371,6 +385,7 @@ void shm_setup(int roi_too) {
  * Depending on the value of roi_too, ROI shm are also deleted
  * ========================================================================= */
 void free_shm(int roi_too) {
+  int ii;
   if (shm_img != NULL) {
     ImageStreamIO_destroyIm(shm_img);
     free(shm_img);
@@ -436,6 +451,7 @@ int camera_command(EdtDev ed, const char *cmd) {
   read_pdv_cli(ed, outbuf); // flush
   sprintf(tmpbuf, "%s\r", cmd);
   pdv_serial_command(ed, tmpbuf);
+  usleep(10000);
   if (verbose)
     printf("command: %s", tmpbuf);
   return 0;
@@ -446,14 +462,24 @@ int camera_command(EdtDev ed, const char *cmd) {
  * ========================================================================= */
 float camera_query_float(EdtDev ed, const char *cmd) {
   char outbuf[2000];
+  char fluff[50];         // to discard  
   float fval;
 
   camera_command(ed, cmd);
-  usleep(100000); // why this much? to be adjusted!
   read_pdv_cli(ed, outbuf);
-  sscanf(outbuf, "%f", &fval);
-
+  sscanf(outbuf, "%f%s", &fval, fluff);
   return fval;
+}
+
+int camera_query_int(EdtDev ed, const char *cmd) {
+  char outbuf[2000];
+  char fluff[50];         // to discard  
+  int ival;
+
+  camera_command(ed, cmd);
+  read_pdv_cli(ed, outbuf);
+  sscanf(outbuf, "%d%s", &ival, fluff);
+  return ival;
 }
 
 /* =========================================================================
@@ -713,6 +739,24 @@ void update_gain(float gain) {
 }
 
 /* -------------------------------------------------------------------------
+ *           server level command to query the current camera frame rate
+ * ------------------------------------------------------------------------- */
+float query_fps() {
+  char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
+  sprintf(cmd_cli, "fps raw");
+  return camera_query_float(ed, cmd_cli);
+}
+
+/* -------------------------------------------------------------------------
+ *           server level command to query the current camera gain
+ * ------------------------------------------------------------------------- */
+int query_gain() {
+  char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
+  sprintf(cmd_cli, "gain raw");
+  return camera_query_int(ed, cmd_cli);
+}
+
+/* -------------------------------------------------------------------------
  * Start or interrupt the FITS saving of data cubes acquired by the camera
  * ------------------------------------------------------------------------- */
 void set_save_mode(int _mode) {
@@ -730,6 +774,14 @@ void set_save_mode(int _mode) {
  *      Trigger the thread splitting the raw image into its different ROI
  * ------------------------------------------------------------------------- */
 void set_split_mode(int _mode) {
+  int wasrunning = 0;
+  
+  // if the acquisition is running, interrupt it and remember it was running
+  if (keepgoing == 1) {
+    keepgoing = 0;  // interrupt the acquisition
+    wasrunning = 1; // keep that in mind
+  }
+  
   if (_mode <= 0) {
     splitmode = 0;
     printf("Splitmode was turned OFF\n");
@@ -738,6 +790,9 @@ void set_split_mode(int _mode) {
     splitmode = 1;
     printf("Splitmode was turned ON\n");
   }
+  // back to prior business
+  if (wasrunning == 1)
+    fetch();
 }
 
 /* -------------------------------------------------------------------------
@@ -745,7 +800,7 @@ void set_split_mode(int _mode) {
  * the Heimdallr/BALDR instrument setup.
  * ------------------------------------------------------------------------- */
 void set_crop_mode(int _mode) {
-  int ii, wasrunning = 0;
+  int wasrunning = 0;
 
   // if the acquisition is running, interrupt it and remember it was running
   if (keepgoing == 1) {
@@ -760,18 +815,11 @@ void set_crop_mode(int _mode) {
   // configure the detector readout
   optimize_cropping_parameters();   // figure out the rows to eliminate
   init_cam_configuration();         // configure the readout
-  shm_setup(0);                     // reallocate main SHM memory
-
-  // 5. update the y-coordinate values of the BALDR ROIs in accordance with cropmode
-  camconf->nrows_cropped = 0;
-  if (camconf->cropmode == 1) {
-    camconf->nrows_cropped = camconf->bal_min_row - camconf->hei_max_row;
-  }
+  shm_setup(1);                     // reallocate main SHM memory
 
   // back to prior business
-  if (wasrunning == 1) {
+  if (wasrunning == 1)
     fetch();
-  }
 }
 
 /* -------------------------------------------------------------------------
@@ -808,13 +856,16 @@ COMMANDER_REGISTER(m)
   m.def("fetch", fetch, "Trigger fetching data from the camera.");
   m.def("cli", cli, "Direct interface to the camera Command Line Interface.");
   m.def("status", status, "Get the current status of the camera.");
-  m.def("stop", stop, "Stop fetching data from the camera.");
-  m.def("set_fps", update_fps, "Updates the camera FPS and syncs SHM");
-  m.def("set_gain", update_gain, "Updates the camera gain");
-  m.def("split_mode", set_split_mode, "Set/unset the multi ROI use mode");
-  m.def("save_mode", set_save_mode, "Set/unset the FITS cube save mode");
-  m.def("crop_mode", set_crop_mode, "Set/unset the cropped readout mode");
-  m.def("ndmr_mode", set_ndmr_mode, "Set/unset the multiple readout mode");
+  m.def("stop", stop, "Stop fetching data from the. camera.");
+  m.def("quit", quit, "Stops and closes the server.");
+  m.def("set_fps", update_fps, "Updates the camera FPS and syncs SHM.");
+  m.def("get_fps", query_fps, "Prints the current camera frame rate.");
+  m.def("get_gain", query_gain, "Prints the current camera gain.");
+  m.def("set_gain", update_gain, "Updates the camera gain.");
+  m.def("split_mode", set_split_mode, "Set/unset the multi ROI use mode.");
+  m.def("save_mode", set_save_mode, "Set/unset the FITS cube save mode.");
+  m.def("crop_mode", set_crop_mode, "Set/unset the cropped readout mode.");
+  m.def("ndmr_mode", set_ndmr_mode, "Set/unset the multiple readout mode.");
 }
 
 /* =========================================================================
@@ -824,7 +875,6 @@ int main(int argc, char **argv) {
   char errstr[2*CMDSIZE];
   char edt_devname[CMDSIZE];
   const char* homedir = getenv("HOME");
-  int ii = 0;
 
   sprintf(savedir, "%s/Music/", homedir);  // cubes saved in ~/Music/ for now
 
