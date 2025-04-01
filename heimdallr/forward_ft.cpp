@@ -1,4 +1,5 @@
 #include "heimdallr.h"
+//#define PRINT_TIMING
 
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
      subarray = subarray_in;
@@ -40,75 +41,80 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
     }
 }
     
-void ForwardFt::spawn() {
-    pthread_create(&thread, NULL, &ForwardFt::start, this);
+void ForwardFt::start() {
+    thread = std::thread(&ForwardFt::loop, this);
 }
 
-void ForwardFt::join() {
+void ForwardFt::stop() {
     mode = FT_STOPPING;
-    pthread_join(thread, NULL);
+    if (thread.joinable()) thread.join();
 }
 
-void* ForwardFt::start(void* arg) {
+void ForwardFt::loop() {
+#ifdef PRINT_TIMING
     timespec now, then;
+#endif
     unsigned int ii_shift, jj_shift, szj;
-    ForwardFt* self = static_cast<ForwardFt*>(arg); //!!! Replace this with std::thread ??
-    self->cnt = self->subarray->md->cnt0;
-    while (self->mode != FT_STOPPING) {
-        if (self->subarray->md->cnt0 != self->cnt) {
+    cnt = subarray->md->cnt0;
+    while (mode != FT_STOPPING) {
+        if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
-            szj = self->subim_sz/2 + 1;
-            if ((self->subarray->md->cnt0 > self->cnt+1) && (self->mode == FT_RUNNING)) {
-                std::cout << "Missed frame" << self->subarray->md->cnt0 << self->cnt << std::endl;
-                self->nerrors++;
+            szj = subim_sz/2 + 1;
+            if ((subarray->md->cnt0 > cnt+1) && (mode == FT_RUNNING)) {
+                std::cout << "Missed frame" << subarray->md->cnt0 << cnt << std::endl;
+                nerrors++;
             }
-            self->mode = FT_RUNNING;
+            mode = FT_RUNNING;
 
             // Copy the data from the IMAGE subarray to the subimage
+#ifdef PRINT_TIMING
             clock_gettime(CLOCK_REALTIME, &then);
-            for (unsigned int ii=0; ii<self->subim_sz; ii++) {
-                for (unsigned int jj=0; jj<self->subim_sz; jj++) {
-                    ii_shift = (ii + self->subim_sz/2) % self->subim_sz;
-                    jj_shift = (jj + self->subim_sz/2) % self->subim_sz;
-                    self->subim[ii_shift*self->subim_sz + jj_shift] = 
-                        self->subarray->array.F[ii*self->subim_sz + jj]
-                            * self->window[ii*self->subim_sz + jj];
+#endif
+            for (unsigned int ii=0; ii<subim_sz; ii++) {
+                for (unsigned int jj=0; jj<subim_sz; jj++) {
+                    ii_shift = (ii + subim_sz/2) % subim_sz;
+                    jj_shift = (jj + subim_sz/2) % subim_sz;
+                    subim[ii_shift*subim_sz + jj_shift] = 
+                        subarray->array.F[ii*subim_sz + jj]
+                            * window[ii*subim_sz + jj];
                 }
             }
             // Do the FFT, and then indicate that the frame has been processed
-            fftw_execute(self->plan);
+            fftw_execute(plan);
 
-            // Temp timing block !!!
+#ifdef PRINT_TIMING
             clock_gettime(CLOCK_REALTIME, &now);
             if (then.tv_sec == now.tv_sec)
                 std::cout << "Window and FFT time: " << now.tv_nsec-then.tv_nsec << std::endl;
             then = now;
+#endif
 
             // Compute the power spectrum. Other than SNR purposes, this isn't 
             // time critical, but doesn't take long wo we can do it here.
-            int next_ps_ix = (self->subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
-            for (unsigned int ii=0; ii<self->subim_sz; ii++) {
+            int next_ps_ix = (subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
+            for (unsigned int ii=0; ii<subim_sz; ii++) {
                 for (unsigned int jj=0; jj<szj; jj++) {
-                    self->power_spectra[next_ps_ix][ii*szj + jj] = 
-                        self->ft[ii*szj + jj][0] * self->ft[ii*szj + jj][0] +
-                        self->ft[ii*szj + jj][1] * self->ft[ii*szj + jj][1];
-                    self->power_spectrum[ii*szj + jj] += 
-                        self->power_spectra[next_ps_ix][ii*szj + jj]/MAX_N_PS_BOXCAR -
-                        self->power_spectra[self->ps_index][ii*szj + jj]/MAX_N_PS_BOXCAR;
+                    power_spectra[next_ps_ix][ii*szj + jj] = 
+                        ft[ii*szj + jj][0] * ft[ii*szj + jj][0] +
+                        ft[ii*szj + jj][1] * ft[ii*szj + jj][1];
+                    power_spectrum[ii*szj + jj] += 
+                        power_spectra[next_ps_ix][ii*szj + jj]/MAX_N_PS_BOXCAR -
+                        power_spectra[ps_index][ii*szj + jj]/MAX_N_PS_BOXCAR;
                 }
             }
-            self->ps_index = next_ps_ix;
+            ps_index = next_ps_ix;
 
+#ifdef PRINT_TIMING
             clock_gettime(CLOCK_REALTIME, &now);
             if (then.tv_sec == now.tv_sec)
                 std::cout << "PS time: " << now.tv_nsec-then.tv_nsec << std::endl;
             then = now;
+#endif
 
             // As long as this is the same type as cnt0, it should wrap around correctly
-            self->cnt++;
+            cnt++;
 
-            //std::cout << self->subarray->name << ": " << self->cnt << std::endl;
+            //std::cout << subarray->name << ": " << cnt << std::endl;
         } else usleep(100); //!!! Need a semaphore here if "nearly" ready for the FT
     }
-    return NULL;
 }

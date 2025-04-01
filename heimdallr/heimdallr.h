@@ -1,11 +1,12 @@
 #include <complex> 
 #include <fftw3.h>
-#include <pthread.h>
 #include <ImageStreamIO.h>
 #include <stdlib.h>
 #include <iostream>
 #define TOML_HEADER_ONLY 0
 #include <toml.hpp>
+#include <mutex>
+#include <thread>
 
 //----------Defines-----------
 #define FT_STARTING 0
@@ -102,11 +103,15 @@ struct Bispectrum{
 };
 
 struct PIDSettings{
-    pthread_mutex_t mutex;
-    double gain;
+    std::mutex mutex;
+    double kp;
+    double ki;
+    double kd;
+    double integral;
     double dl_feedback_gain;
 };
 
+//-------Commander structs-------------
 // An encoded 2D image in row-major form.
 struct EncodedImage
 {
@@ -114,6 +119,7 @@ struct EncodedImage
     std::string type;
     std::string message;
 };
+//-------End of Commander structs------
 
 // -------- Extern global definitions ------------
 // The statit initial input parameters
@@ -127,7 +133,7 @@ extern Baseline baselines[N_BL];
 extern Bispectrum bispectra[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-extern pthread_mutex_t baseline_mutex, beam_mutex;
+extern std::mutex baseline_mutex, beam_mutex;
 
 
 // ForwardFt class
@@ -157,20 +163,20 @@ public:
     ForwardFt(IMAGE * subarray_in);
     
     // Spawn the thread that does the FFTs.
-    void spawn();
+    void start();
 
     // Clean-up and join the FFT thread.
-    void join();
+    void stop();
 private:
     double *subim;
     double *window;
     fftw_plan plan;
-    pthread_t thread;
+    std::thread thread; 
     int mode=FT_STARTING;
-    static void* start(void* arg);
+    void loop();
 };
 // Main thread function for fringe tracking.
-void* fringe_tracker(void* arg);
+void fringe_tracker();
 
 //The forward Fourier transforms
 extern ForwardFt *K1ft, *K2ft;

@@ -2,7 +2,9 @@
 #include "heimdallr.h"
 #include <commander/commander.h>
 #include <math.h>
-#include <pthread.h>
+// Commander struct definitions for json. This is in a separate file to keep the main code clean.
+#include "commander_structs.h"
+
 extern "C" {
 #include <b64/cencode.h> // Base64 encoding, in C so Frantz can see how it works.
 }
@@ -19,7 +21,7 @@ Baseline baselines[N_BL];
 Bispectrum bispectra[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-pthread_mutex_t baseline_mutex, beam_mutex;
+std::mutex baseline_mutex, beam_mutex;
 
 //The forward Fourier transforms
 ForwardFt *K1ft, *K2ft;
@@ -65,31 +67,13 @@ std::string encode(const char* input, unsigned int size)
     return output_str;
 }
 
-// Commander definitions for json
-namespace nlohmann {
-    template <>
-    struct adl_serializer<EncodedImage> {
-        static void to_json(json& j, const EncodedImage& p) {
-            j = json{{"szx", p.szx}, {"szy", p.szy}, {"type", p.type}, {"message", p.message}};
-        }
-        // !!! If defined output only, this isn't needed...
-        static void from_json(const json& j, EncodedImage& p) {
-            j.at("szx").get_to(p.szx);
-            j.at("szy").get_to(p.szy);
-            j.at("type").get_to(p.type);
-            j.at("message").get_to(p.message);
-
-        }
-    };
-}
-
 //----------commander functions from here---------------
 void linear_search(uint beam, double start, double stop, double rate, std::string actuator) {
     if (beam >= N_TEL) {
         std::cout << "Beam number (arg 0) out of range" << std::endl;
         return;
     }
-    pthread_mutex_lock(&beam_mutex);
+    beam_mutex.lock();
     //!!! Add code to set the DM piston offset to zero
 
     // Move the delay line or piezo to the start position
@@ -98,15 +82,15 @@ void linear_search(uint beam, double start, double stop, double rate, std::strin
     } else {
         //!!! Add code to move the delay line
     }
-    pthread_mutex_unlock(&beam_mutex);
+    beam_mutex.unlock();
     usleep(DELAY_MOVE_USEC); // Wait for the delay line to move
     // Set the SNR values to zero.
-    pthread_mutex_lock(&baseline_mutex);
+    baseline_mutex.lock();
     for (int i = 0; i < N_TEL-1; i++) {
         baselines[i].gd_snr=0;
         baselines[i].pd_snr=0;
     }
-    pthread_mutex_unlock(&baseline_mutex);
+    baseline_mutex.unlock();
     return;
 }
 
@@ -161,12 +145,11 @@ int main(int argc, char* argv[]) {
     K2ft = new ForwardFt(&K2);
 
     // Start the FFT threads
-    K1ft->spawn();
-    K2ft->spawn();
+    K1ft->start();
+    K2ft->start();
 
     // Start the main fringe-tracking thread. 
-    pthread_t fringe_thread; 
-    pthread_create(&fringe_thread, NULL, fringe_tracker, NULL);
+    std::thread fringe_thread(fringe_tracker);
 
     // Initialize the commander server and run it
     commander::Server s(argc, argv);
@@ -174,9 +157,9 @@ int main(int argc, char* argv[]) {
 
     // Join the fringe-tracking thread
     servo_mode = SERVO_STOP;
-    pthread_join(fringe_thread, NULL);
+    fringe_thread.join();
 
     // // Join the FFTW threads
-    K1ft->join();
-    K2ft->join();
+    K1ft->stop();
+    K2ft->stop();
 }

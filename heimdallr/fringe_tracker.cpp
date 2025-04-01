@@ -55,7 +55,7 @@ void initialise_baselines(){
 }
 
 // The main fringe tracking function
-void* fringe_tracker(void* arg){
+void fringe_tracker(){
     using namespace std::complex_literals;
     long x_px, y_px, stride;
     initialise_baselines();
@@ -127,5 +127,4 @@ void* fringe_tracker(void* arg){
         }
 
     }
-    return NULL;
 }
