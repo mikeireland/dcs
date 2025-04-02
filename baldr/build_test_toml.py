@@ -15,7 +15,7 @@ def generate_config(beam_id, phasemask):
     beam_key = f"beam{beam_id}"
     config[beam_key] = {}
 
-    # I2A: 2D array of numbers
+    # I2A: 2D array of numbers (2x2 matrix)
     config[beam_key]["I2A"] = [
         [1.1, 2.2],
         [3.3, 4.4]
@@ -32,19 +32,26 @@ def generate_config(beam_id, phasemask):
     config[beam_key][phasemask] = {}
     config[beam_key][phasemask]["ctrl_model"] = {
         "IM": [[0.1, 0.2], [0.3, 0.4]],
+        "I2A": [[1.0, 2.0], [3.0, 4.0]],
         "I2M": [[1.0, 2.0], [3.0, 4.0]],
+        "I2M_LO": [[1.0, 2.0], [3.0, 4.0]],
+        "I2M_HO": [[1.0, 2.0], [3.0, 4.0]],
         "M2C": [[5.0, 6.0], [7.0, 8.0]],
-        "I0": [[9.0, 10.0], [11.0, 12.0]],
-        "N0": [[13.0, 14.0], [15.0, 16.0]],
-        "norm_pupil": [[17.0, 18.0], [19.0, 20.0]],
-        "inner_pupil_filt": [[True, False], [False, True]],
+        "M2C_LO": [[5.0, 6.0], [7.0, 8.0]],
+        "M2C_HO": [[5.0, 6.0], [7.0, 8.0]],
+        # Vectors for multiplication (length matches I2A's number of columns: 2)
+        "I0": [[9.0], [10.0]],
+        "N0": [[13.0], [14.0]],
+        "norm_pupil": [[17.0], [18.0]],
+        "inner_pupil_filt": [[True], [False]],
         "camera_config": {
             "fps": 0.033,
             "gain": 1.5
         },
-        "bad_pixel_mask": [[False, True], [True, False]],
-        "bias": [[100.0, 101.0], [102.0, 103.0]],
-        "dark": [[0.1, 0.1], [0.1, 0.1]]
+        # Define these as vectors so they reshape to 2-element vectors
+        "bad_pixel_mask": [[False], [True]],
+        "bias": [[100.0], [101.0]],
+        "dark": [[0.1], [0.1]]
     }
 
     # Strehl model configuration under the beam section

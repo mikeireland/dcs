@@ -1,7 +1,141 @@
+
+// #define TOML_IMPLEMENTATION
+// #include "baldr_ben.h"
+// #include <commander/commander.h>
+// #include <math.h> // For old-style C mathematics if needed.
+// // Commander struct definitions for json. This is in a separate file to keep the main code clean.
+// #include "commander_structs.h"
+
+#include "baldr_ben.h"
 #include <iostream>
 #include <string>
 #include <toml++/toml.h>
 #include <Eigen/Dense>
+#include <stdexcept>
+#include <string>
+
+
+
+// //----------Globals-------------------
+
+// // The input configuration
+// toml::table config;
+// int servo_mode;
+
+// // Servo parameters. These are the parameters that will be adjusted by the commander
+
+// // Mutex for the RTC.
+// std::mutex rtc_mutex;
+
+// // The C-red subarray
+// IMAGE subarray;
+// //----------commander functions from here---------------
+
+// // Load a configuraiton file. Return True if successful.
+// bool load_configuration(std::string filename) {
+//     try {
+//         config = toml::parse_file(filename);
+//         std::cout << "Configuration loaded successfully from " << filename << "\n";
+//         return true;
+//     }
+//     catch(const toml::parse_error &err) {
+//         std::cerr << "TOML parse error in file " << filename << ": " 
+//                   << err.description() << "\n";
+//         return false;
+//     }
+// }
+
+
+// Parameterized constructor.
+PIDController::PIDController(const Eigen::VectorXd& kp_in,
+                             const Eigen::VectorXd& ki_in,
+                             const Eigen::VectorXd& kd_in,
+                             const Eigen::VectorXd& lower_limit_in,
+                             const Eigen::VectorXd& upper_limit_in,
+                             const Eigen::VectorXd& setpoint_in)
+    : kp(kp_in),
+      ki(ki_in),
+      kd(kd_in),
+      lower_limit(lower_limit_in),
+      upper_limit(upper_limit_in),
+      setpoint(setpoint_in),
+      ctrl_type("PID")
+{
+    int size = kp.size();
+    if (ki.size() != size || kd.size() != size ||
+        lower_limit.size() != size || upper_limit.size() != size ||
+        setpoint.size() != size) {
+        throw std::invalid_argument("All input vectors must have the same size.");
+    }
+    output = Eigen::VectorXd::Zero(size);
+    integrals = Eigen::VectorXd::Zero(size);
+    prev_errors = Eigen::VectorXd::Zero(size);
+}
+
+// New constructor that accepts a PIDConfig struct.
+PIDController::PIDController(const PIDConfig& config)
+    : PIDController(config.kp, config.ki, config.kd, config.lower_limit, config.upper_limit, config.setpoint)
+{
+    // Delegates to the parameterized constructor above.
+}
+
+// Default constructor.
+PIDController::PIDController()
+    : kp(Eigen::VectorXd::Zero(1)),
+      ki(Eigen::VectorXd::Zero(1)),
+      kd(Eigen::VectorXd::Zero(1)),
+      lower_limit(Eigen::VectorXd::Zero(1)),
+      upper_limit(Eigen::VectorXd::Ones(1)),
+      setpoint(Eigen::VectorXd::Zero(1)),
+      ctrl_type("PID")
+{
+    int size = kp.size();
+    output = Eigen::VectorXd::Zero(size);
+    integrals = Eigen::VectorXd::Zero(size);
+    prev_errors = Eigen::VectorXd::Zero(size);
+}
+
+Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
+    int size = setpoint.size();
+    if (measured.size() != size) {
+        throw std::invalid_argument("Input vector size must match setpoint size.");
+    }
+    if (kp.size() != size || ki.size() != size || kd.size() != size ||
+        lower_limit.size() != size || upper_limit.size() != size) {
+        throw std::invalid_argument("Input vectors of incorrect size.");
+    }
+    if (integrals.size() != size) {
+        std::cout << "Reinitializing integrals, prev_errors, and output to zero with correct size.\n";
+        integrals = Eigen::VectorXd::Zero(size);
+        prev_errors = Eigen::VectorXd::Zero(size);
+        output = Eigen::VectorXd::Zero(size);
+    }
+    for (int i = 0; i < size; ++i) {
+        double error = measured(i) - setpoint(i);
+        if (ki(i) != 0.0) {
+            integrals(i) += error;
+            if (integrals(i) < lower_limit(i)) integrals(i) = lower_limit(i);
+            if (integrals(i) > upper_limit(i)) integrals(i) = upper_limit(i);
+        }
+        double derivative = error - prev_errors(i);
+        output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
+        prev_errors(i) = error;
+    }
+    return output;
+}
+
+void PIDController::set_all_gains_to_zero() {
+    kp = Eigen::VectorXd::Zero(kp.size());
+    ki = Eigen::VectorXd::Zero(ki.size());
+    kd = Eigen::VectorXd::Zero(kd.size());
+}
+
+void PIDController::reset() {
+    integrals.setZero();
+    prev_errors.setZero();
+    output.setZero();
+}
+
 
 // Convert a TOML array (assumed to be a 2D array of numbers) to an Eigen matrix.
 Eigen::MatrixXd convertTomlArrayToEigenMatrix(const toml::array& arr) {
