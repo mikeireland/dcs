@@ -61,6 +61,7 @@ Derived convertTomlArrayToEigenMatrix(const toml::array& arr, const Derived& /*d
 // bdr_method: top-level method definitions.
 struct bdr_state {
     std::string DM_flat;          // e.g., "baldr"
+    std::string signal_space;   // where we consider our signals (pixel or dm space , dm space uses I2A interpolation matrix)
     int LO;                       // low-order modes (e.g., 2)
     std::string controller_type;  // e.g., "PID"
     std::string inverse_method;   // e.g., "map"
@@ -107,7 +108,7 @@ struct bdr_reduction {
 //-----------------------------------------------------
 // bdr_pixels: Pixel indices.
 struct bdr_pixels {
-    Eigen::Matrix<int16_t, 4, 1> pupil_coords; // r1, r2, c1, c2 for cropping.
+    Eigen::Matrix<int16_t, 4, 1> crop_pixels; // r1, r2, c1, c2 for cropping.
     Eigen::Matrix<int32_t, Eigen::Dynamic, 1> bad_pixels;      // Indices (flattened)
     Eigen::Matrix<int32_t, Eigen::Dynamic, 1> pupil_pixels;      // Pupil pixel indices.
     Eigen::Matrix<int32_t, Eigen::Dynamic, 1> interior_pixels;   // Interior pupil indices.
@@ -116,8 +117,8 @@ struct bdr_pixels {
 
     void validate() const {
         // You can add size checks or consistency tests.
-        if (pupil_coords.size() != 4)
-            throw std::runtime_error("bdr_pixels: pupil_coords must have 4 elements.");
+        if (crop_pixels.size() != 4)
+            throw std::runtime_error("bdr_pixels: crop_pixels must have 4 elements.");
     }
 };
 

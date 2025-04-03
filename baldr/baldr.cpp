@@ -70,7 +70,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
             // For bias_dm and dark_dm, these are computed later from I2A.
 
             // pixels 
-            rtc.pixels.pupil_coords = convertTomlArrayToEigenMatrix(*ctrl_tbl["pupil_coords"].as_array(),rtc.pixels.pupil_coords); // r1,r2,c1,c2 cropped pupil coordinates in global frame
+            rtc.pixels.crop_pixels = convertTomlArrayToEigenMatrix(*ctrl_tbl["crop_pixels"].as_array(),rtc.pixels.crop_pixels); // r1,r2,c1,c2 cropped pupil coordinates in global frame
             rtc.pixels.pupil_pixels = convertTomlArrayToEigenMatrix(*ctrl_tbl["pupil_pixels"].as_array(),rtc.pixels.pupil_pixels); // pupil pixels (local cropped frame)
             rtc.pixels.bad_pixels = convertTomlArrayToEigenMatrix(*ctrl_tbl["bad_pixels"].as_array(),rtc.pixels.bad_pixels); // bad pixels (local cropped frame)
             rtc.pixels.interior_pixels = convertTomlArrayToEigenMatrix(*ctrl_tbl["interior_pixels"].as_array(),rtc.pixels.interior_pixels); // strict interior (no boundary) pupil pixels (local cropped frame)

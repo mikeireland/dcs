@@ -1,5 +1,6 @@
-#ifndef PIDCONTROLLER_H
-#define PIDCONTROLLER_H
+#ifndef BALDR_H
+#define BALDR_H
+
 #include <toml++/toml.h>
 #include <Eigen/Dense>
 #include <string>

@@ -76,3 +76,33 @@ if __name__ == "__main__":
         toml.dump(config, f)
     
     print(f"Config file generated: {filename}")
+
+
+
+
+# #!/usr/bin/env python3
+# import sys
+# import toml
+
+# def print_keys_tree(d, indent=0):
+#     """Recursively prints only the keys from a nested dictionary (or list of dicts)."""
+#     for key, value in d.items():
+#         print(" " * indent + str(key))
+#         if isinstance(value, dict):
+#             print_keys_tree(value, indent + 2)
+#         elif isinstance(value, list):
+#             # If the list contains dictionaries, print keys for each dictionary.
+#             for item in value:
+#                 if isinstance(item, dict):
+#                     print_keys_tree(item, indent + 2)
+
+# filename = "/Users/bencb/Downloads/baldr_config_2-2.toml"#sys.argv[1]
+# try:
+#     with open(filename, "r") as f:
+#         config = toml.load(f)
+# except Exception as e:
+#     print(f"Error reading TOML file: {e}")
+#     sys.exit(1)
+
+# print("TOML keys:")
+# print_keys_tree(config)
