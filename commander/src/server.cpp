@@ -4,7 +4,7 @@
 #include <fmt/ranges.h>
 #include <fmt/ostream.h>
 
-// #include <boost/program_options.hpp>
+#include <boost/program_options.hpp>
 
 #include <variant>
 #include <vector>
@@ -14,7 +14,7 @@
 #include <commander/server/single_command.h>
 #include <commander/server/socket.h>
 
-// namespace po = boost::program_options;
+namespace po = boost::program_options;
 
 namespace commander
 {
