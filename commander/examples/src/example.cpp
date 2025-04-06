@@ -1,4 +1,5 @@
 #include <commander/commander.h>
+#include <Eigen/Dense>
 
 #include <fmt/core.h>
 #include <fmt/ranges.h>
@@ -7,6 +8,13 @@
 
 namespace co = commander;
 
+// A test function that returns Eigen::Vector3f
+Eigen::Vector3f get_vector(float x, float y, float z) {
+    // This function returns a 3D vector.
+    return Eigen::Vector3f(x, y, z);
+}
+
+// Julien's initial example.
 int add(int i, int j) {
     return i + j;
 }
@@ -28,6 +36,7 @@ void float_vector(std::vector<float> v) {
     fmt::print("vector: {}\n", fmt::join(v, ", "));
 }
 
+// A struct including a string
 struct configuration {
     int a;
     float b;
@@ -163,6 +172,9 @@ COMMANDER_REGISTER(m)
     m.def("set_name_value", set_name_value, "Set a name value pair");
     m.def("float_vector", float_vector, "A function that takes a vector of floats");
     m.def("name_value_vector", name_value_vector, "A function that takes a vector of name value pairs");
+
+    // Let's see if Eigen works too (it doesn't - leave this commented out!)
+    //m.def("get_vector", get_vector, "Get a 3D vector", "x"_arg, "y"_arg, "z"_arg);
 }
 
 int main(int argc, char* argv[]) {

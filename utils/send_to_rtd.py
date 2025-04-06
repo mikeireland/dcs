@@ -29,8 +29,10 @@ if len(sys.argv) > 1:
 else:
     print("No camera name provided. Using default: 'test'")
     camera_name = "test"
+    
 if len(sys.argv) > 2:
     shm_name = sys.argv[2]
+    simulate_image=False
 else:
     simulate_image = True
     print("No shared memory name provided. Simulating image only.")
@@ -47,8 +49,8 @@ else:
     # We should get the size from the shared memory object.
     SHM = shm(shm_name)
     imsize = SHM.get_data().shape
-    size_x = imsize[1]
-    size_y = imsize[0]
+    size_x = imsize[-1]
+    size_y = imsize[-2]
     dtype = SHM.get_data().dtype
     if dtype == np.uint8:
         pixel_data_type = 8
@@ -56,6 +58,8 @@ else:
         pixel_data_type = 16
     elif dtype == np.uint16:    
         pixel_data_type = 16
+    elif dtype == np.float32:
+        pixel_data_type = -32
     
 # Create a 64 byte header
 header = np.zeros(64, dtype=np.uint8)
@@ -96,7 +100,10 @@ while not exiting:
         data[40:60, 40:60] += 1000
     else:
         # Get the data from the shared memory object
-        data = SHM.get_data()
+        if len(imsize)==3:
+            data = SHM.get_latest_data_slice()
+        else:
+            data = SHM.get_data()
     
     # Create a message with the header and the data. After the flatting 
     # the data, we need to copy the memory to the right size.
@@ -108,7 +115,7 @@ while not exiting:
         print("Failed to send message, socket might be closed.")
     
     # Sleep for a bit to avoid flooding the server
-    time.sleep(2)
+    time.sleep(.1)
 
 # Note: This code is a simplified example and does not include error handling or cleanup.
 # In a real application, you should handle exceptions and ensure that the socket and context are properly closed.
