@@ -36,3 +36,6 @@
 
 # build folder
 build/
+
+# 
+calibration_frames/products/
