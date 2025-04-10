@@ -8,10 +8,10 @@
 //----------Globals-------------------
 
 // The input configuration
-std::vector<int> beam_ids; 
-std::vector<std::string> phasemasks;
-std::vector<toml::table> configs;
-std::vector<bdr_rtc_config> rtc_config_list;
+int beam_id; 
+std::string phasemask;
+toml::table config;
+bdr_rtc_config rtc_config;
 
 int servo_mode;
 //vector::<int> telescopes;
@@ -23,9 +23,8 @@ std::mutex rtc_mutex;
 
 // The C-red subarray
 IMAGE subarray;
+IMAGE dm;
 //----------commander functions from here---------------
-
-
 
 
 toml::table readConfig(const std::string &filename) {
@@ -351,55 +350,40 @@ COMMANDER_REGISTER(m)
 // configure like ./baldr 1 H3 2 H3 3 H3 4 H3
 int main(int argc, char* argv[]) {
     // We expect pairs of arguments: <beam_id> <phaseMask>
-    if ((argc - 1) % 2 != 0 || argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1> [<beam_id2> <phaseMask2> ...]" << std::endl;
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1>" << std::endl;
         return 1;
     }
     
-    // Parse command-line arguments in pairs.
-    for (int i = 1; i < argc; i += 2) {
-        try {
-            int beam = std::stoi(argv[i]);
-            std::string phase = argv[i + 1];
-            beam_ids.push_back(beam);
-            phasemasks.push_back(phase);
-        } catch (const std::exception& e) {
-            std::cerr << "Error parsing arguments: " << e.what() << std::endl;
-            return 1;
-        }
+    beam_id = std::stoi(argv[1]);
+    phasemask = argv[2];
+    // Compute the configuration filename and parse the TOML file.
+    std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";
+    try {
+        config = toml::parse_file(filename);
+        std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing file " << filename << ": " << e.what() << std::endl;
+        return 1;
     }
-    
-    // For each beam, compute the configuration filename and parse the TOML file.
-    for (size_t i = 0; i < beam_ids.size(); ++i) {
-        int beam = beam_ids[i];
-        std::string filename = "baldr_config_" + std::to_string(beam) + ".toml";
-        try {
-            toml::table tbl = toml::parse_file(filename);
-            configs.push_back(tbl);
-            std::cout << "Loaded configuration for beam " << beam << " from " << filename << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Error parsing file " << filename << ": " << e.what() << std::endl;
-            return 1;
-        }
-    }
-    
 
     //to create a global list of bdr_rtc_config structs:
-    for (size_t i = 0; i < configs.size(); ++i) {
-        std::string beamKey = "beam" + std::to_string(beam_ids[i]);
-        try {
-            bdr_rtc_config cfg = readBDRConfig(configs[i], beamKey, phasemasks[i]);
-            rtc_config_list.push_back(cfg);
-            std::cout << "Initialized configuration for beam " << beam_ids[i] << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Error initializing configuration for beam " << beam_ids[i] << ": " << e.what() << std::endl;
-            return 1;
-        }
+    std::string beamKey = "beam" + std::to_string(beam_id);
+    try {
+        rtc_config = readBDRConfig(config, beamKey, phasemask);
+        std::cout << "Initialized configuration for beam " << beam_id << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
+        return 1;
     }
-    
 
-    // !!! This C-Red image should likely come from the toml
-    ImageStreamIO_openIm(&subarray, "CRed");
+    // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
+    // where N is the beam number.
+    ImageStreamIO_openIm(&subarray, ("/dev/shm/baldr" + std::to_string(beam_id) + ".im.shm").c_str());
+
+    // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
+    std::string dm_filename = "/dev/shm/dm" + std::to_string(beam_id) + ".im.shm";
+    ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
 
     // Start the main RTC and telemetry threads. 
     std::thread rtc_thread(rtc);

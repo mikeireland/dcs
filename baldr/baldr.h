@@ -452,10 +452,11 @@ struct EncodedImage
 // The static initial input parameters
 //extern toml::table config;
 //extern std::vector<toml::table> config; // initial configuration 
-extern std::vector<int> beam_ids; 
-extern std::vector<std::string> phasemasks;
-extern std::vector<toml::table> configs;
-extern std::vector<bdr_rtc_config> rtc_config_list;
+extern int beam_id; 
+extern std::string phasemask;
+extern toml::table config;
+extern bdr_rtc_config rtc_config;
+
 
 //extern std::vector<bdr_rtc_config> rtc_config_list; // what the rtc will use and edit
 extern int servo_mode;
@@ -466,8 +467,9 @@ extern int servo_mode;
 // We at least need a mutex for RTC parameters.
 extern std::mutex rtc_mutex;
 
-// The C-Red Image subarray
+// The C-Red Image subarray and DM
 extern IMAGE subarray;
+extern IMAGE dm_rtc;
 
 // Main thread function for the RTC
 void rtc();

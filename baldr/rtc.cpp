@@ -1,3 +1,10 @@
+/*
+dm_rtc.md->write = 1;
+double* dotD = dm_rtc.array.D; // Shouldn't be a double!!! Write to dotD.
+ImageStreamIO_sempost(dm_rtc, -1);
+dm_rtc.md->write = 0;
+*/
+
 #include "baldr.h"
 #include <chrono>
 #include <iostream>
@@ -44,32 +51,27 @@ Eigen::VectorXd sig;
  * as a flattened Eigen::VectorXd. The expected number of pixels is provided in 
  * expectedPixels.
  */
-Eigen::VectorXd getFrameFromSharedMemory(const char* shmName, int expectedPixels) {
-    IMAGE shmImg;
-    int ret = ImageStreamIO_openIm(&shmImg, shmName);
-    if (ret != IMAGESTREAMIO_SUCCESS) {
-        throw std::runtime_error("Error opening shared memory image.");
-    }
-    if (!shmImg.md) {
-        //ImageStreamIO_destroyIm(&shmImg);
+Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
+    if (!subarray.md) {
+        //ImageStreamIO_destroyIm(&subarray);
         throw std::runtime_error("No metadata found in shared memory image.");
     }
     
-    int nx = shmImg.md->size[0];
-    int ny = (shmImg.md->naxis > 1) ? shmImg.md->size[1] : 1;
+    int nx = subarray.md->size[0];
+    int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
     int totalPixels = nx * ny;
     
     if (totalPixels != expectedPixels) {
-        //ImageStreamIO_destroyIm(&shmImg);
+        //ImageStreamIO_destroyIm(&subarray);
         throw std::runtime_error("Frame size mismatch: expected " +
                                  std::to_string(expectedPixels) +
                                  ", got " + std::to_string(totalPixels));
     }
     
     // Assume the image data is stored as 16-bit unsigned ints.
-    uint16_t* data = shmImg.array.UI16;
+    uint16_t* data = subarray.array.UI16;
     if (!data) {
-        //ImageStreamIO_destroyIm(&shmImg);
+        //ImageStreamIO_destroyIm(&subarray);
         throw std::runtime_error("Data pointer in shared memory is null.");
     }
     
@@ -80,7 +82,7 @@ Eigen::VectorXd getFrameFromSharedMemory(const char* shmName, int expectedPixels
     }
     
     // Clean up the mapping.
-    // ImageStreamIO_destroyIm(&shmImg);
+    // ImageStreamIO_destroyIm(&subarray);
     
     return frame;
 }
@@ -149,7 +151,7 @@ void rtc(){
 
         start = std::chrono::steady_clock::now();
 
-        img_test =  getFrameFromSharedMemory("cred1", 81920);
+        img_test =  getFrameFromSharedMemory(81920);
         // need to add dark , bias norm
         //sig = rtc_config_list[0].matrices.I2A * ((img - rtc_config_list[0].reference_pupils.I0).cwiseQuotient(rtc_config_list[0].reference_pupils.N0));
         sig = ((rtc_config_list[0].matrices.I2A * img) - rtc_config_list[0].reference_pupils.I0_dm).cwiseQuotient(rtc_config_list[0].reference_pupils.norm_pupil_dm);
