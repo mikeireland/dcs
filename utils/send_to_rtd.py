@@ -49,6 +49,15 @@ else:
     imsize = SHM.get_data().shape
     size_x = imsize[1]
     size_y = imsize[0]
+    # Based on the data type, we set the pixel_data_type variable.
+    # The documentation says:
+    #The possible values for the pixel data type are:
+    # 8= unsigned integer, 1 byte (unsigned char in C).
+    #16 = signed integer, 2 bytes (short in C).ß
+    # -16 = unsigned integer, 2 bytes (unsigned 32 = signed integer, 4 bytes (int in C).
+    # -32 = real, 4 bytes (float in C).
+    # 64 = signed integer, 8 bytes (long in C).
+    # -64 = real, 8 bytes (double in C).
     dtype = SHM.get_data().dtype
     if dtype == np.uint8:
         pixel_data_type = 8
@@ -56,6 +65,14 @@ else:
         pixel_data_type = 16
     elif dtype == np.uint16:    
         pixel_data_type = 16
+    elif dtype == np.int32:
+        pixel_data_type = 32
+    elif dtype == np.float32:
+        pixel_data_type = -32
+    elif dtype == np.float64:
+        pixel_data_type = -64
+    else:
+        raise ValueError("Data type not supported.")
     
 # Create a 64 byte header
 header = np.zeros(64, dtype=np.uint8)

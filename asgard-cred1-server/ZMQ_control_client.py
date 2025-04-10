@@ -18,7 +18,7 @@ import zmq
 server_port = 6667
 context = zmq.Context()
 socket = context.socket(zmq.REQ)
-socket.connect(f"tcp://localhost:{server_port}")
+socket.connect(f"tcp://mimir:{server_port}")
 
 print(f"ZMQ shell interface to talk to the DM server on port {server_port}")
 
