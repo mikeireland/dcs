@@ -21,9 +21,10 @@ int servo_mode;
 // Mutex for the RTC.
 std::mutex rtc_mutex;
 
-// The C-red subarray
-IMAGE subarray;
-IMAGE dm;
+
+IMAGE subarray; // The C-red subarray
+IMAGE dm_rtc; // The DM subarray
+
 //----------commander functions from here---------------
 
 
@@ -235,12 +236,12 @@ PIDController::PIDController(const bdr_controller& config_in)
 
 // Default constructor.
 PIDController::PIDController()
-    : kp(Eigen::VectorXd::Zero(140)),
-      ki(Eigen::VectorXd::Zero(140)),
-      kd(Eigen::VectorXd::Zero(140)),
-      lower_limits(Eigen::VectorXd::Zero(140)),
-      upper_limits(Eigen::VectorXd::Ones(140)),
-      set_point(Eigen::VectorXd::Zero(140)),
+    : kp(Eigen::VectorXd::Zero(144)),
+      ki(Eigen::VectorXd::Zero(144)),
+      kd(Eigen::VectorXd::Zero(144)),
+      lower_limits(Eigen::VectorXd::Zero(144)),
+      upper_limits(Eigen::VectorXd::Ones(144)),
+      set_point(Eigen::VectorXd::Zero(144)),
       ctrl_type("PID")
 {
     int size = kp.size();
@@ -379,10 +380,10 @@ int main(int argc, char* argv[]) {
 
     // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
     // where N is the beam number.
-    ImageStreamIO_openIm(&subarray, ("/dev/shm/baldr" + std::to_string(beam_id) + ".im.shm").c_str());
+    ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id) ).c_str());
 
     // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
-    std::string dm_filename = "/dev/shm/dm" + std::to_string(beam_id) + ".im.shm";
+    std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02" ;
     ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
 
     // Start the main RTC and telemetry threads. 
