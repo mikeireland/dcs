@@ -85,6 +85,13 @@ struct ControlU{
     double dm_piston;
 };
 
+// This is our knowledge of the per-telescope delay state.
+struct ControlA{
+    double gd;
+    double pd;
+    double delay;
+}
+
 struct Baseline{
     double gd;
     double pd;
@@ -129,6 +136,7 @@ extern toml::table config;
 extern int servo_mode;
 extern PIDSettings pid_settings;
 extern ControlU control_us[N_TEL];
+extern ControlA control_as[N_TEL];
 extern Baseline baselines[N_BL];
 extern Bispectrum bispectra[N_CP];
 
@@ -151,6 +159,8 @@ public:
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
     double *power_spectrum;
+    double power_spectrum_bias;
+    double power_spectrum_inst_bias;
     int ps_index = MAX_N_PS_BOXCAR-1;
 
     // The size of the subimage, needed to determine which Fourier components to use.

@@ -90,7 +90,7 @@ void ForwardFt::loop() {
 #endif
 
             // Compute the power spectrum. Other than SNR purposes, this isn't 
-            // time critical, but doesn't take long wo we can do it here.
+            // time critical, but doesn't take long so we can do it here. 
             int next_ps_ix = (subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
             for (unsigned int ii=0; ii<subim_sz; ii++) {
                 for (unsigned int jj=0; jj<szj; jj++) {
@@ -100,6 +100,15 @@ void ForwardFt::loop() {
                     power_spectrum[ii*szj + jj] += 
                         power_spectra[next_ps_ix][ii*szj + jj]/MAX_N_PS_BOXCAR -
                         power_spectra[ps_index][ii*szj + jj]/MAX_N_PS_BOXCAR;
+                }
+            }
+            // Compute the power spectrum bias
+            power_spectrum_bias=0;
+            power_spectrum_inst_bias=0;
+            for (unsigned int ii=szj-szj/4; ii<szj+szj/4; ii++) {
+                for (unsigned int jj=szj/4; jj<szj; jj++) {
+                    power_spectrum_bias += power_spectrum[ii*szj + jj];
+                    power_spectrum_inst_bias += power_spectra[next_ps_ix][ii*szj + jj];
                 }
             }
             ps_index = next_ps_ix;
@@ -112,6 +121,8 @@ void ForwardFt::loop() {
 #endif
 
             // As long as this is the same type as cnt0, it should wrap around correctly
+            // The reason it is here and not before power spectrum computation is because we need at
+            // lease 1 power spectrum in order for the group delay.
             cnt++;
 
             //std::cout << subarray->name << ": " << cnt << std::endl;

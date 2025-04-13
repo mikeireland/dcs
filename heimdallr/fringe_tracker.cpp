@@ -100,16 +100,28 @@ void fringe_tracker(){
             baselines[bl].ix_gd_boxcar = next_gd_ix;
 
             // Compute the unwrapped phase delay and signal to noise. We don't expect to 
-            // actually use this unwrapped phase delay, but it is useful for debugging.
+            // actually use this per-baseline unwrapped phase delay, but it is useful for 
+            // debugging, or operating 1 baseline at a time. The phase delay is in units 
+            // of the K1 central wavelength. 
             double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - baselines[bl].pd + 0.5), 1.0) - 0.5;
             baselines[bl].pd += pdiff;
+
+            // Now we need the gd_snr and pd_snr for this baseline. !!! Check functions.
+            pd_snr = std::fabs(K1_phasor[bl])/std::sqrt(K1ft->power_spectrum_inst_bias);
+            // GD is harder!
+            // gd_snr = std::fabs(K1_phasor[bl])/std::sqrt(power_spectrum_inst_bias);
+         
         }
-        // Now we have the group delays, we can regularise by multipliying by the  
-        // I6gd matrix. Then in a Bayesian approach, we use the phase and knowledge
-        // of the previous state to compute the true delay in a nonlinear way. 
+        // Now we have the group delays and phase delays, we can regularise by multipliying by the  
+        // I6gd matrix and the I6pd matrix. Then in a Bayesian approach, we use the phase and 
+        // knowledge of the previous state to compute the true delay in a nonlinear way. 
+        
+        // Multiply by the K1 wavelength config["wave"]["K1"].value_or(2.05)
 
+        // Do the Fringe tracking! The error signal is the "delay" variable.
+        if (servo_mode==SERVO_PID){
 
-        //!!! Add code to do the fringe tracking
+        }
 
         // Now we sanity check by computing the bispectrum and closure phases.
         // K1 only... (as this is a quick-look sanity check)

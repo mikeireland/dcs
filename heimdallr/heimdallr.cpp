@@ -17,6 +17,7 @@ toml::table config;
 int servo_mode=SERVO_PID;
 PIDSettings pid_settings;
 ControlU control_us[N_TEL];
+ControlA control_as[N_TEL];
 Baseline baselines[N_BL];
 Bispectrum bispectra[N_CP];
 
