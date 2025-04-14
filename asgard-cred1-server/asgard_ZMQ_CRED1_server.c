@@ -139,6 +139,7 @@ char savedir[200];  // the directory where the data will be saved
 
 int nroi = 6; // number of regions of interest on the detector
 subarray *ROI = NULL;
+int previous_timeouts = 0;
 
 /* =========================================================================
  *                  JSON configuration file processing
@@ -588,8 +589,11 @@ void* fetch_imgs(void *arg) {
 	}
       }
       timeouts = pdv_timeouts(pdv_p);
-      if (timeouts > 0)
+      if (timeouts > previous_timeouts){
+	previous_timeouts = timeouts;
 	timeoutrecovery = true;
+	printf("AArgh - timeout. %d\n", timeouts);
+      }
 
       if (keepgoing == 0)
 	break;
