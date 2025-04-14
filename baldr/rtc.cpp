@@ -64,6 +64,8 @@ PIDController ctrl_HO ;
 // intermediate products 
 Eigen::VectorXd img;
 
+Eigen::VectorXd img_dm;
+
 Eigen::VectorXd sig;
 
 Eigen::VectorXd e_HO;
@@ -201,6 +203,7 @@ void rtc(){
     std::cout << "Controller set_point size: " << ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
+    
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
         int dm_width = dm_rtc.md->size[0];
@@ -235,6 +238,8 @@ void rtc(){
         std::cout << "no ctrl match" << std::endl;
     }
 
+    // frames per second from rtc_config used for converting dark from adu/s -> adu 
+    float fps = std::stof(rtc_config.cam.fps);
 
     Eigen::VectorXd img = Eigen::VectorXd::Zero(rtc_config.matrices.szp); // P must be defined appropriately.
 
@@ -244,87 +249,86 @@ void rtc(){
     // naughty actuator or modes 
     std::vector<int> naughty_list(140, 0);
 
+    // time stuff 
+    double current_time_ms;
     auto start = std::chrono::steady_clock::now();
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
+
+    // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode != SERVO_STOP){
 
-        start = std::chrono::steady_clock::now();
+        //std::cout << servo_mode_LO << std::endl;
+        //std::cout << servo_mode_HO << std::endl;
 
+        start = std::chrono::steady_clock::now();
 
         // need to subtract dark , bias norm
         img =  getFrameFromSharedMemory(32*32);
         
-        //////////////// CHECK ////////////////////////
-        // Check dimensions before computing sig:
-        // printMatrixDimensions("I2A", rtc_config.matrices.I2A);
-        // printVectorSize("img", img);
-        // printVectorSize("I0_dm", rtc_config.reference_pupils.I0_dm);
-        // printVectorSize("norm_pupil_dm", rtc_config.reference_pupils.norm_pupil_dm);
-        
-        // if (rtc_config.matrices.I2A.cols() != img.size()) {
-        //     std::cerr << "ERROR: Incompatible dimensions: I2A.cols() (" 
-        //             << rtc_config.matrices.I2A.cols() << ") != img.size() (" 
-        //             << img.size() << ")." << std::endl;
-        //     break; // or handle the error appropriately.
-        // }
-        // if (rtc_config.reference_pupils.I0_dm.size() != rtc_config.matrices.I2A.rows() ||
-        //     rtc_config.reference_pupils.norm_pupil_dm.size() != rtc_config.matrices.I2A.rows()) {
-        //     std::cerr << "ERROR: I0_dm and norm_pupil_dm must match I2A.rows() ("
-        //             << rtc_config.matrices.I2A.rows() << ")." << std::endl;
-        //     break;
-        // }
-        ////////////////////////////////////////
+        // go to dm space subtracting dark (ADU/s) and bias (ADU) there
+        // should actually read the current fps rather then get it from config file
+        img_dm = (rtc_config.matrices.I2A *  img)  - 1/fps * rtc_config.reduction.dark_dm - rtc_config.reduction.bias_dm;
 
-        sig = ((rtc_config.matrices.I2A * img) - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
-        
-
-        //////////////// CHECK ////////////////////////
-        // //Check dimensions for I2M_LO and I2M_HO multiplications.
-        // printMatrixDimensions("I2M_LO", rtc_config.matrices.I2M_LO);
-        // printMatrixDimensions("I2M_HO", rtc_config.matrices.I2M_HO);
-        // printVectorSize("sig", sig);
-        
-        // if (rtc_config.matrices.I2M_LO.cols() != sig.size() ||
-        //     rtc_config.matrices.I2M_HO.cols() != sig.size()) {
-        //     std::cerr << "ERROR: Incompatible dimensions: I2M_LO.cols() ("
-        //             << rtc_config.matrices.I2M_LO.cols() 
-        //             << ") or I2M_HO.cols() (" 
-        //             << rtc_config.matrices.I2M_HO.cols() 
-        //             << ") do not equal sig.size() (" << sig.size() << ")." 
-        //             << std::endl;
-        //     break;
-        // }
-        //////////////////////////////////////
-
-
-        //end = std::chrono::steady_clock::now();
-        //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        //std::cout << "Elapsed time sig: " << duration.count() << " us" << std::endl;
-        
-        //start = std::chrono::steady_clock::now();
+        sig = (img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        //sig = (rtc_config.matrices.I2A *  img - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
 
         e_LO = rtc_config.matrices.I2M_LO * sig ;
 
         e_HO = rtc_config.matrices.I2M_HO * sig ;
 
-        // printVectorSize("e_LO", e_LO);
-        // printVectorSize("e_HO", e_HO);
+
+        // if auto mode change state based on signals
+
+
+        // LO CALCULATIONS 
+        if (servo_mode_LO == SERVO_CLOSE){
+
+            u_LO = ctrl_LO.process( e_LO );
+
+            c_LO = rtc_config.matrices.M2C_LO * u_LO;
         
-        //std::cout << e_HO.cwiseAbs().maxCoeff() <<  std::endl;
+        }else if(servo_mode_LO == SERVO_OPEN){
+            if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
+                std::cout << "reseting HO controller" << std::endl;
+                //reset controllers
+                ctrl_LO.reset();
+            }
+  
+            u_LO = 0 * e_LO ;
 
-        //end = std::chrono::steady_clock::now();
-        //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        //std::cout << "Elapsed time e_HO: " << duration.count() << " us" << std::endl;
+            c_LO = rtc_config.matrices.M2C_LO * u_LO;
+            
+        }
 
-        //start = std::chrono::steady_clock::now();
-        
-        u_LO = ctrl_LO.process( e_LO );
+        // HO CALCULATIONS 
+        if (servo_mode_HO == SERVO_CLOSE){
 
-        u_HO = ctrl_HO.process( e_HO );
+            u_HO = ctrl_HO.process( e_HO );
+            
+            c_HO = rtc_config.matrices.M2C_HO * u_HO;
 
-        if (u_HO.cwiseAbs().maxCoeff() > 0.2) {
+
+        //write_telemetry_to_json(rtc_config.telem, "/home/asg/Music/telemetry.json");
+        }else if(servo_mode_HO == SERVO_OPEN){
+            if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
+                std::cout << "reseting HO controller" << std::endl;
+                //reset controllers
+                ctrl_HO.reset();
+            }
+  
+
+            u_HO = 0 * e_HO ;
+          
+            c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            
+        }
+
+
+        dmCmd = c_LO + c_HO;
+
+        if (dmCmd.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
             // Find index of maximum absolute value.
             int culprit = 0;
             //double maxVal = u_HO.cwiseAbs().maxCoeff(&culprit);
@@ -338,10 +342,13 @@ void rtc(){
             
             // Convert the vector to a 2D map via dm.cmd_2_map2D() and write to shared memory.
             //dm.set_data(dm.cmd_2_map2D(zeroCmd));
+
+            // zero dm
             updateDMSharedMemory( zeroCmd ) ;
             
             // Reset the high-order controller.
             ctrl_HO.reset();
+            ctrl_LO.reset();
             
             // Increase the counter for this actuator.
             naughty_list[culprit] += 1;
@@ -361,63 +368,71 @@ void rtc(){
 
 
 
-        // printMatrixDimensions("M2C_LO", rtc_config.matrices.M2C_LO);
-        // printMatrixDimensions("M2C_HO", rtc_config.matrices.M2C_HO);
-        // printVectorSize("u_LO", u_LO);
-        // printVectorSize("u_HO", u_HO);
+        //updateDMSharedMemory( dmCmd ) ;
 
-        //std::cout << "After processing, u_LO: " << u_LO << std::endl;
-        //std::cout << "u_LO.size() = " << u_LO.size() << std::endl;
-
-        // std::cout << u_LO <<  std::endl;
-        // std::cout << u_HO <<  std::endl;
-
-        //end = std::chrono::steady_clock::now();
-        //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        //std::cout << "Elapsed time u_HO: " << duration.count() << " us" << std::endl;
-
-
-        // if (rtc_config.matrices.M2C_LO.cols() != u_LO.size() ||
-        //     rtc_config.matrices.M2C_HO.cols() != u_HO.size()) {
-        //     std::cerr << "ERROR: Incompatible dimensions: M2C_LO or M2C_HO does not match controller output sizes." 
-        //             << std::endl;
-        //     break;
-        // }
-        
-        c_LO = rtc_config.matrices.M2C_LO * u_LO;
-        
-        c_HO = rtc_config.matrices.M2C_HO * u_HO;
-
-        dmCmd = c_LO + c_HO;
-
-        // std::cout << "dmCmd.size() = " << dmCmd.size() << std::endl;
-        //std::cout << "Max value of u_HO: " << u_HO.maxCoeff() << std::endl;
-        //std::cout << "Max value of u_LO: " << u_LO.maxCoeff() << std::endl;
-
-        //std::cout << "Elapsed time sig: " << c_LO  << std::endl;
-        //<< e_HO.size() << "  ki size in PID: " << ctrl.ki.size() << "controller ki size used to configure PID" << rtc_config.controller.ki.size() << std::endl;
-        
-        updateDMSharedMemory( dmCmd ) ;
 
         end = std::chrono::steady_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-        //std::cout << "wrote to dm. Full loop in " << duration.count() <<" us. wow." << std::endl;
 
-        if (false){
-            // Suppose you have computed a current measurement vector `current_signal` (Eigen::VectorXd) 
-            rtc_config.telem.signal.push_back(sig);
-            // Similarly for other fields, e.g.:
-            rtc_config.telem.e_TT.push_back(e_LO);
-            rtc_config.telem.u_TT.push_back(u_LO);
-            rtc_config.telem.e_HO.push_back(e_HO);
-            rtc_config.telem.u_HO.push_back(u_HO);
+        // ************************************************************
+        // Struc of ring buffers to keep history and offload to telemetry thread if requestec 
+        if (true){
+            std::lock_guard<std::mutex> lock(telemetry_mutex);
+            // Get the current time as a double (for example, in milliseconds)
+            current_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()
+                                    ).count();
+                                    
+            // Append data to telemetry ring buffers.
+            // (If you're updating telemetry from multiple threads, you should lock a mutex around these updates.)
+            //std::cout << "time  " << current_time_ms  << std::endl;
+            rtc_config.telem.timestamp.push_back(current_time_ms);
+
+            rtc_config.telem.LO_servo_mode.push_back(servo_mode_LO);          // 'c_HO' is Eigen::VectorXd
+
+            rtc_config.telem.HO_servo_mode.push_back(servo_mode_HO);          // 'c_HO' is Eigen::VectorXd
+
+            //std::cout << "img size: " << img.size() << std::endl;
+            rtc_config.telem.img.push_back(img);          // 'img' is Eigen::VectorXd
+            //std::cout << "img_dm size: " << img_dm.size() << std::endl;
+            rtc_config.telem.img_dm.push_back(img_dm);          // 'img' is Eigen::VectorXd
+            //std::cout << ", sig size: " << sig.size() << std::endl;
+            rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
+
+            //std::cout << ", sig size: " << sig.size() << std::endl;
+            rtc_config.telem.e_LO.push_back(e_LO);          // 'e_LO' is Eigen::VectorXd
+
+            //std::cout << ", sig size: " << sig.size() << std::endl;
+            rtc_config.telem.u_LO.push_back(u_LO);          // 'u_LO' is Eigen::VectorXd
+
+            //std::cout << ", sig size: " << sig.size() << std::endl;
+            rtc_config.telem.e_HO.push_back(e_HO);          // 'e_HO' is Eigen::VectorXd
+
+            //std::cout << ", sig size: " << sig.size() << std::endl;
+            rtc_config.telem.u_HO.push_back(u_HO);          // 'u_HO' is Eigen::VectorXd
+
+            //std::cout << ", sig size: " << c_LO.size() << std::endl;
+            rtc_config.telem.c_LO.push_back(c_LO);          // 'c_LO' is Eigen::VectorXd
+
+            //std::cout << ", c_HO size: " << c_HO.size() << std::endl;
+            rtc_config.telem.c_HO.push_back(c_HO);          // 'c_HO' is Eigen::VectorXd
+
+            // Increment the counter.
+            rtc_config.telem.counter++;
         }
-
-    std::cout << "servo_mode changed to" << servo_mode << "rtc stopped" << std::endl;
-
-    //write_telemetry_to_json(rtc_config.telem, "/home/asg/Music/telemetry.json");
     }
-
-
+    std::cout << "servo_mode changed to" << servo_mode << "...rtc stopped" << std::endl;
 }
+
+
+
+
+
+
+
+
+
+
+
+

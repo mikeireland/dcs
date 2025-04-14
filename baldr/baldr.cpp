@@ -19,12 +19,16 @@ extern PIDController ctrl_HO;
 
 
 int servo_mode;
+int servo_mode_LO;
+int servo_mode_HO;
 //vector::<int> telescopes;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 
 // Mutex for the RTC.
 std::mutex rtc_mutex;
+// mutex telemetry
+std::mutex telemetry_mutex;
 
 
 IMAGE subarray; // The C-red subarray
@@ -32,6 +36,101 @@ IMAGE dm_rtc; // The DM subarray
 
 
 
+
+
+// Parameterized constructor.
+PIDController::PIDController(const Eigen::VectorXd& kp_in,
+                             const Eigen::VectorXd& ki_in,
+                             const Eigen::VectorXd& kd_in,
+                             const Eigen::VectorXd& lower_limit_in,
+                             const Eigen::VectorXd& upper_limit_in,
+                             const Eigen::VectorXd& setpoint_in)
+    : kp(kp_in),
+      ki(ki_in),
+      kd(kd_in),
+      lower_limits(lower_limit_in),
+      upper_limits(upper_limit_in),
+      set_point(setpoint_in),
+      ctrl_type("PID")
+{
+    int size = kp.size();
+    if (ki.size() != size || kd.size() != size ||
+        lower_limits.size() != size || upper_limits.size() != size ||
+        set_point.size() != size) {
+        throw std::invalid_argument("All input vectors must have the same size.");
+    }
+    output = Eigen::VectorXd::Zero(size);
+    integrals = Eigen::VectorXd::Zero(size);
+    prev_errors = Eigen::VectorXd::Zero(size);
+}
+
+// constructor that accepts a bdr_controller struct.
+PIDController::PIDController(const bdr_controller& config_in)
+    : PIDController(config_in.kp, config_in.ki, config_in.kd, config_in.lower_limits, config_in.upper_limits, config_in.set_point)
+{
+}
+
+// Default constructor.
+PIDController::PIDController()
+    : kp(Eigen::VectorXd::Zero(140)),
+      ki(Eigen::VectorXd::Zero(140)),
+      kd(Eigen::VectorXd::Zero(140)),
+      lower_limits(-Eigen::VectorXd::Ones(140)),
+      upper_limits(Eigen::VectorXd::Ones(140)),
+      set_point(Eigen::VectorXd::Zero(140)),
+      ctrl_type("PID")
+{
+    int size = kp.size();
+    output = Eigen::VectorXd::Zero(size);
+    integrals = Eigen::VectorXd::Zero(size);
+    prev_errors = Eigen::VectorXd::Zero(size);
+}
+
+Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
+    int size = set_point.size();
+    if (measured.size() != size) {
+        throw std::invalid_argument("Input vector size must match setpoint size.");
+    }
+    if (kp.size() != size || ki.size() != size || kd.size() != size ||
+        lower_limits.size() != size || upper_limits.size() != size) {
+        throw std::invalid_argument("Input vectors of incorrect size.");
+    }
+    if (integrals.size() != size) {
+        std::cout << "Reinitializing integrals, prev_errors, and output to zero with correct size.\n";
+        integrals = Eigen::VectorXd::Zero(size);
+        prev_errors = Eigen::VectorXd::Zero(size);
+        output = Eigen::VectorXd::Zero(size);
+    }
+    for (int i = 0; i < size; ++i) {
+        double error = measured(i) - set_point(i);
+        if (ki(i) != 0.0) {
+            integrals(i) += error;
+            if (integrals(i) < lower_limits(i))
+                integrals(i) = lower_limits(i);
+            if (integrals(i) > upper_limits(i))
+                integrals(i) = upper_limits(i);
+        }
+        double derivative = error - prev_errors(i);
+        output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
+        prev_errors(i) = error;
+    }
+    return output;
+}
+
+void PIDController::set_all_gains_to_zero() {
+    kp = Eigen::VectorXd::Zero(kp.size());
+    ki = Eigen::VectorXd::Zero(ki.size());
+    kd = Eigen::VectorXd::Zero(kd.size());
+}
+
+void PIDController::reset() {
+    integrals.setZero();
+    prev_errors.setZero();
+    output.setZero();
+}
+
+
+//----------helper functions from here---------------
 
 // Helper function to split a comma-separated string into a vector of ints.
 std::vector<int> split_indices(const std::string &indices_str) {
@@ -49,81 +148,6 @@ std::vector<int> split_indices(const std::string &indices_str) {
         }
     }
     return indices;
-}
-
-//----------commander functions from here---------------
-
-
-int update_servo_mode(int mode) {
-    // mode 2 is open
-    servo_mode = mode;
-    std::cout << "servo_mode updated to " << servo_mode << std::endl;
-    return 0;  // return 0 to indicate success
-}
-
-using json = nlohmann::json;
-
-// This Commander function accepts one JSON parameter: an array of three items:
-// [ gain_type, indices, value ]
-// e.g. in interactive shell : > update_pid_gain ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_gain ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
-json update_pid_gain(json args) {
-    // Check that args is an array with exactly 4 elements.
-    if (!args.is_array() || args.size() != 4) {
-        return json{{"error", "Expected an array with four elements: [controller, gain_type, indices, value]"}};
-    }
-    try {
-        // Extract arguments.
-        std::string controller_str = args.at(0).get<std::string>();
-        std::string gain_type = args.at(1).get<std::string>();
-        std::string indices_str = args.at(2).get<std::string>();
-        double value = args.at(3).get<double>();
-        
-        // Select the appropriate PID controller.
-        PIDController* pid_ctrl = nullptr;
-        if (controller_str == "LO") {
-            pid_ctrl = &ctrl_LO;
-        } else if (controller_str == "HO") {
-            pid_ctrl = &ctrl_HO;
-        } else {
-            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
-        }
-        
-        // Select the gain vector to update.
-        Eigen::VectorXd *gain_vector = nullptr;
-        if (gain_type == "kp") {
-            gain_vector = &pid_ctrl->kp;
-        } else if (gain_type == "ki") {
-            gain_vector = &pid_ctrl->ki;
-        } else if (gain_type == "kd") {
-            gain_vector = &pid_ctrl->kd;
-        } else {
-            return json{{"error", "Invalid gain type: " + gain_type + ". Use \"kp\", \"ki\", or \"kd\"."}};
-        }
-        
-        int n = gain_vector->size();
-        if (indices_str == "all") {
-            gain_vector->setConstant(value);
-            std::cout << "Updated all elements of " << gain_type << " in controller " << controller_str 
-                      << " to " << value << std::endl;
-        } else {
-            std::vector<int> idxs = split_indices(indices_str);
-            if (idxs.empty()) {
-                return json{{"error", "No valid indices provided"}};
-            }
-            for (int idx : idxs) {
-                if (idx < 0 || idx >= n) {
-                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + gain_type + " vector of size " + std::to_string(n)}};
-                }
-                (*gain_vector)(idx) = value;
-            }
-            std::cout << "Updated indices (" << indices_str << ") of " << gain_type << " in controller " 
-                      << controller_str << " with value " << value << std::endl;
-        }
-        return json{{"status", "success"}};
-    }
-    catch (const std::exception &ex) {
-        return json{{"error", ex.what()}};
-    }
 }
 
 
@@ -292,11 +316,11 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     // init contoller 
     //// heree
     //rtc.controller = bdr_controller(); 
-    int LO_nRows = rtc_config.matrices.I2M.rows();//rtc_config.matrices.I2M_LO.rows();
-    int HO_nRows = rtc_config.matrices.I2M.rows();//rtc_config.matrices.I2M_HO.rows();
+    int LO_nRows = rtc.matrices.I2M.rows();//rtc_config.matrices.I2M_LO.rows();
+    int HO_nRows = rtc.matrices.I2M.rows();//rtc_config.matrices.I2M_HO.rows();
     std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
-    rtc.ctrl_LO_config = bdr_controller( ); //LO_nRows ); 
-    rtc.ctrl_HO_config = bdr_controller( );//HO_nRows ); 
+    rtc.ctrl_LO_config = bdr_controller( LO_nRows ); //LO_nRows ); 
+    rtc.ctrl_HO_config = bdr_controller( HO_nRows );//HO_nRows ); 
 
             
     // write method , back to toml, or json?
@@ -308,101 +332,135 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 }
 
 
-// Parameterized constructor.
-PIDController::PIDController(const Eigen::VectorXd& kp_in,
-                             const Eigen::VectorXd& ki_in,
-                             const Eigen::VectorXd& kd_in,
-                             const Eigen::VectorXd& lower_limit_in,
-                             const Eigen::VectorXd& upper_limit_in,
-                             const Eigen::VectorXd& setpoint_in)
-    : kp(kp_in),
-      ki(ki_in),
-      kd(kd_in),
-      lower_limits(lower_limit_in),
-      upper_limits(upper_limit_in),
-      set_point(setpoint_in),
-      ctrl_type("PID")
-{
-    int size = kp.size();
-    if (ki.size() != size || kd.size() != size ||
-        lower_limits.size() != size || upper_limits.size() != size ||
-        set_point.size() != size) {
-        throw std::invalid_argument("All input vectors must have the same size.");
-    }
-    output = Eigen::VectorXd::Zero(size);
-    integrals = Eigen::VectorXd::Zero(size);
-    prev_errors = Eigen::VectorXd::Zero(size);
-}
-
-// constructor that accepts a bdr_controller struct.
-PIDController::PIDController(const bdr_controller& config_in)
-    : PIDController(config_in.kp, config_in.ki, config_in.kd, config_in.lower_limits, config_in.upper_limits, config_in.set_point)
-{
-}
-
-// Default constructor.
-PIDController::PIDController()
-    : kp(Eigen::VectorXd::Zero(140)),
-      ki(Eigen::VectorXd::Zero(140)),
-      kd(Eigen::VectorXd::Zero(140)),
-      lower_limits(-Eigen::VectorXd::Ones(140)),
-      upper_limits(Eigen::VectorXd::Ones(140)),
-      set_point(Eigen::VectorXd::Zero(140)),
-      ctrl_type("PID")
-{
-    int size = kp.size();
-    output = Eigen::VectorXd::Zero(size);
-    integrals = Eigen::VectorXd::Zero(size);
-    prev_errors = Eigen::VectorXd::Zero(size);
-}
-
-Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
-    int size = set_point.size();
-    if (measured.size() != size) {
-        throw std::invalid_argument("Input vector size must match setpoint size.");
-    }
-    if (kp.size() != size || ki.size() != size || kd.size() != size ||
-        lower_limits.size() != size || upper_limits.size() != size) {
-        throw std::invalid_argument("Input vectors of incorrect size.");
-    }
-    if (integrals.size() != size) {
-        std::cout << "Reinitializing integrals, prev_errors, and output to zero with correct size.\n";
-        integrals = Eigen::VectorXd::Zero(size);
-        prev_errors = Eigen::VectorXd::Zero(size);
-        output = Eigen::VectorXd::Zero(size);
-    }
-    for (int i = 0; i < size; ++i) {
-        double error = measured(i) - set_point(i);
-        if (ki(i) != 0.0) {
-            integrals(i) += error;
-            if (integrals(i) < lower_limits(i))
-                integrals(i) = lower_limits(i);
-            if (integrals(i) > upper_limits(i))
-                integrals(i) = upper_limits(i);
-        }
-        double derivative = error - prev_errors(i);
-        output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
-        prev_errors(i) = error;
-    }
-    return output;
-}
-
-void PIDController::set_all_gains_to_zero() {
-    kp = Eigen::VectorXd::Zero(kp.size());
-    ki = Eigen::VectorXd::Zero(ki.size());
-    kd = Eigen::VectorXd::Zero(kd.size());
-}
-
-void PIDController::reset() {
-    integrals.setZero();
-    prev_errors.setZero();
-    output.setZero();
-}
-
 int load_configuration(std::string pth){
     std::cout << pth << std::endl;
     return 1;
 }
+
+
+//----------commander functions from here---------------
+
+
+// int update_servo_mode(int mode) {
+//     // mode 2 is open
+//     servo_mode = mode;
+//     std::cout << "servo_mode updated to " << servo_mode << std::endl;
+//     return 0;  // return 0 to indicate success
+// }
+
+
+void stop_baldr() {
+    // mode 2 is stoppoing
+    servo_mode = SERVO_STOP;
+    std::cout << "servo_mode updated to " << servo_mode << "stopping Baldr RTC" << std::endl;
+}
+
+void close_baldr_LO() {
+    // mode 1 is close
+    servo_mode_LO = SERVO_CLOSE;
+    std::cout << "servo_mode_LO updated to " << servo_mode_LO << ". CLosing Baldr LO modes" << std::endl;
+}
+
+void open_baldr_LO() {
+    // mode 0 is open
+    servo_mode_LO = SERVO_OPEN;
+    std::cout << "servo_mode_LO updated to  " << servo_mode_LO << ". Opening Baldr LO modes" << std::endl;
+}
+
+void close_baldr_HO() {
+    // mode 1 is close
+    servo_mode_HO = SERVO_CLOSE;
+    std::cout << "servo_mode_HO updated to " << servo_mode_HO << ". CLosing Baldr HO modes" << std::endl;
+}
+
+void open_baldr_HO() {
+    // mode 0 is open
+    servo_mode_HO = SERVO_OPEN;
+    std::cout << "servo_mode_HO updated to  " << servo_mode_HO << ". Opening Baldr HO modes" << std::endl;
+}
+
+
+// // Function to update the capacity of the telemetry image ring buffer.
+// int set_telem_img_capacity(int new_capacity) {
+//     try {
+//         rtc_config.telem.img.set_capacity(new_capacity);
+//         std::cout << "Telemetry image buffer capacity updated to " << new_capacity << std::endl;
+//     } catch (const std::exception &ex) {
+//         std::cerr << "Error setting telemetry img capacity: " << ex.what() << std::endl;
+//         return -1;
+//     }
+//     return 0;
+// }
+
+void save_telemetry(){
+    rtc_config.state.take_telemetry = 1;
+}
+
+
+using json = nlohmann::json;
+// This Commander function accepts one JSON parameter: an array of three items:
+// [ gain_type, indices, value ]
+// e.g. in interactive shell : > update_pid_gain ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_gain ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
+json update_pid_gain(json args) {
+    // Check that args is an array with exactly 4 elements.
+    if (!args.is_array() || args.size() != 4) {
+        return json{{"error", "Expected an array with four elements: [controller, gain_type, indices, value]"}};
+    }
+    try {
+        // Extract arguments.
+        std::string controller_str = args.at(0).get<std::string>();
+        std::string gain_type = args.at(1).get<std::string>();
+        std::string indices_str = args.at(2).get<std::string>();
+        double value = args.at(3).get<double>();
+        
+        // Select the appropriate PID controller.
+        PIDController* pid_ctrl = nullptr;
+        if (controller_str == "LO") {
+            pid_ctrl = &ctrl_LO;
+        } else if (controller_str == "HO") {
+            pid_ctrl = &ctrl_HO;
+        } else {
+            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+        }
+        
+        // Select the gain vector to update.
+        Eigen::VectorXd *gain_vector = nullptr;
+        if (gain_type == "kp") {
+            gain_vector = &pid_ctrl->kp;
+        } else if (gain_type == "ki") {
+            gain_vector = &pid_ctrl->ki;
+        } else if (gain_type == "kd") {
+            gain_vector = &pid_ctrl->kd;
+        } else {
+            return json{{"error", "Invalid gain type: " + gain_type + ". Use \"kp\", \"ki\", or \"kd\"."}};
+        }
+        
+        int n = gain_vector->size();
+        if (indices_str == "all") {
+            gain_vector->setConstant(value);
+            std::cout << "Updated all elements of " << gain_type << " in controller " << controller_str 
+                      << " to " << value << std::endl;
+        } else {
+            std::vector<int> idxs = split_indices(indices_str);
+            if (idxs.empty()) {
+                return json{{"error", "No valid indices provided"}};
+            }
+            for (int idx : idxs) {
+                if (idx < 0 || idx >= n) {
+                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + gain_type + " vector of size " + std::to_string(n)}};
+                }
+                (*gain_vector)(idx) = value;
+            }
+            std::cout << "Updated indices (" << indices_str << ") of " << gain_type << " in controller " 
+                      << controller_str << " with value " << value << std::endl;
+        }
+        return json{{"status", "success"}};
+    }
+    catch (const std::exception &ex) {
+        return json{{"error", ex.what()}};
+    }
+}
+
 
 
 COMMANDER_REGISTER(m)
@@ -411,12 +469,36 @@ COMMANDER_REGISTER(m)
 
     // You can register a function or any other callable object as
     // long as the signature is deductible from the type.
-    m.def("load_configuration", load_configuration, "Load a configuration file. Return true if successful.", 
-        "filename"_arg="def.toml");
+    // m.def("load_configuration", load_configuration, "Load a configuration file. Return true if successful.", 
+    //     "filename"_arg="def.toml");
 
-    m.def("update_servo_mode", update_servo_mode,
-          "Update the servo_mode global variable. For example, use 2 (SERVO_STOP) to stop the servo.",
-          "mode"_arg);
+    // m.def("update_servo_mode", update_servo_mode,
+    //       "Update the servo_mode global variable. For example, use 2 (SERVO_STOP) to stop the servo.",
+    //       "mode"_arg);
+
+    m.def("stop_baldr", stop_baldr,
+          "stop the baldr rtc loop","mode"_arg);
+
+    m.def("close_baldr_LO", close_baldr_LO,
+          "close the LO servo loop for baldr","mode"_arg);
+
+    m.def("open_baldr_LO", open_baldr_LO,
+          "open the LO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
+
+    m.def("close_baldr_HO", close_baldr_HO,
+          "close the HO servo loop for baldr","mode"_arg);
+
+    m.def("open_baldr_HO", open_baldr_HO,
+          "open the HO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
+
+
+    // m.def("set_telem_buffer_size", set_telem_buffer_size,
+    //       "Set the capacity for the telemetry image (img) ring buffer.",
+    //       "new_capacity"_arg);
+
+    m.def("save_telemetry", save_telemetry,
+          "dump telemetry in the circular buffer to file","mode"_arg);
+
 
     m.def("update_pid_gain", update_pid_gain,
           "Update a PID gain vector (in ctrl_LO). Parameters: [gain_type, indices, value].\n"

@@ -23,7 +23,9 @@
 
 // Different types of servo modes.
 #define SERVO_PID 0 // PID servo mode
-#define SERVO_STOP 2
+#define SERVO_STOP -1
+#define SERVO_CLOSE 1
+#define SERVO_OPEN 0
 
 //----------Constant Arrays-----------
 
@@ -285,42 +287,43 @@ struct bdr_cam {
 //-----------------------------------------------------
 // // bdr_telem: Telemetry configuration.
 struct bdr_telem {
-    boost::circular_buffer<Eigen::VectorXd> timestamp; // if you want to store each sample’s timestamp
-    boost::circular_buffer<Eigen::VectorXd> img;       // each entry is a vector (e.g. flattened image)
+    int counter;  // A counter that increments for each telemetry sample.
+    
+    // For timestamp, we store a single double (e.g., seconds or milliseconds since an epoch)
+    boost::circular_buffer<double> timestamp; 
+    boost::circular_buffer<int> LO_servo_mode; // this is useful for state change conditions in RTC 
+    boost::circular_buffer<int> HO_servo_mode;
+    boost::circular_buffer<Eigen::VectorXd> img;   
+    boost::circular_buffer<Eigen::VectorXd> img_dm;       
     boost::circular_buffer<Eigen::VectorXd> signal;    
-    boost::circular_buffer<Eigen::VectorXd> e_TT;
-    boost::circular_buffer<Eigen::VectorXd> u_TT;
+    boost::circular_buffer<Eigen::VectorXd> e_LO;
+    boost::circular_buffer<Eigen::VectorXd> u_LO;
     boost::circular_buffer<Eigen::VectorXd> e_HO;
     boost::circular_buffer<Eigen::VectorXd> u_HO;
-    boost::circular_buffer<Eigen::VectorXd> dm_ch0;
-    boost::circular_buffer<Eigen::VectorXd> dm_ch1;
-    boost::circular_buffer<Eigen::VectorXd> dm_ch2;
-    boost::circular_buffer<Eigen::VectorXd> dm_ch3;
-    boost::circular_buffer<Eigen::VectorXd> dm;
-    float strehl_est;
-    float dm_rms;
+    boost::circular_buffer<Eigen::VectorXd> c_LO;
+    boost::circular_buffer<Eigen::VectorXd> c_HO;
 
-    // Constructor that sets a fixed capacity (for example, 100 samples)
-    bdr_telem(size_t capacity = 100)
-      : timestamp(capacity),
+
+    // Constructor that sets a fixed capacity for each ring buffer.
+    bdr_telem(size_t capacity = 100) // 100 capacity is about 3 MB in the buffer
+      : counter(0),
+        timestamp(capacity),
+        LO_servo_mode(capacity),
+        HO_servo_mode(capacity),
         img(capacity),
+        img_dm(capacity),
         signal(capacity),
-        e_TT(capacity),
-        u_TT(capacity),
+        e_LO(capacity),
+        u_LO(capacity),
         e_HO(capacity),
         u_HO(capacity),
-        dm_ch0(capacity),
-        dm_ch1(capacity),
-        dm_ch2(capacity),
-        dm_ch3(capacity),
-        dm(capacity),
-        strehl_est(0),
-        dm_rms(0)
+        c_LO(capacity),
+        c_HO(capacity)
     {}
     
-    void validate() const {
-        // Add any validation if needed.
-    }
+    //void validate() const {
+    // Add any validation if needed.
+    //}
 };
 
 // struct bdr_telem {
@@ -433,7 +436,7 @@ struct bdr_rtc_config {
         ctrl_HO_config.validate();
         limits.validate();
         cam.validate();
-        telem.validate();
+        //telem.validate();
         filters.validate();
         
     }
@@ -506,12 +509,15 @@ extern bdr_rtc_config rtc_config;
 
 //extern std::vector<bdr_rtc_config> rtc_config_list; // what the rtc will use and edit
 extern int servo_mode;
+extern int servo_mode_LO;
+extern int servo_mode_HO;
 // extern vector::<int> telescopes;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 
 // We at least need a mutex for RTC parameters.
 extern std::mutex rtc_mutex;
+extern std::mutex telemetry_mutex;
 
 // The C-Red Image subarray and DM
 extern IMAGE subarray;
