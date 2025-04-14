@@ -118,6 +118,19 @@ void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
 }
 
 
+// A helper function to print the dimension information of a matrix.
+template <typename Derived>
+void printMatrixDimensions(const std::string &name,
+                             const Eigen::MatrixBase<Derived>& M) {
+    std::cout << name << " dimensions: " 
+              << M.rows() << " x " << M.cols() << std::endl;
+}
+
+// A helper function to print the size of a vector.
+void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
+    std::cout << name << " size: " << v.size() << std::endl;
+}
+
 // // The main RTC function
 void rtc(){
     // Temporary variabiles that don't need initialisation
@@ -180,11 +193,53 @@ void rtc(){
 
         start = std::chrono::steady_clock::now();
 
+
         // need to subtract dark , bias norm
-        img =  getFrameFromSharedMemory(1600);
+        img =  getFrameFromSharedMemory(32*32);
         
+        //////////////// CHECK ////////////////////////
+        // Check dimensions before computing sig:
+        // printMatrixDimensions("I2A", rtc_config.matrices.I2A);
+        // printVectorSize("img", img);
+        // printVectorSize("I0_dm", rtc_config.reference_pupils.I0_dm);
+        // printVectorSize("norm_pupil_dm", rtc_config.reference_pupils.norm_pupil_dm);
+        
+        // if (rtc_config.matrices.I2A.cols() != img.size()) {
+        //     std::cerr << "ERROR: Incompatible dimensions: I2A.cols() (" 
+        //             << rtc_config.matrices.I2A.cols() << ") != img.size() (" 
+        //             << img.size() << ")." << std::endl;
+        //     break; // or handle the error appropriately.
+        // }
+        // if (rtc_config.reference_pupils.I0_dm.size() != rtc_config.matrices.I2A.rows() ||
+        //     rtc_config.reference_pupils.norm_pupil_dm.size() != rtc_config.matrices.I2A.rows()) {
+        //     std::cerr << "ERROR: I0_dm and norm_pupil_dm must match I2A.rows() ("
+        //             << rtc_config.matrices.I2A.rows() << ")." << std::endl;
+        //     break;
+        // }
+        ////////////////////////////////////////
+
         sig = ((rtc_config.matrices.I2A * img) - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
+
+        //////////////// CHECK ////////////////////////
+        // //Check dimensions for I2M_LO and I2M_HO multiplications.
+        // printMatrixDimensions("I2M_LO", rtc_config.matrices.I2M_LO);
+        // printMatrixDimensions("I2M_HO", rtc_config.matrices.I2M_HO);
+        // printVectorSize("sig", sig);
+        
+        // if (rtc_config.matrices.I2M_LO.cols() != sig.size() ||
+        //     rtc_config.matrices.I2M_HO.cols() != sig.size()) {
+        //     std::cerr << "ERROR: Incompatible dimensions: I2M_LO.cols() ("
+        //             << rtc_config.matrices.I2M_LO.cols() 
+        //             << ") or I2M_HO.cols() (" 
+        //             << rtc_config.matrices.I2M_HO.cols() 
+        //             << ") do not equal sig.size() (" << sig.size() << ")." 
+        //             << std::endl;
+        //     break;
+        // }
+        //////////////////////////////////////
+
+
         //end = std::chrono::steady_clock::now();
         //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         //std::cout << "Elapsed time sig: " << duration.count() << " us" << std::endl;
@@ -195,25 +250,55 @@ void rtc(){
 
         e_HO = rtc_config.matrices.I2M_HO * sig ;
 
+        // printVectorSize("e_LO", e_LO);
+        // printVectorSize("e_HO", e_HO);
+        
+        //std::cout << e_LO <<  std::endl;
+
         //end = std::chrono::steady_clock::now();
         //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         //std::cout << "Elapsed time e_HO: " << duration.count() << " us" << std::endl;
 
         //start = std::chrono::steady_clock::now();
-
+        
         u_LO = ctrl_LO.process( e_LO );
 
         u_HO = ctrl_HO.process( e_HO );
+
+
+        // printMatrixDimensions("M2C_LO", rtc_config.matrices.M2C_LO);
+        // printMatrixDimensions("M2C_HO", rtc_config.matrices.M2C_HO);
+        // printVectorSize("u_LO", u_LO);
+        // printVectorSize("u_HO", u_HO);
+
+        //std::cout << "After processing, u_LO: " << u_LO << std::endl;
+        //std::cout << "u_LO.size() = " << u_LO.size() << std::endl;
+
+        // std::cout << u_LO <<  std::endl;
+        // std::cout << u_HO <<  std::endl;
 
         //end = std::chrono::steady_clock::now();
         //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         //std::cout << "Elapsed time u_HO: " << duration.count() << " us" << std::endl;
 
+
+        // if (rtc_config.matrices.M2C_LO.cols() != u_LO.size() ||
+        //     rtc_config.matrices.M2C_HO.cols() != u_HO.size()) {
+        //     std::cerr << "ERROR: Incompatible dimensions: M2C_LO or M2C_HO does not match controller output sizes." 
+        //             << std::endl;
+        //     break;
+        // }
+        
         c_LO = rtc_config.matrices.M2C_LO * u_LO;
         
         c_HO = rtc_config.matrices.M2C_HO * u_HO;
 
         dmCmd = c_LO + c_HO;
+
+        // std::cout << "dmCmd.size() = " << dmCmd.size() << std::endl;
+        // std::cout << "Max value of u_HO: " << u_HO.maxCoeff() << std::endl;
+        // std::cout << "Max value of u_LO: " << u_LO.maxCoeff() << std::endl;
+
         //std::cout << "Elapsed time sig: " << c_LO  << std::endl;
         //<< e_HO.size() << "  ki size in PID: " << ctrl.ki.size() << "controller ki size used to configure PID" << rtc_config.controller.ki.size() << std::endl;
         updateDMSharedMemory( dmCmd ) ;
@@ -221,8 +306,9 @@ void rtc(){
         end = std::chrono::steady_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-        std::cout << "wrote to dm. Full loop in " << duration.count() <<" us. wow." << std::endl;
+        //std::cout << "wrote to dm. Full loop in " << duration.count() <<" us. wow." << std::endl;
     }
 
+    std::cout << "servo_mode changed to" << servo_mode << "rtc stopped" << std::endl;
 
 }

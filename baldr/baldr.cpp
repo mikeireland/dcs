@@ -25,8 +25,84 @@ std::mutex rtc_mutex;
 IMAGE subarray; // The C-red subarray
 IMAGE dm_rtc; // The DM subarray
 
+
+
+
+
 //----------commander functions from here---------------
 
+
+int update_servo_mode(int mode) {
+    servo_mode = mode;
+    std::cout << "servo_mode updated to " << servo_mode << std::endl;
+    return 0;  // return 0 to indicate success
+}
+
+
+// Helper function to split a comma-separated string into a vector of ints.
+std::vector<int> split_indices(const std::string &indices_str) {
+    std::vector<int> indices;
+    std::stringstream ss(indices_str);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        try {
+            // Remove any whitespace from the token.
+            token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
+            if (!token.empty()) {
+                indices.push_back(std::stoi(token));
+            }
+        } catch (const std::exception &ex) {
+            std::cerr << "Error converting token '" << token << "' to integer: " << ex.what() << std::endl;
+        }
+    }
+    return indices;
+}
+
+// The update function for PID gains.
+// gain_type: "kp", "ki", or "kd"
+// indices_str: a comma-separated list of indices, or the literal "all"
+// value: the value to set for the specified indices
+int update_pid_gain(const std::string &gain_type, const std::string &indices_str, double value) {
+    // Pointer to the gain vector to update.
+    Eigen::VectorXd *gain_vector = nullptr;
+    if (gain_type == "kp") {
+        gain_vector = &ctrl.kp;
+    } else if (gain_type == "ki") {
+        gain_vector = &ctrl.ki;
+    } else if (gain_type == "kd") {
+        gain_vector = &ctrl.kd;
+    } else {
+        std::cerr << "Invalid gain type: " << gain_type << std::endl;
+        return -1;
+    }
+    
+    int n = gain_vector->size();
+    
+    if (indices_str == "all") {
+        // Update all indices.
+        gain_vector->setConstant(value);
+        std::cout << "Updated all elements of " << gain_type << " to " << value << std::endl;
+    } else {
+        // Split the indices_str by commas.
+        std::vector<int> indices = split_indices(indices_str);
+        if (indices.empty()) {
+            std::cerr << "No valid indices provided." << std::endl;
+            return -1;
+        }
+        // Update specified indices (check that each index is valid).
+        for (int idx : indices) {
+            if (idx < 0 || idx >= n) {
+                std::cerr << "Index " << idx << " is out of range for " << gain_type 
+                          << " vector of size " << n << std::endl;
+            } else {
+                (*gain_vector)(idx) = value;
+            }
+        }
+        std::cout << "Updated indices " << indices_str << " of " << gain_type 
+                  << " with value " << value << std::endl;
+    }
+    return 0;
+}
 
 toml::table readConfig(const std::string &filename) {
     try {
@@ -192,7 +268,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 
     // init contoller 
     rtc.controller = bdr_controller(); 
-
+    
     // write method , back to toml, or json?
 
 
@@ -236,12 +312,12 @@ PIDController::PIDController(const bdr_controller& config_in)
 
 // Default constructor.
 PIDController::PIDController()
-    : kp(Eigen::VectorXd::Zero(144)),
-      ki(Eigen::VectorXd::Zero(144)),
-      kd(Eigen::VectorXd::Zero(144)),
-      lower_limits(Eigen::VectorXd::Zero(144)),
-      upper_limits(Eigen::VectorXd::Ones(144)),
-      set_point(Eigen::VectorXd::Zero(144)),
+    : kp(Eigen::VectorXd::Zero(140)),
+      ki(Eigen::VectorXd::Zero(140)),
+      kd(Eigen::VectorXd::Zero(140)),
+      lower_limits(Eigen::VectorXd::Zero(140)),
+      upper_limits(Eigen::VectorXd::Ones(140)),
+      set_point(Eigen::VectorXd::Zero(140)),
       ctrl_type("PID")
 {
     int size = kp.size();
@@ -308,7 +384,14 @@ COMMANDER_REGISTER(m)
     m.def("load_configuration", load_configuration, "Load a configuration file. Return true if successful.", 
         "filename"_arg="def.toml");
 
+    m.def("update_servo_mode", update_servo_mode,
+          "Update the servo_mode global variable. For example, use 2 (SERVO_STOP) to stop the servo.",
+          "mode"_arg);
 
+    m.def("update_pid_gain", update_pid_gain,
+          "Update a PID gain vector. Provide the gain type (\"kp\", \"ki\", or \"kd\"),\n"
+          "a comma-separated list of indices (or \"all\"), and a new gain value.",
+          "gain_type"_arg, "indices"_arg, "value"_arg);
  }
 
 
