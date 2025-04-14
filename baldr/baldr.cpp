@@ -13,6 +13,11 @@ std::string phasemask;
 toml::table config;
 bdr_rtc_config rtc_config;
 
+// Forward declaration of global PID controllers 
+extern PIDController ctrl_LO;
+extern PIDController ctrl_HO;
+
+
 int servo_mode;
 //vector::<int> telescopes;
 
@@ -28,81 +33,99 @@ IMAGE dm_rtc; // The DM subarray
 
 
 
-
-//----------commander functions from here---------------
-
-
-int update_servo_mode(int mode) {
-    servo_mode = mode;
-    std::cout << "servo_mode updated to " << servo_mode << std::endl;
-    return 0;  // return 0 to indicate success
-}
-
-
 // Helper function to split a comma-separated string into a vector of ints.
 std::vector<int> split_indices(const std::string &indices_str) {
     std::vector<int> indices;
     std::stringstream ss(indices_str);
     std::string token;
     while (std::getline(ss, token, ',')) {
-        try {
-            // Remove any whitespace from the token.
-            token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
-            if (!token.empty()) {
+        token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
+        if (!token.empty()) {
+            try {
                 indices.push_back(std::stoi(token));
+            } catch (const std::exception &ex) {
+                std::cerr << "Error converting token '" << token << "': " << ex.what() << std::endl;
             }
-        } catch (const std::exception &ex) {
-            std::cerr << "Error converting token '" << token << "' to integer: " << ex.what() << std::endl;
         }
     }
     return indices;
 }
 
-// The update function for PID gains.
-// gain_type: "kp", "ki", or "kd"
-// indices_str: a comma-separated list of indices, or the literal "all"
-// value: the value to set for the specified indices
-int update_pid_gain(const std::string &gain_type, const std::string &indices_str, double value) {
-    // Pointer to the gain vector to update.
-    Eigen::VectorXd *gain_vector = nullptr;
-    if (gain_type == "kp") {
-        gain_vector = &ctrl.kp;
-    } else if (gain_type == "ki") {
-        gain_vector = &ctrl.ki;
-    } else if (gain_type == "kd") {
-        gain_vector = &ctrl.kd;
-    } else {
-        std::cerr << "Invalid gain type: " << gain_type << std::endl;
-        return -1;
+//----------commander functions from here---------------
+
+
+int update_servo_mode(int mode) {
+    // mode 2 is open
+    servo_mode = mode;
+    std::cout << "servo_mode updated to " << servo_mode << std::endl;
+    return 0;  // return 0 to indicate success
+}
+
+using json = nlohmann::json;
+
+// This Commander function accepts one JSON parameter: an array of three items:
+// [ gain_type, indices, value ]
+// e.g. in interactive shell : > update_pid_gain ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_gain ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
+json update_pid_gain(json args) {
+    // Check that args is an array with exactly 4 elements.
+    if (!args.is_array() || args.size() != 4) {
+        return json{{"error", "Expected an array with four elements: [controller, gain_type, indices, value]"}};
     }
-    
-    int n = gain_vector->size();
-    
-    if (indices_str == "all") {
-        // Update all indices.
-        gain_vector->setConstant(value);
-        std::cout << "Updated all elements of " << gain_type << " to " << value << std::endl;
-    } else {
-        // Split the indices_str by commas.
-        std::vector<int> indices = split_indices(indices_str);
-        if (indices.empty()) {
-            std::cerr << "No valid indices provided." << std::endl;
-            return -1;
+    try {
+        // Extract arguments.
+        std::string controller_str = args.at(0).get<std::string>();
+        std::string gain_type = args.at(1).get<std::string>();
+        std::string indices_str = args.at(2).get<std::string>();
+        double value = args.at(3).get<double>();
+        
+        // Select the appropriate PID controller.
+        PIDController* pid_ctrl = nullptr;
+        if (controller_str == "LO") {
+            pid_ctrl = &ctrl_LO;
+        } else if (controller_str == "HO") {
+            pid_ctrl = &ctrl_HO;
+        } else {
+            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
         }
-        // Update specified indices (check that each index is valid).
-        for (int idx : indices) {
-            if (idx < 0 || idx >= n) {
-                std::cerr << "Index " << idx << " is out of range for " << gain_type 
-                          << " vector of size " << n << std::endl;
-            } else {
+        
+        // Select the gain vector to update.
+        Eigen::VectorXd *gain_vector = nullptr;
+        if (gain_type == "kp") {
+            gain_vector = &pid_ctrl->kp;
+        } else if (gain_type == "ki") {
+            gain_vector = &pid_ctrl->ki;
+        } else if (gain_type == "kd") {
+            gain_vector = &pid_ctrl->kd;
+        } else {
+            return json{{"error", "Invalid gain type: " + gain_type + ". Use \"kp\", \"ki\", or \"kd\"."}};
+        }
+        
+        int n = gain_vector->size();
+        if (indices_str == "all") {
+            gain_vector->setConstant(value);
+            std::cout << "Updated all elements of " << gain_type << " in controller " << controller_str 
+                      << " to " << value << std::endl;
+        } else {
+            std::vector<int> idxs = split_indices(indices_str);
+            if (idxs.empty()) {
+                return json{{"error", "No valid indices provided"}};
+            }
+            for (int idx : idxs) {
+                if (idx < 0 || idx >= n) {
+                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + gain_type + " vector of size " + std::to_string(n)}};
+                }
                 (*gain_vector)(idx) = value;
             }
+            std::cout << "Updated indices (" << indices_str << ") of " << gain_type << " in controller " 
+                      << controller_str << " with value " << value << std::endl;
         }
-        std::cout << "Updated indices " << indices_str << " of " << gain_type 
-                  << " with value " << value << std::endl;
+        return json{{"status", "success"}};
     }
-    return 0;
+    catch (const std::exception &ex) {
+        return json{{"error", ex.what()}};
+    }
 }
+
 
 toml::table readConfig(const std::string &filename) {
     try {
@@ -267,8 +290,15 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     rtc.telem = bdr_telem();
 
     // init contoller 
-    rtc.controller = bdr_controller(); 
-    
+    //// heree
+    //rtc.controller = bdr_controller(); 
+    int LO_nRows = rtc_config.matrices.I2M.rows();//rtc_config.matrices.I2M_LO.rows();
+    int HO_nRows = rtc_config.matrices.I2M.rows();//rtc_config.matrices.I2M_HO.rows();
+    std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
+    rtc.ctrl_LO_config = bdr_controller( ); //LO_nRows ); 
+    rtc.ctrl_HO_config = bdr_controller( );//HO_nRows ); 
+
+            
     // write method , back to toml, or json?
 
 
@@ -315,7 +345,7 @@ PIDController::PIDController()
     : kp(Eigen::VectorXd::Zero(140)),
       ki(Eigen::VectorXd::Zero(140)),
       kd(Eigen::VectorXd::Zero(140)),
-      lower_limits(Eigen::VectorXd::Zero(140)),
+      lower_limits(-Eigen::VectorXd::Ones(140)),
       upper_limits(Eigen::VectorXd::Ones(140)),
       set_point(Eigen::VectorXd::Zero(140)),
       ctrl_type("PID")
@@ -389,9 +419,11 @@ COMMANDER_REGISTER(m)
           "mode"_arg);
 
     m.def("update_pid_gain", update_pid_gain,
-          "Update a PID gain vector. Provide the gain type (\"kp\", \"ki\", or \"kd\"),\n"
-          "a comma-separated list of indices (or \"all\"), and a new gain value.",
-          "gain_type"_arg, "indices"_arg, "value"_arg);
+          "Update a PID gain vector (in ctrl_LO). Parameters: [gain_type, indices, value].\n"
+          "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
+          "  - indices: a comma-separated list of indices or \"all\"\n"
+          "  - value: the new gain value (number)",
+          "args"_arg);
  }
 
 

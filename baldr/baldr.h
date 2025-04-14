@@ -5,6 +5,7 @@
 #include <toml.hpp>
 #include <mutex>
 #include <thread>
+#include <boost/circular_buffer.hpp>
 
 //#include <string>
 //#include <toml++/toml.h>
@@ -282,47 +283,86 @@ struct bdr_cam {
 };
 
 //-----------------------------------------------------
-// bdr_telem: Telemetry configuration.
+// // bdr_telem: Telemetry configuration.
 struct bdr_telem {
-    // Define telemetry fields as needed.
-    std::chrono::steady_clock::time_point timestamp;
-    std::vector<int16_t> img;
-    std::vector<double> signal; 
-    std::vector<double> e_TT;
-    std::vector<double> u_TT;
-    std::vector<double> e_HO;
-    std::vector<double> u_HO;
-    std::vector<double> dm_ch0;
-    std::vector<double> dm_ch1;
-    std::vector<double> dm_ch2;
-    std::vector<double> dm_ch3; 
-    std::vector<double> dm;
+    boost::circular_buffer<Eigen::VectorXd> timestamp; // if you want to store each sample’s timestamp
+    boost::circular_buffer<Eigen::VectorXd> img;       // each entry is a vector (e.g. flattened image)
+    boost::circular_buffer<Eigen::VectorXd> signal;    
+    boost::circular_buffer<Eigen::VectorXd> e_TT;
+    boost::circular_buffer<Eigen::VectorXd> u_TT;
+    boost::circular_buffer<Eigen::VectorXd> e_HO;
+    boost::circular_buffer<Eigen::VectorXd> u_HO;
+    boost::circular_buffer<Eigen::VectorXd> dm_ch0;
+    boost::circular_buffer<Eigen::VectorXd> dm_ch1;
+    boost::circular_buffer<Eigen::VectorXd> dm_ch2;
+    boost::circular_buffer<Eigen::VectorXd> dm_ch3;
+    boost::circular_buffer<Eigen::VectorXd> dm;
     float strehl_est;
     float dm_rms;
 
-
-    bdr_telem(){
-        timestamp =  std::chrono::steady_clock::now();
-        img  = {};
-        signal  = {};
-        e_TT  = {};
-        u_TT  = {};
-        e_HO  = {};
-        u_HO  = {};
-        dm_ch0  = {};
-        dm_ch1  = {};
-        dm_ch2  = {};
-        dm_ch3   = {};
-        dm = {};
-        strehl_est = 0 ;
-        dm_rms = 0;
-    }
-
+    // Constructor that sets a fixed capacity (for example, 100 samples)
+    bdr_telem(size_t capacity = 100)
+      : timestamp(capacity),
+        img(capacity),
+        signal(capacity),
+        e_TT(capacity),
+        u_TT(capacity),
+        e_HO(capacity),
+        u_HO(capacity),
+        dm_ch0(capacity),
+        dm_ch1(capacity),
+        dm_ch2(capacity),
+        dm_ch3(capacity),
+        dm(capacity),
+        strehl_est(0),
+        dm_rms(0)
+    {}
     
     void validate() const {
-        // Could check for non-empty parameters if required.
+        // Add any validation if needed.
     }
 };
+
+// struct bdr_telem {
+//     // Define telemetry fields as needed.
+//     std::vector<std::chrono::steady_clock::time_point> timestamp;
+//     std::vector<int16_t> img;
+//     std::vector<double> signal; 
+//     std::vector<double> e_TT;
+//     std::vector<double> u_TT;
+//     std::vector<double> e_HO;
+//     std::vector<double> u_HO;
+//     std::vector<double> dm_ch0;
+//     std::vector<double> dm_ch1;
+//     std::vector<double> dm_ch2;
+//     std::vector<double> dm_ch3; 
+//     std::vector<double> dm;
+//     float strehl_est;
+//     float dm_rms;
+
+
+//     bdr_telem(){
+//         timestamp =  {}; //std::chrono::steady_clock::now();
+//         img  = {};
+//         signal  = {};
+//         e_TT  = {};
+//         u_TT  = {};
+//         e_HO  = {};
+//         u_HO  = {};
+//         dm_ch0  = {};
+//         dm_ch1  = {};
+//         dm_ch2  = {};
+//         dm_ch3   = {};
+//         dm = {};
+//         strehl_est = 0 ;
+//         dm_rms = 0;
+//     }
+
+    
+//     void validate() const {
+//         // Could check for non-empty parameters if required.
+//     }
+// };
 
 //-----------------------------------------------------
 // bdr_filters: Boolean masks.
@@ -371,7 +411,10 @@ struct bdr_rtc_config {
     bdr_pixels pixels;
     bdr_refence_pupils reference_pupils;
     bdr_matricies matrices;
-    bdr_controller controller;
+    //bdr_controller controller;
+    ////heree
+    bdr_controller ctrl_LO_config;
+    bdr_controller ctrl_HO_config;
     bdr_limits limits;
     bdr_cam cam;
     bdr_telem telem;
@@ -384,7 +427,10 @@ struct bdr_rtc_config {
         pixels.validate();
         reference_pupils.validate();
         matrices.validate();
-        controller.validate();
+        //heree
+        //controller.validate();
+        ctrl_LO_config.validate();
+        ctrl_HO_config.validate();
         limits.validate();
         cam.validate();
         telem.validate();
