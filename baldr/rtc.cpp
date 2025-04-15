@@ -238,13 +238,28 @@ void rtc(){
         std::cout << "no ctrl match" << std::endl;
     }
 
-    // frames per second from rtc_config used for converting dark from adu/s -> adu 
-    float fps = std::stof(rtc_config.cam.fps);
-
+    // some pre inits
     Eigen::VectorXd img = Eigen::VectorXd::Zero(rtc_config.matrices.szp); // P must be defined appropriately.
-
-    // zero command 
     Eigen::VectorXd zeroCmd = Eigen::VectorXd::Zero(rtc_config.matrices.sza);
+
+    // ----------------------- IMPORTANT 
+    // frames per second from rtc_config used for converting dark from adu/s -> adu 
+    // we should actually read this from the current camera settings when calling the rtc! 
+    double fps = std::stof(rtc_config.cam.fps);
+    double gain = std::stof(rtc_config.cam.gain);
+    double scale = gain / fps;
+    // ALL I2M and reference intensities stored in config are in ADU/second/gain !!
+    Eigen::MatrixXd I2M_LO = scale * rtc_config.matrices.I2M_LO;
+    Eigen::MatrixXd I2M_HO = scale * rtc_config.matrices.I2M_HO;
+    
+    Eigen::VectorXd N0_dm =  scale * rtc_config.reference_pupils.norm_pupil_dm;
+    Eigen::VectorXd I0_dm =  scale * rtc_config.reference_pupils.I0_dm;
+
+    // darks (generated in dcs/calibration_frames/gen_dark_bias_badpix.py ) are adu/s in the gain setting (not normalized by gain)
+    // I should review the darks and perhaps normalize by gain setting too! 
+    Eigen::VectorXd dark_dm = 1.0 / fps * rtc_config.reduction.dark_dm;
+
+
 
     // naughty actuator or modes 
     std::vector<int> naughty_list(140, 0);
@@ -255,6 +270,7 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
+    std::chrono::microseconds loop_time(1000); // microseconds - set speed of loop 
 
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode != SERVO_STOP){
@@ -262,21 +278,22 @@ void rtc(){
         //std::cout << servo_mode_LO << std::endl;
         //std::cout << servo_mode_HO << std::endl;
 
+
         start = std::chrono::steady_clock::now();
 
-        // need to subtract dark , bias norm
+        // need to subtract dark , bias norm ( do this next)
         img =  getFrameFromSharedMemory(32*32);
         
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
-        img_dm = (rtc_config.matrices.I2A *  img)  - 1/fps * rtc_config.reduction.dark_dm - rtc_config.reduction.bias_dm;
+        img_dm = (rtc_config.matrices.I2A *  img)  - dark_dm - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
 
-        sig = (img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        sig = (img_dm - I0_dm).cwiseQuotient(N0_dm); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         //sig = (rtc_config.matrices.I2A *  img - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
 
-        e_LO = rtc_config.matrices.I2M_LO * sig ;
+        e_LO =  I2M_LO * sig; //rtc_config.matrices.I2M_LO * sig ;
 
-        e_HO = rtc_config.matrices.I2M_HO * sig ;
+        e_HO =  I2M_HO * sig; //rtc_config.matrices.I2M_HO * sig ;
 
 
         // if auto mode change state based on signals
@@ -284,6 +301,10 @@ void rtc(){
 
         // LO CALCULATIONS 
         if (servo_mode_LO == SERVO_CLOSE){
+            if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_CLOSE) {
+                std::cout << "LO IN CLOSED LOOP" << std::endl;
+
+            }
 
             u_LO = ctrl_LO.process( e_LO );
 
@@ -304,13 +325,19 @@ void rtc(){
 
         // HO CALCULATIONS 
         if (servo_mode_HO == SERVO_CLOSE){
+            if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_CLOSE) {
+                std::cout << "HO IN CLOSED LOOP" << std::endl;
+
+            }
 
             u_HO = ctrl_HO.process( e_HO );
             
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            
+            //std::cout << c_HO.cwiseAbs().maxCoeff() << std::endl; 
+            //std::cout << rtc_config.matrices.M2C_HO.cwiseAbs().maxCoeff() << std::endl; 
+            //std::cout << sig.cwiseAbs().maxCoeff() << std::endl; 
 
-
-        //write_telemetry_to_json(rtc_config.telem, "/home/asg/Music/telemetry.json");
         }else if(servo_mode_HO == SERVO_OPEN){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
@@ -330,9 +357,9 @@ void rtc(){
 
         if (dmCmd.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
             // Find index of maximum absolute value.
-            int culprit = 0;
+            //int culprit = 0;
             //double maxVal = u_HO.cwiseAbs().maxCoeff(&culprit);
-            std::cout << "beam " << beam_id << " broke by act." << culprit << ", resetting" << std::endl;
+            //std::cout << "beam " << beam_id << " broke by act." << culprit << ", resetting" << std::endl;
             
             // Optionally, to reduce gain for this actuator by half, you might do:
             // ctrl_HO.ki(culprit) *= 0.5;
@@ -343,49 +370,46 @@ void rtc(){
             // Convert the vector to a 2D map via dm.cmd_2_map2D() and write to shared memory.
             //dm.set_data(dm.cmd_2_map2D(zeroCmd));
 
-            // zero dm
-            updateDMSharedMemory( zeroCmd ) ;
+            // // zero dm
+            // //updateDMSharedMemory( zeroCmd ) ;
             
-            // Reset the high-order controller.
-            ctrl_HO.reset();
-            ctrl_LO.reset();
+            // // Reset the high-order controller.
+            // ctrl_HO.reset();
+            // ctrl_LO.reset();
             
-            // Increase the counter for this actuator.
-            naughty_list[culprit] += 1;
+            // // Increase the counter for this actuator.
+            // naughty_list[culprit] += 1;
             
-            // If the controller's gain vector has fewer than 30 elements, stop the loop.
-            if (naughty_list[culprit] > 10) {
-                servo_mode = SERVO_STOP;
-                std::cout << "ENDING" << std::endl;
-            }
+            // // If the controller's gain vector has fewer than 30 elements, stop the loop.
+            // if (naughty_list[culprit] > 10) {
+            //     servo_mode = SERVO_STOP;
+            //     std::cout << "ENDING" << std::endl;
+            // }
             
-            // If this actuator has been problematic more than 4 times, disable it by setting its gain to zero.
-            if (naughty_list[culprit] > 4) {
-                std::cout << "Turn off naughty actuator " << culprit << std::endl;
-                ctrl_HO.ki(culprit) = 0.0;
-            }
+            // // If this actuator has been problematic more than 4 times, disable it by setting its gain to zero.
+            // if (naughty_list[culprit] > 4) {
+            //     std::cout << "Turn off naughty actuator " << culprit << std::endl;
+            //     ctrl_HO.ki(culprit) = 0.0;
+            // }
         }
 
 
+        // ******************** UPDATE DM ******************************
 
         //updateDMSharedMemory( dmCmd ) ;
 
-
-        end = std::chrono::steady_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-
+        // ******************** --------- ******************************
 
         // ************************************************************
         // Struc of ring buffers to keep history and offload to telemetry thread if requestec 
         if (true){
             std::lock_guard<std::mutex> lock(telemetry_mutex);
-            // Get the current time as a double (for example, in milliseconds)
-            current_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            // Get the current time as a double (microseconds)
+            current_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(
                                         std::chrono::steady_clock::now().time_since_epoch()
                                     ).count();
                                     
             // Append data to telemetry ring buffers.
-            // (If you're updating telemetry from multiple threads, you should lock a mutex around these updates.)
             //std::cout << "time  " << current_time_ms  << std::endl;
             rtc_config.telem.timestamp.push_back(current_time_ms);
 
@@ -421,6 +445,19 @@ void rtc(){
             // Increment the counter.
             rtc_config.telem.counter++;
         }
+
+        end = std::chrono::steady_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+        // with telemetry and everything typically 220us loop without sleep (5kHz)
+        //std::cout << "duration microsec:  " << duration.count() << std::endl;
+
+        /////////////////////// SLEEP ///////////////////////
+        if (duration < loop_time){
+            std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
+        }
+
+
     }
     std::cout << "servo_mode changed to" << servo_mode << "...rtc stopped" << std::endl;
 }

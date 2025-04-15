@@ -97,7 +97,7 @@ void telemetry(){
             }
             
             // Convert the telemetry data to JSON.
-            json j = telemetry_to_json(rtc_config.telem);
+            json j = telemetry_to_json(currentTelem);
             
             // Write to file.
             std::ofstream ofs(filename);
