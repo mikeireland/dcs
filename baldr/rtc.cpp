@@ -78,7 +78,9 @@ Eigen::VectorXd c_LO;
 Eigen::VectorXd c_HO;
 Eigen::VectorXd dmCmd;
 
-
+// dm rms model
+double dm_rms_est_1 ; // from secondary obstruction
+double dm_rms_est_2 ; // from exterior pixels 
 
 /**
  Reads a frame from shared memory which should match the expected number of pixels expectedPixels.
@@ -203,6 +205,11 @@ void rtc(){
     std::cout << "Controller set_point size: " << ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
+    std::cout << "secondary pixels size: " << rtc_config.pixels.secondary_pixels.size() << std::endl;
+    std::cout << "exterior pixels size: " << rtc_config.pixels.exterior_pixels.size() << std::endl;
+
+    std::cout << "secondary strehl matrix: " << rtc_config.matrices.I2rms_sec << std::endl;
+    std::cout << "exterior strehl matrix: " << rtc_config.matrices.I2rms_ext << std::endl;
     
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
@@ -226,7 +233,8 @@ void rtc(){
         std::cerr << "Error: No metadata available in the subarray shared memory image." << std::endl;
     }
 
-
+    ////////////////////////////////////////////////////
+    /// Aspects to be re-computed everytime the configuration changes - init_rtc function? 
     if (rtc_config.state.controller_type=="PID"){
         ////heree
         // PIDController ctrl_LO( rtc_config.controller );
@@ -237,6 +245,7 @@ void rtc(){
     else{
         std::cout << "no ctrl match" << std::endl;
     }
+
 
     // some pre inits
     Eigen::VectorXd img = Eigen::VectorXd::Zero(rtc_config.matrices.szp); // P must be defined appropriately.
@@ -261,6 +270,19 @@ void rtc(){
 
 
 
+    // Strehl models
+    // secondary pixel. Solarstein mask closer to UT size - this will be invalid on internal source 
+    int sec_idx = rtc_config.pixels.secondary_pixels(4); // .secondary_pixels defines 3x3 square around secondary - we only use the central one
+    double m_s = scale * rtc_config.matrices.I2rms_sec(0, 0); // intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
+    double b_s = rtc_config.matrices.I2rms_sec(1, 1);
+    
+    //exterior pixels 
+    //double m_e = rtc_config.matrices.I2rms_sec(0, 0);
+    //double b_e = rtc_config.matrices.I2rms_sec(1, 1);
+
+
+
+
     // naughty actuator or modes 
     std::vector<int> naughty_list(140, 0);
 
@@ -270,7 +292,7 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::chrono::microseconds loop_time(1000); // microseconds - set speed of loop 
+    std::chrono::microseconds loop_time( static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
 
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode != SERVO_STOP){
@@ -290,8 +312,13 @@ void rtc(){
         start = std::chrono::steady_clock::now();
 
         // need to subtract dark , bias norm ( do this next)
-        img =  getFrameFromSharedMemory(32*32);
+        img =  getFrameFromSharedMemory(32*32); //32*32);
         
+        // model of residual rms in DM units using secondary obstruction 
+        dm_rms_est_1 = m_s * ( img[ sec_idx ] - rtc_config.reduction.dark[ sec_idx ] - rtc_config.reduction.bias[ sec_idx ] ) + b_s;
+
+        //std::cout << dm_rms_est_1 << std::endl;
+
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
         img_dm = (rtc_config.matrices.I2A *  img)  - dark_dm - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
@@ -461,7 +488,7 @@ void rtc(){
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
-        //std::cout << "duration microsec:  " << duration.count() << std::endl;
+        std::cout << "duration microsec:  " << duration.count() << std::endl;
 
         /////////////////////// SLEEP ///////////////////////
         if (duration < loop_time){

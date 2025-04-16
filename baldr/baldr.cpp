@@ -802,6 +802,7 @@ int main(int argc, char* argv[]) {
     //     ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
     // 
     if (!rtc_config.state.simulation_mode) {
+        std::cout << "SHM configuration not in simulation mode" << std::endl;
         // Real mode: open real images from the shared memory.
         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
         

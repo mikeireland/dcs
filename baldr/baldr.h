@@ -32,6 +32,8 @@
 
 //----- Structures and typedefs------
 
+
+
 // just putting everything here for now - will move to commander when blantely obvious that I need to
 
 
@@ -201,8 +203,8 @@ struct bdr_matricies {
     Eigen::MatrixXd M2C;      // Mode-to-DM command projection matrix.
     Eigen::MatrixXd M2C_LO;   // LO mode to DM command.
     Eigen::MatrixXd M2C_HO;   // HO mode to DM command.
-    Eigen::MatrixXd I2rms_sec; // For secondary obstruction.
-    Eigen::MatrixXd I2rms_ext; // For exterior pupil.
+    Eigen::MatrixXd I2rms_sec; // For secondary obstruction. - keep this in matrix form so more complex models can be extended
+    Eigen::MatrixXd I2rms_ext; // For exterior pupil.- keep this in matrix form so more complex models can be extended
     // Additional size variables:
     int32_t szm; // Number of modes.
     int32_t sza; // Number of actuators.
@@ -242,6 +244,42 @@ struct bdr_controller {
           set_point(Eigen::VectorXd::Zero(vsize))
         {}
 };
+
+
+
+// Declaration of the PIDController class. needs to be after bdr_controller struct since it uses it in the constructor
+class PIDController {
+public:
+    // Constructors.
+    PIDController(const Eigen::VectorXd& kp_in,
+                  const Eigen::VectorXd& ki_in,
+                  const Eigen::VectorXd& kd_in,
+                  const Eigen::VectorXd& lower_limit_in,
+                  const Eigen::VectorXd& upper_limit_in,
+                  const Eigen::VectorXd& setpoint_in);
+    PIDController(const bdr_controller& config_in);
+    PIDController();
+
+    // Process the measured input to produce control output.
+    Eigen::VectorXd process(const Eigen::VectorXd& measured);
+
+    // Utility functions.
+    void set_all_gains_to_zero();
+    void reset();
+
+    // Public members 
+    Eigen::VectorXd kp;
+    Eigen::VectorXd ki;
+    Eigen::VectorXd kd;
+    Eigen::VectorXd lower_limits;
+    Eigen::VectorXd upper_limits;
+    Eigen::VectorXd set_point;
+    std::string ctrl_type;
+    Eigen::VectorXd output;
+    Eigen::VectorXd integrals;
+    Eigen::VectorXd prev_errors;
+};
+
 
 //-----------------------------------------------------
 // bdr_limits: Limits and conditions for loop control.
@@ -345,47 +383,6 @@ struct bdr_telem {
     //}
 };
 
-// struct bdr_telem {
-//     // Define telemetry fields as needed.
-//     std::vector<std::chrono::steady_clock::time_point> timestamp;
-//     std::vector<int16_t> img;
-//     std::vector<double> signal; 
-//     std::vector<double> e_TT;
-//     std::vector<double> u_TT;
-//     std::vector<double> e_HO;
-//     std::vector<double> u_HO;
-//     std::vector<double> dm_ch0;
-//     std::vector<double> dm_ch1;
-//     std::vector<double> dm_ch2;
-//     std::vector<double> dm_ch3; 
-//     std::vector<double> dm;
-//     float strehl_est;
-//     float dm_rms;
-
-
-//     bdr_telem(){
-//         timestamp =  {}; //std::chrono::steady_clock::now();
-//         img  = {};
-//         signal  = {};
-//         e_TT  = {};
-//         u_TT  = {};
-//         e_HO  = {};
-//         u_HO  = {};
-//         dm_ch0  = {};
-//         dm_ch1  = {};
-//         dm_ch2  = {};
-//         dm_ch3   = {};
-//         dm = {};
-//         strehl_est = 0 ;
-//         dm_rms = 0;
-//     }
-
-    
-//     void validate() const {
-//         // Could check for non-empty parameters if required.
-//     }
-// };
-
 //-----------------------------------------------------
 // bdr_filters: Boolean masks.
 struct bdr_filters {
@@ -433,8 +430,6 @@ struct bdr_rtc_config {
     bdr_pixels pixels;
     bdr_refence_pupils reference_pupils;
     bdr_matricies matrices;
-    //bdr_controller controller;
-    ////heree
     bdr_controller ctrl_LO_config;
     bdr_controller ctrl_HO_config;
     bdr_limits limits;
@@ -442,6 +437,75 @@ struct bdr_rtc_config {
     bdr_telem telem;
     bdr_filters filters;
 
+    // // Derived run time parameters (need to be re-calculated if we reload a config)
+    PIDController ctrl_LO ;
+    PIDController ctrl_HO ;
+
+
+    // some pre inits
+    Eigen::VectorXd img ; // image from SHM (size could change)
+    Eigen::VectorXd zeroCmd ; // zero dm command for rtc channel
+
+    // ----------------------- IMPORTANT 
+    // frames per second from rtc_config used for converting dark from adu/s -> adu 
+    // we should actually read this from the current camera settings when calling the rtc! 
+    double fps ;
+    double gain ;
+    double scale ; // ratio of fps and gain
+
+    // ALL I2M and reference intensities stored in config are in ADU/second/gain !!
+    Eigen::MatrixXd I2M_LO_runtime ; // LO intensity to mode calibrated for fps and gain 
+    Eigen::MatrixXd I2M_HO_runtime ; // HO intensity to mode calibrated for fps and gain 
+    
+    Eigen::VectorXd N0_dm_runtime ; // clear pupil calibrated for fps and gain 
+    Eigen::VectorXd I0_dm_runtime ; // ZWFS pupil calibrated for fps and gain
+
+    // darks (generated in dcs/calibration_frames/gen_dark_bias_badpix.py ) are adu/s in the gain setting (not normalized by gain)
+    // I should review the darks and perhaps normalize by gain setting too! 
+    Eigen::VectorXd dark_dm_runtime ;
+
+    // Strehl models
+    // secondary pixel. Solarstein mask closer to UT size - this will be invalid on internal source 
+    int sec_idx ; // .secondary_pixels defines 3x3 square around secondary - we only use the central one
+    double m_s ; // slope - intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
+    double b_s ; // intercept for rms model (dm units)
+    
+
+    // Function to initialize all derived runtime parameters.
+    void initDerivedParameters() {
+        // Initialize controllers
+        if (state.controller_type == "PID") {
+            ctrl_LO = PIDController(ctrl_LO_config);
+            ctrl_HO = PIDController(ctrl_HO_config);
+        } else {
+            std::cout << "no ctrl match" << std::endl;
+            throw std::runtime_error("no valid controller_type in state");
+        }
+        
+        // Initialize image and command vectors.
+        img = Eigen::VectorXd::Zero(matrices.szp);
+        zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
+        
+        // Convert the camera parameters (stored as strings) to doubles.
+        fps = std::stof(cam.fps);
+        gain = std::stof(cam.gain);
+        scale = gain / fps;
+        
+        // Scale matrices and reference intensities.
+        I2M_LO_runtime = scale * matrices.I2M_LO;
+        I2M_HO_runtime = scale * matrices.I2M_HO;
+        N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
+        I0_dm_runtime = scale * reference_pupils.I0_dm;
+        
+        // Normalize dark according to fps.
+        dark_dm_runtime = (1.0 / fps) * reduction.dark_dm;
+        
+        // Strehl model parameters.
+        // secondary_pixels is an Eigen column vector; use (4) to get the fifth element.
+        sec_idx = pixels.secondary_pixels(4);
+        m_s = scale * matrices.I2rms_sec(0, 0);
+        b_s = matrices.I2rms_sec(1, 1);
+    }
 
     void validate() const {
         state.validate();
@@ -465,39 +529,6 @@ struct bdr_rtc_config {
 bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamKey, const std::string& phaseKey);
 
 
-
-// Declaration of the PIDController class.
-class PIDController {
-public:
-    // Constructors.
-    PIDController(const Eigen::VectorXd& kp_in,
-                  const Eigen::VectorXd& ki_in,
-                  const Eigen::VectorXd& kd_in,
-                  const Eigen::VectorXd& lower_limit_in,
-                  const Eigen::VectorXd& upper_limit_in,
-                  const Eigen::VectorXd& setpoint_in);
-    PIDController(const bdr_controller& config_in);
-    PIDController();
-
-    // Process the measured input to produce control output.
-    Eigen::VectorXd process(const Eigen::VectorXd& measured);
-
-    // Utility functions.
-    void set_all_gains_to_zero();
-    void reset();
-
-    // Public members 
-    Eigen::VectorXd kp;
-    Eigen::VectorXd ki;
-    Eigen::VectorXd kd;
-    Eigen::VectorXd lower_limits;
-    Eigen::VectorXd upper_limits;
-    Eigen::VectorXd set_point;
-    std::string ctrl_type;
-    Eigen::VectorXd output;
-    Eigen::VectorXd integrals;
-    Eigen::VectorXd prev_errors;
-};
 
 // An encoded 2D image in row-major form.
 // If this is to be useful, then the heimdallr EncodedImage
