@@ -470,7 +470,7 @@ void telemetry(){
         // Sleep for a fixed interval (e.g., 1 second) between telemetry writes.
         std::this_thread::sleep_for(std::chrono::seconds(1));
 
-        if (rtc_config.state.take_telemetry) {
+        if (rtc_config.state.take_telemetry==1) {
             // Get current system time for file naming.
             auto now = std::chrono::system_clock::now();                
             std::time_t t = std::chrono::system_clock::to_time_t(now);

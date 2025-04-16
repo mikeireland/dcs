@@ -17,8 +17,8 @@ toml::table config;
 bdr_rtc_config rtc_config;
 
 // Forward declaration of global PID controllers 
-extern PIDController ctrl_LO;
-extern PIDController ctrl_HO;
+//extern PIDController ctrl_LO;
+//extern PIDController ctrl_HO; // this is now derived in rtc_config
 
 
 int servo_mode;
@@ -334,11 +334,13 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     // init contoller 
     //// heree
     //rtc.controller = bdr_controller(); 
-    int LO_nRows = rtc.matrices.I2M_LO.cols();//rtc_config.matrices.I2M_LO.rows();
-    int HO_nRows = rtc.matrices.I2M_HO.cols();//rtc_config.matrices.I2M_HO.rows();
-    std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
+    //int LO_nRows = rtc.matrices.I2M_LO.cols();//rtc_config.matrices.I2M_LO.rows();
+    //int HO_nRows = rtc.matrices.I2M_HO.cols();//rtc_config.matrices.I2M_HO.rows();
+    //std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
     rtc.ctrl_LO_config = bdr_controller( 2 ); //LO_nRows ); 
     rtc.ctrl_HO_config = bdr_controller( 140 );//HO_nRows ); 
+
+    std::cout << "in read in rtc.ctrl_LO_config.kp.size() = " << rtc.ctrl_LO_config.kp.size() << std::endl;
 
             
     // write method , back to toml, or json?
@@ -357,8 +359,6 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 
 
 //----------commander functions from here---------------
-
-
 
 
 void stop_baldr() {
@@ -461,7 +461,6 @@ json set_telem_save_format(json args) {
 // This Commander function accepts one JSON parameter: an array of three items:
 // [ gain_type, indices, value ]
 // e.g. in interactive shell : > update_pid_param ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_param ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
-
 json update_pid_param(json args) {
     // Expect an array with exactly 4 elements:
     // [controller, parameter_type, indices, value]
@@ -477,18 +476,17 @@ json update_pid_param(json args) {
         // Lock the PID mutex to protect concurrent access.
         std::lock_guard<std::mutex> lock(ctrl_mutex);
 
-        // Select the appropriate PID controller.
+        // Select the appropriate PID controller from rtc_config.
         PIDController* pid_ctrl = nullptr;
         if (controller_str == "LO") {
-            pid_ctrl = &ctrl_LO;
+            pid_ctrl = &rtc_config.ctrl_LO;
         } else if (controller_str == "HO") {
-            pid_ctrl = &ctrl_HO;
+            pid_ctrl = &rtc_config.ctrl_HO;
         } else {
             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
         }
         
-        // Choose the target parameter vector. For parameters that are represented as Eigen::VectorXd, 
-        // we use a pointer to that vector.
+        // Choose the target parameter vector.
         Eigen::VectorXd* target_vector = nullptr;
         if (parameter_type == "kp") {
             target_vector = &pid_ctrl->kp;
@@ -503,7 +501,8 @@ json update_pid_param(json args) {
         } else if (parameter_type == "upper_limits") {
             target_vector = &pid_ctrl->upper_limits;
         } else {
-            return json{{"error", "Invalid parameter type: " + parameter_type + ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
+            return json{{"error", "Invalid parameter type: " + parameter_type +
+                                     ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
         }
         
         int n = target_vector->size();
@@ -533,7 +532,77 @@ json update_pid_param(json args) {
         return json{{"error", ex.what()}};
     }
 }
+// json update_pid_param(json args) {
+//     // Expect an array with exactly 4 elements:
+//     // [controller, parameter_type, indices, value]
+//     if (!args.is_array() || args.size() != 4) {
+//         return json{{"error", "Expected an array with four elements: [controller, parameter_type, indices, value]"}};
+//     }
+//     try {
+//         std::string controller_str = args.at(0).get<std::string>();
+//         std::string parameter_type = args.at(1).get<std::string>();
+//         std::string indices_str = args.at(2).get<std::string>();
+//         double value = args.at(3).get<double>();
 
+//         // Lock the PID mutex to protect concurrent access.
+//         std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+//         // Select the appropriate PID controller.
+//         PIDController* pid_ctrl = nullptr;
+//         if (controller_str == "LO") {
+//             pid_ctrl = &ctrl_LO;
+//         } else if (controller_str == "HO") {
+//             pid_ctrl = &ctrl_HO;
+//         } else {
+//             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+//         }
+        
+//         // Choose the target parameter vector. For parameters that are represented as Eigen::VectorXd, 
+//         // we use a pointer to that vector.
+//         Eigen::VectorXd* target_vector = nullptr;
+//         if (parameter_type == "kp") {
+//             target_vector = &pid_ctrl->kp;
+//         } else if (parameter_type == "ki") {
+//             target_vector = &pid_ctrl->ki;
+//         } else if (parameter_type == "kd") {
+//             target_vector = &pid_ctrl->kd;
+//         } else if (parameter_type == "set_point") {
+//             target_vector = &pid_ctrl->set_point;
+//         } else if (parameter_type == "lower_limits") {
+//             target_vector = &pid_ctrl->lower_limits;
+//         } else if (parameter_type == "upper_limits") {
+//             target_vector = &pid_ctrl->upper_limits;
+//         } else {
+//             return json{{"error", "Invalid parameter type: " + parameter_type + ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
+//         }
+        
+//         int n = target_vector->size();
+//         if (indices_str == "all") {
+//             target_vector->setConstant(value);
+//             std::cout << "Updated all elements of " << parameter_type << " in controller " << controller_str 
+//                       << " to " << value << std::endl;
+//         } else {
+//             // Use your split_indices helper function to split indices_str by commas.
+//             std::vector<int> idxs = split_indices(indices_str);
+//             if (idxs.empty()) {
+//                 return json{{"error", "No valid indices provided"}};
+//             }
+//             for (int idx : idxs) {
+//                 if (idx < 0 || idx >= n) {
+//                     return json{{"error", "Index " + std::to_string(idx) + " out of range for " + parameter_type 
+//                                         + " vector of size " + std::to_string(n)}};
+//                 }
+//                 (*target_vector)(idx) = value;
+//             }
+//             std::cout << "Updated indices (" << indices_str << ") of " << parameter_type << " in controller " 
+//                       << controller_str << " with value " << value << std::endl;
+//         }
+//         return json{{"status", "success"}};
+//     }
+//     catch (const std::exception &ex) {
+//         return json{{"error", ex.what()}};
+//     }
+// }
 
 json print_pid_attribute(json args) {
     // Expect exactly two elements: [controller, attribute]
@@ -545,21 +614,26 @@ json print_pid_attribute(json args) {
         std::string controller_str = args.at(0).get<std::string>();
         std::string attribute = args.at(1).get<std::string>();
         
+        // Select the appropriate PID controller from rtc_config.
         PIDController* ctrl = nullptr;
         if (controller_str == "LO") {
-            ctrl = &ctrl_LO;
+            ctrl = &rtc_config.ctrl_LO;
         } else if (controller_str == "HO") {
-            ctrl = &ctrl_HO;
+            ctrl = &rtc_config.ctrl_HO;
         } else {
             return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
         }
-        
-        // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>
+
+        // lock it while we read 
+        std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+
+        // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>.
         auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
             return std::vector<double>(v.data(), v.data() + v.size());
         };
         
-        // Compare the attribute string and return the corresponding value.
+
         if (attribute == "kp") {
             return json{{"kp", eigen_to_vector(ctrl->kp)}};
         } else if (attribute == "ki") {
@@ -585,6 +659,56 @@ json print_pid_attribute(json args) {
         return json{{"error", ex.what()}};
     }
 }
+// json print_pid_attribute(json args) {
+//     // Expect exactly two elements: [controller, attribute]
+//     if (!args.is_array() || args.size() != 2) {
+//         return json{{"error", "Expected an array with two elements: [controller, attribute]"}};
+//     }
+    
+//     try {
+//         std::string controller_str = args.at(0).get<std::string>();
+//         std::string attribute = args.at(1).get<std::string>();
+        
+//         PIDController* ctrl = nullptr;
+//         if (controller_str == "LO") {
+//             ctrl = &ctrl_LO;
+//         } else if (controller_str == "HO") {
+//             ctrl = &ctrl_HO;
+//         } else {
+//             return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
+//         }
+        
+//         // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>
+//         auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
+//             return std::vector<double>(v.data(), v.data() + v.size());
+//         };
+        
+//         // Compare the attribute string and return the corresponding value.
+//         if (attribute == "kp") {
+//             return json{{"kp", eigen_to_vector(ctrl->kp)}};
+//         } else if (attribute == "ki") {
+//             return json{{"ki", eigen_to_vector(ctrl->ki)}};
+//         } else if (attribute == "kd") {
+//             return json{{"kd", eigen_to_vector(ctrl->kd)}};
+//         } else if (attribute == "lower_limits") {
+//             return json{{"lower_limits", eigen_to_vector(ctrl->lower_limits)}};
+//         } else if (attribute == "upper_limits") {
+//             return json{{"upper_limits", eigen_to_vector(ctrl->upper_limits)}};
+//         } else if (attribute == "set_point") {
+//             return json{{"set_point", eigen_to_vector(ctrl->set_point)}};
+//         } else if (attribute == "output") {
+//             return json{{"output", eigen_to_vector(ctrl->output)}};
+//         } else if (attribute == "integrals") {
+//             return json{{"integrals", eigen_to_vector(ctrl->integrals)}};
+//         } else if (attribute == "prev_errors") {
+//             return json{{"prev_errors", eigen_to_vector(ctrl->prev_errors)}};
+//         } else {
+//             return json{{"error", "Unknown attribute: " + attribute}};
+//         }
+//     } catch (const std::exception &ex) {
+//         return json{{"error", ex.what()}};
+//     }
+// }
 
 
 
@@ -619,17 +743,20 @@ json reload_config(json args) {
 
         // Reinitialize PID controllers using the new controller configuration.
         {
-            std::lock_guard<std::mutex> lock(ctrl_mutex);
-            ctrl_LO = PIDController(rtc_config.ctrl_LO_config);
-            ctrl_HO = PIDController(rtc_config.ctrl_HO_config);
-            std::cout << "PID controllers reinitialized: "
-                      << "ctrl_LO.kp.size()=" << ctrl_LO.kp.size() << ", "
-                      << "ctrl_HO.kp.size()=" << ctrl_HO.kp.size() << std::endl;
+            //std::lock_guard<std::mutex> lock1(ctrl_mutex);
+            //std::lock_guard<std::mutex> lock2(telemetry_mutex);
+            std::scoped_lock lock(ctrl_mutex, telemetry_mutex); //C++17
+            // ctrl_LO = PIDController(rtc_config.ctrl_LO_config);
+            // ctrl_HO = PIDController(rtc_config.ctrl_HO_config);
+            // std::cout << "PID controllers reinitialized: "
+            //           << "ctrl_LO.kp.size()=" << ctrl_LO.kp.size() << ", "
+            //           << "ctrl_HO.kp.size()=" << ctrl_HO.kp.size() << std::endl;
+            rtc_config.initDerivedParameters();
+
         }
 
-        // Optionally: reinitialize any other state or telemetry if needed.
-        // For example:
-        rtc_config.telem = bdr_telem();  // Reset telemetry buffers.
+        
+        //rtc_config.telem = bdr_telem();  // Reset telemetry buffers.
 
         // Resume the RTC loop.
         resumeRTC();
@@ -672,7 +799,6 @@ COMMANDER_REGISTER(m)
     m.def("open_baldr_HO", open_baldr_HO,
           "open the HO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
 
-
     m.def("save_telemetry", save_telemetry,
           "dump telemetry in the circular buffer to file","mode"_arg);
 
@@ -689,12 +815,12 @@ COMMANDER_REGISTER(m)
     m.def("pause_baldr_rtc", [](){
         pauseRTC();
         return std::string("RTC paused.");
-    }, "Pause the RTC loop.");
+    }, "Pause the RTC loop.\n\n");
 
     m.def("resume_baldr_rtc", [](){
         resumeRTC();
         return std::string("RTC resumed.");
-    }, "Resume the RTC loop.");
+    }, "Resume the RTC loop.\n\n");
 
 
     //update_pid_param ["LO","kp", "all", 0.0] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
@@ -786,6 +912,10 @@ int main(int argc, char* argv[]) {
     std::string beamKey = "beam" + std::to_string(beam_id);
     try {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
+        std::cout << "after read in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+        rtc_config.initDerivedParameters();
+        std::cout << "after initDerived parameters in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+
         std::cout << "Initialized configuration for beam " << beam_id << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
@@ -823,11 +953,12 @@ int main(int argc, char* argv[]) {
     std::thread rtc_thread(rtc);
     std::thread telemetry_thread(telemetry);
 
+    std::cout << "after rtc thread started in  main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
     // Initialize the commander server and run it
     commander::Server s(argc, argv);
     s.run();
 
-    // Join the fringe-tracking thread
+    // Join the  thread
     servo_mode = SERVO_STOP;
     rtc_thread.join();
     telemetry_thread.join();

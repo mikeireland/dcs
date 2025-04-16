@@ -239,8 +239,8 @@ struct bdr_controller {
         : kp(Eigen::VectorXd::Zero(vsize)),
           ki(Eigen::VectorXd::Zero(vsize)),
           kd(Eigen::VectorXd::Zero(vsize)),
-          lower_limits(Eigen::VectorXd::Constant(vsize, -42)),
-          upper_limits(Eigen::VectorXd::Constant(vsize, 42)),
+          lower_limits(Eigen::VectorXd::Constant(vsize, -2)),
+          upper_limits(Eigen::VectorXd::Constant(vsize, 2)),
           set_point(Eigen::VectorXd::Zero(vsize))
         {}
 };
@@ -467,8 +467,8 @@ struct bdr_rtc_config {
     // Strehl models
     // secondary pixel. Solarstein mask closer to UT size - this will be invalid on internal source 
     int sec_idx ; // .secondary_pixels defines 3x3 square around secondary - we only use the central one
-    double m_s ; // slope - intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
-    double b_s ; // intercept for rms model (dm units)
+    double m_s_runtime ; // slope - intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
+    double b_s_runtime ; // intercept for rms model (dm units)
     
 
     // Function to initialize all derived runtime parameters.
@@ -483,7 +483,7 @@ struct bdr_rtc_config {
         }
         
         // Initialize image and command vectors.
-        img = Eigen::VectorXd::Zero(matrices.szp);
+        //img = Eigen::VectorXd::Zero(matrices.szp);
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
         
         // Convert the camera parameters (stored as strings) to doubles.
@@ -503,8 +503,8 @@ struct bdr_rtc_config {
         // Strehl model parameters.
         // secondary_pixels is an Eigen column vector; use (4) to get the fifth element.
         sec_idx = pixels.secondary_pixels(4);
-        m_s = scale * matrices.I2rms_sec(0, 0);
-        b_s = matrices.I2rms_sec(1, 1);
+        m_s_runtime = scale * matrices.I2rms_sec(0, 0);
+        b_s_runtime = matrices.I2rms_sec(1, 1);
     }
 
     void validate() const {
@@ -521,6 +521,7 @@ struct bdr_rtc_config {
         cam.validate();
         //telem.validate();
         filters.validate();
+
         
     }
 };

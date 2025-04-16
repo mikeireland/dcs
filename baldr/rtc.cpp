@@ -58,8 +58,8 @@ unsigned int nerrors=0;
 // Add local (to the RTC) variables here
 
 // controllers - these get initialized by the rtc.ctrl_LO_config and rtc.ctrl_HO_config struct
-PIDController ctrl_LO ; 
-PIDController ctrl_HO ; 
+// PIDController ctrl_LO ; 
+// PIDController ctrl_HO ; 
 
 // intermediate products 
 Eigen::VectorXd img;
@@ -195,14 +195,14 @@ void rtc(){
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_LO.size() << std::endl;
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_HO.size() << std::endl;
 
-    std::cout << "ctrl kp LO size: " << ctrl_LO.kp.size() << std::endl;
+    std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << ctrl_HO.kp.size() << std::endl;
-    std::cout << "Controller ki size: " << ctrl_LO.ki.size() << std::endl;
-    std::cout << "Controller kd size: " << ctrl_LO.kd.size() << std::endl;
-    std::cout << "Controller lower_limits size: " << ctrl_LO.lower_limits.size() << std::endl;
-    std::cout << "Controller upper_limits size: " << ctrl_LO.upper_limits.size() << std::endl;
-    std::cout << "Controller set_point size: " << ctrl_LO.set_point.size() << std::endl;
+    std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
+    std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
+    std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
+    std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
+    std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
+    std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
     std::cout << "secondary pixels size: " << rtc_config.pixels.secondary_pixels.size() << std::endl;
@@ -234,47 +234,50 @@ void rtc(){
     }
 
     ////////////////////////////////////////////////////
-    /// Aspects to be re-computed everytime the configuration changes - init_rtc function? 
-    if (rtc_config.state.controller_type=="PID"){
-        ////heree
-        // PIDController ctrl_LO( rtc_config.controller );
-        // PIDController ctrl_HO( rtc_config.controller ); // this will have to use different configs / lengths !  
-        ctrl_LO = PIDController( rtc_config.ctrl_LO_config );
-        ctrl_HO = PIDController( rtc_config.ctrl_HO_config ); // this will have to use different configs / lengths !  
-        }
-    else{
-        std::cout << "no ctrl match" << std::endl;
-    }
+    /// parameters below are calculated at run time (derived from rtc_config) so 
+    // I made a method in the  bdr_rtc_config struct to init these..
+    ////////
+    //// Aspects to be re-computed everytime the configuration changes - init_rtc function? 
+    // if (rtc_config.state.controller_type=="PID"){
+    //     ////heree
+    //     // PIDController ctrl_LO( rtc_config.controller );
+    //     // PIDController ctrl_HO( rtc_config.controller ); // this will have to use different configs / lengths !  
+    //     ctrl_LO = PIDController( rtc_config.ctrl_LO_config );
+    //     ctrl_HO = PIDController( rtc_config.ctrl_HO_config ); // this will have to use different configs / lengths !  
+    //     }
+    // else{
+    //     std::cout << "no ctrl match" << std::endl;
+    // }
 
 
-    // some pre inits
-    Eigen::VectorXd img = Eigen::VectorXd::Zero(rtc_config.matrices.szp); // P must be defined appropriately.
-    Eigen::VectorXd zeroCmd = Eigen::VectorXd::Zero(rtc_config.matrices.sza);
+    // // some pre inits
+    // Eigen::VectorXd img = Eigen::VectorXd::Zero(rtc_config.matrices.szp); // P must be defined appropriately.
+    // Eigen::VectorXd zeroCmd = Eigen::VectorXd::Zero(rtc_config.matrices.sza);
 
     // ----------------------- IMPORTANT 
     // frames per second from rtc_config used for converting dark from adu/s -> adu 
     // we should actually read this from the current camera settings when calling the rtc! 
-    double fps = std::stof(rtc_config.cam.fps);
-    double gain = std::stof(rtc_config.cam.gain);
-    double scale = gain / fps;
-    // ALL I2M and reference intensities stored in config are in ADU/second/gain !!
-    Eigen::MatrixXd I2M_LO = scale * rtc_config.matrices.I2M_LO;
-    Eigen::MatrixXd I2M_HO = scale * rtc_config.matrices.I2M_HO;
+    // double fps = std::stof(rtc_config.cam.fps);
+    // double gain = std::stof(rtc_config.cam.gain);
+    // double scale = gain / fps;
+    // // ALL I2M and reference intensities stored in config are in ADU/second/gain !!
+    // Eigen::MatrixXd I2M_LO = scale * rtc_config.matrices.I2M_LO;
+    // Eigen::MatrixXd I2M_HO = scale * rtc_config.matrices.I2M_HO;
     
-    Eigen::VectorXd N0_dm =  scale * rtc_config.reference_pupils.norm_pupil_dm;
-    Eigen::VectorXd I0_dm =  scale * rtc_config.reference_pupils.I0_dm;
+    // Eigen::VectorXd N0_dm =  scale * rtc_config.reference_pupils.norm_pupil_dm;
+    // Eigen::VectorXd I0_dm =  scale * rtc_config.reference_pupils.I0_dm;
 
-    // darks (generated in dcs/calibration_frames/gen_dark_bias_badpix.py ) are adu/s in the gain setting (not normalized by gain)
-    // I should review the darks and perhaps normalize by gain setting too! 
-    Eigen::VectorXd dark_dm = 1.0 / fps * rtc_config.reduction.dark_dm;
+    // // darks (generated in dcs/calibration_frames/gen_dark_bias_badpix.py ) are adu/s in the gain setting (not normalized by gain)
+    // // I should review the darks and perhaps normalize by gain setting too! 
+    // Eigen::VectorXd dark_dm = 1.0 / fps * rtc_config.reduction.dark_dm;
 
 
 
     // Strehl models
     // secondary pixel. Solarstein mask closer to UT size - this will be invalid on internal source 
-    int sec_idx = rtc_config.pixels.secondary_pixels(4); // .secondary_pixels defines 3x3 square around secondary - we only use the central one
-    double m_s = scale * rtc_config.matrices.I2rms_sec(0, 0); // intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
-    double b_s = rtc_config.matrices.I2rms_sec(1, 1);
+    // int sec_idx = rtc_config.pixels.secondary_pixels(4); // .secondary_pixels defines 3x3 square around secondary - we only use the central one
+    // double m_s = scale * rtc_config.matrices.I2rms_sec(0, 0); // intensity is normalized by fps and gain in model (/home/asg/Progs/repos/asgard-alignment/calibration/build_strehl_model.py)
+    // double b_s = rtc_config.matrices.I2rms_sec(1, 1);
     
     //exterior pixels 
     //double m_e = rtc_config.matrices.I2rms_sec(0, 0);
@@ -292,7 +295,18 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::chrono::microseconds loop_time( static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
+    // LOOP SPEED (us)
+    std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
+    ///////////////////////////////////////
+
+
+    /// DERIVED PARAMETERS FROM rtc_config
+    // {
+    //     std::scoped_lock lock(ctrl_mutex, telemetry_mutex); //C++17
+    //     rtc_config.initDerivedParameters();
+    // }
+    //////////////////////////////////////
+
 
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode != SERVO_STOP){
@@ -315,20 +329,20 @@ void rtc(){
         img =  getFrameFromSharedMemory(32*32); //32*32);
         
         // model of residual rms in DM units using secondary obstruction 
-        dm_rms_est_1 = m_s * ( img[ sec_idx ] - rtc_config.reduction.dark[ sec_idx ] - rtc_config.reduction.bias[ sec_idx ] ) + b_s;
+        dm_rms_est_1 = rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
 
         //std::cout << dm_rms_est_1 << std::endl;
 
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
-        img_dm = (rtc_config.matrices.I2A *  img)  - dark_dm - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
+        img_dm = (rtc_config.matrices.I2A *  img)  -  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
 
-        sig = (img_dm - I0_dm).cwiseQuotient(N0_dm); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         //sig = (rtc_config.matrices.I2A *  img - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
 
-        e_LO =  I2M_LO * sig; //rtc_config.matrices.I2M_LO * sig ;
+        e_LO =  rtc_config.I2M_LO_runtime * sig; //rtc_config.matrices.I2M_LO * sig ;
 
-        e_HO =  I2M_HO * sig; //rtc_config.matrices.I2M_HO * sig ;
+        e_HO =  rtc_config.I2M_HO_runtime * sig; //rtc_config.matrices.I2M_HO * sig ;
 
 
         // if auto mode change state based on signals
@@ -341,15 +355,15 @@ void rtc(){
 
             }
             std::lock_guard<std::mutex> lock(ctrl_mutex);
-            u_LO = ctrl_LO.process( e_LO );
+            u_LO = rtc_config.ctrl_LO.process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
         
         }else if(servo_mode_LO == SERVO_OPEN){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
-                std::cout << "reseting HO controller" << std::endl;
+                std::cout << "reseting LO controller" << std::endl;
                 //reset controllers
-                ctrl_LO.reset();
+                rtc_config.ctrl_LO.reset();
             }
   
             u_LO = 0 * e_LO ;
@@ -365,7 +379,7 @@ void rtc(){
 
             }
 
-            u_HO = ctrl_HO.process( e_HO );
+            u_HO = rtc_config.ctrl_HO.process( e_HO );
             
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
@@ -377,7 +391,7 @@ void rtc(){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
                 //reset controllers
-                ctrl_HO.reset();
+                rtc_config.ctrl_HO.reset();
             }
   
 
@@ -400,7 +414,7 @@ void rtc(){
             //std::cout << "beam " << beam_id << " broke by act." << culprit << ", resetting" << std::endl;
             
             // Optionally, to reduce gain for this actuator by half, you might do:
-            // ctrl_HO.ki(culprit) *= 0.5;
+            // rtc_config.ctrl_HO.ki(culprit) *= 0.5;
             
             // Set the DM command data to zeros.
             // Create a zero vector with the same length as u_HO.
@@ -412,8 +426,8 @@ void rtc(){
             // //updateDMSharedMemory( zeroCmd ) ;
             
             // // Reset the high-order controller.
-            // ctrl_HO.reset();
-            // ctrl_LO.reset();
+            // rtc_config.ctrl_HO.reset();
+            // rtc_config.ctrl_LO.reset();
             
             // // Increase the counter for this actuator.
             // naughty_list[culprit] += 1;
@@ -427,7 +441,7 @@ void rtc(){
             // // If this actuator has been problematic more than 4 times, disable it by setting its gain to zero.
             // if (naughty_list[culprit] > 4) {
             //     std::cout << "Turn off naughty actuator " << culprit << std::endl;
-            //     ctrl_HO.ki(culprit) = 0.0;
+            //     rtc_config.ctrl_HO.ki(culprit) = 0.0;
             // }
         }
 
@@ -456,7 +470,7 @@ void rtc(){
             rtc_config.telem.HO_servo_mode.push_back(servo_mode_HO);          // 'c_HO' is Eigen::VectorXd
 
             //std::cout << "img size: " << img.size() << std::endl;
-            rtc_config.telem.img.push_back(img);          // 'img' is Eigen::VectorXd
+            rtc_config.telem.img.push_back(rtc_config.img);          // 'img' is Eigen::VectorXd
             //std::cout << "img_dm size: " << img_dm.size() << std::endl;
             rtc_config.telem.img_dm.push_back(img_dm);          // 'img' is Eigen::VectorXd
             //std::cout << ", sig size: " << sig.size() << std::endl;
@@ -488,7 +502,7 @@ void rtc(){
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
-        std::cout << "duration microsec:  " << duration.count() << std::endl;
+        //std::cout << "duration microsec:  " << duration.count() << std::endl;
 
         /////////////////////// SLEEP ///////////////////////
         if (duration < loop_time){
