@@ -4,6 +4,9 @@
 #include <math.h> // For old-style C mathematics if needed.
 // Commander struct definitions for json. This is in a separate file to keep the main code clean.
 #include "commander_structs.h"
+#include <atomic>
+#include <condition_variable>
+
 
 //----------Globals-------------------
 
@@ -29,6 +32,13 @@ int servo_mode_HO;
 std::mutex rtc_mutex;
 // mutex telemetry
 std::mutex telemetry_mutex;
+// mutex for controller gain updates:
+std::mutex ctrl_mutex;
+//std::mutex ctrl_LO_mutex;//later
+//std::mutex ctrl_HO_mutex;
+std::atomic<bool> pause_rtc(false);           // When true, RTC loop should pause. atomic to be thread safe 
+std::mutex rtc_pause_mutex;  //protect access to shared state (in this case, the pause flag and any associated state) while waiting and notifying.
+std::condition_variable rtc_pause_cv; //condition variable is used to block (put to sleep) the RTC thread until a particular condition is met
 
 
 IMAGE subarray; // The C-red subarray
@@ -190,7 +200,8 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
             rtc.state.signal_space  =  ctrl_tbl["signal_space"] ? ctrl_tbl["signal_space"].value_or(std::string("")) : ""; 
             rtc.state.LO = ctrl_tbl["LO"] ? ctrl_tbl["LO"].value_or(0) : 0;
             rtc.state.controller_type = ctrl_tbl["controller_type"] ? ctrl_tbl["controller_type"].value_or(std::string("")) : "";
-            rtc.state.inverse_method = ctrl_tbl["inverse_method"] ? ctrl_tbl["inverse_method"].value_or(std::string("")) : "";
+            rtc.state.inverse_method_LO = ctrl_tbl["inverse_method_LO"] ? ctrl_tbl["inverse_method_LO"].value_or(std::string("")) : "";
+            rtc.state.inverse_method_HO = ctrl_tbl["inverse_method_HO"] ? ctrl_tbl["inverse_method_HO"].value_or(std::string("")) : "";
             rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
             rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
             rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
@@ -316,11 +327,11 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     // init contoller 
     //// heree
     //rtc.controller = bdr_controller(); 
-    int LO_nRows = rtc.matrices.I2M.rows();//rtc_config.matrices.I2M_LO.rows();
-    int HO_nRows = rtc.matrices.I2M.rows();//rtc_config.matrices.I2M_HO.rows();
+    int LO_nRows = rtc.matrices.I2M_LO.cols();//rtc_config.matrices.I2M_LO.rows();
+    int HO_nRows = rtc.matrices.I2M_HO.cols();//rtc_config.matrices.I2M_HO.rows();
     std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
-    rtc.ctrl_LO_config = bdr_controller( LO_nRows ); //LO_nRows ); 
-    rtc.ctrl_HO_config = bdr_controller( HO_nRows );//HO_nRows ); 
+    rtc.ctrl_LO_config = bdr_controller( 2 ); //LO_nRows ); 
+    rtc.ctrl_HO_config = bdr_controller( 140 );//HO_nRows ); 
 
             
     // write method , back to toml, or json?
@@ -397,22 +408,40 @@ void save_telemetry(){
 }
 
 
+void pauseRTC() {
+    pause_rtc.store(true);
+    std::cout << "RTC paused." << std::endl;
+}
+
+void resumeRTC() {
+    {
+        std::lock_guard<std::mutex> lock(rtc_pause_mutex);
+        pause_rtc.store(false);
+    }
+    rtc_pause_cv.notify_all();
+    std::cout << "RTC resumed." << std::endl;
+}
+
 using json = nlohmann::json;
 // This Commander function accepts one JSON parameter: an array of three items:
 // [ gain_type, indices, value ]
-// e.g. in interactive shell : > update_pid_gain ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_gain ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
-json update_pid_gain(json args) {
-    // Check that args is an array with exactly 4 elements.
+// e.g. in interactive shell : > update_pid_param ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_param ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
+
+json update_pid_param(json args) {
+    // Expect an array with exactly 4 elements:
+    // [controller, parameter_type, indices, value]
     if (!args.is_array() || args.size() != 4) {
-        return json{{"error", "Expected an array with four elements: [controller, gain_type, indices, value]"}};
+        return json{{"error", "Expected an array with four elements: [controller, parameter_type, indices, value]"}};
     }
     try {
-        // Extract arguments.
         std::string controller_str = args.at(0).get<std::string>();
-        std::string gain_type = args.at(1).get<std::string>();
+        std::string parameter_type = args.at(1).get<std::string>();
         std::string indices_str = args.at(2).get<std::string>();
         double value = args.at(3).get<double>();
-        
+
+        // Lock the PID mutex to protect concurrent access.
+        std::lock_guard<std::mutex> lock(ctrl_mutex);
+
         // Select the appropriate PID controller.
         PIDController* pid_ctrl = nullptr;
         if (controller_str == "LO") {
@@ -423,35 +452,44 @@ json update_pid_gain(json args) {
             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
         }
         
-        // Select the gain vector to update.
-        Eigen::VectorXd *gain_vector = nullptr;
-        if (gain_type == "kp") {
-            gain_vector = &pid_ctrl->kp;
-        } else if (gain_type == "ki") {
-            gain_vector = &pid_ctrl->ki;
-        } else if (gain_type == "kd") {
-            gain_vector = &pid_ctrl->kd;
+        // Choose the target parameter vector. For parameters that are represented as Eigen::VectorXd, 
+        // we use a pointer to that vector.
+        Eigen::VectorXd* target_vector = nullptr;
+        if (parameter_type == "kp") {
+            target_vector = &pid_ctrl->kp;
+        } else if (parameter_type == "ki") {
+            target_vector = &pid_ctrl->ki;
+        } else if (parameter_type == "kd") {
+            target_vector = &pid_ctrl->kd;
+        } else if (parameter_type == "set_point") {
+            target_vector = &pid_ctrl->set_point;
+        } else if (parameter_type == "lower_limits") {
+            target_vector = &pid_ctrl->lower_limits;
+        } else if (parameter_type == "upper_limits") {
+            target_vector = &pid_ctrl->upper_limits;
         } else {
-            return json{{"error", "Invalid gain type: " + gain_type + ". Use \"kp\", \"ki\", or \"kd\"."}};
+            return json{{"error", "Invalid parameter type: " + parameter_type + ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
         }
         
-        int n = gain_vector->size();
+        int n = target_vector->size();
         if (indices_str == "all") {
-            gain_vector->setConstant(value);
-            std::cout << "Updated all elements of " << gain_type << " in controller " << controller_str 
+            target_vector->setConstant(value);
+            std::cout << "Updated all elements of " << parameter_type << " in controller " << controller_str 
                       << " to " << value << std::endl;
         } else {
+            // Use your split_indices helper function to split indices_str by commas.
             std::vector<int> idxs = split_indices(indices_str);
             if (idxs.empty()) {
                 return json{{"error", "No valid indices provided"}};
             }
             for (int idx : idxs) {
                 if (idx < 0 || idx >= n) {
-                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + gain_type + " vector of size " + std::to_string(n)}};
+                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + parameter_type 
+                                        + " vector of size " + std::to_string(n)}};
                 }
-                (*gain_vector)(idx) = value;
+                (*target_vector)(idx) = value;
             }
-            std::cout << "Updated indices (" << indices_str << ") of " << gain_type << " in controller " 
+            std::cout << "Updated indices (" << indices_str << ") of " << parameter_type << " in controller " 
                       << controller_str << " with value " << value << std::endl;
         }
         return json{{"status", "success"}};
@@ -461,6 +499,116 @@ json update_pid_gain(json args) {
     }
 }
 
+
+json print_pid_attribute(json args) {
+    // Expect exactly two elements: [controller, attribute]
+    if (!args.is_array() || args.size() != 2) {
+        return json{{"error", "Expected an array with two elements: [controller, attribute]"}};
+    }
+    
+    try {
+        std::string controller_str = args.at(0).get<std::string>();
+        std::string attribute = args.at(1).get<std::string>();
+        
+        PIDController* ctrl = nullptr;
+        if (controller_str == "LO") {
+            ctrl = &ctrl_LO;
+        } else if (controller_str == "HO") {
+            ctrl = &ctrl_HO;
+        } else {
+            return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
+        }
+        
+        // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>
+        auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
+            return std::vector<double>(v.data(), v.data() + v.size());
+        };
+        
+        // Compare the attribute string and return the corresponding value.
+        if (attribute == "kp") {
+            return json{{"kp", eigen_to_vector(ctrl->kp)}};
+        } else if (attribute == "ki") {
+            return json{{"ki", eigen_to_vector(ctrl->ki)}};
+        } else if (attribute == "kd") {
+            return json{{"kd", eigen_to_vector(ctrl->kd)}};
+        } else if (attribute == "lower_limits") {
+            return json{{"lower_limits", eigen_to_vector(ctrl->lower_limits)}};
+        } else if (attribute == "upper_limits") {
+            return json{{"upper_limits", eigen_to_vector(ctrl->upper_limits)}};
+        } else if (attribute == "set_point") {
+            return json{{"set_point", eigen_to_vector(ctrl->set_point)}};
+        } else if (attribute == "output") {
+            return json{{"output", eigen_to_vector(ctrl->output)}};
+        } else if (attribute == "integrals") {
+            return json{{"integrals", eigen_to_vector(ctrl->integrals)}};
+        } else if (attribute == "prev_errors") {
+            return json{{"prev_errors", eigen_to_vector(ctrl->prev_errors)}};
+        } else {
+            return json{{"error", "Unknown attribute: " + attribute}};
+        }
+    } catch (const std::exception &ex) {
+        return json{{"error", ex.what()}};
+    }
+}
+
+
+
+
+json reload_config(json args) {
+    // Expect two arguments: [new_filename, new_phase_mask]. filename MUST be .toml from the Baldr calibration pipeline
+    if (!args.is_array() || args.size() != 2) {
+        return json{{"error", "Expected an array with two elements: [new_filename, new_phase_mask]"}};
+    }
+    try {
+        // Extract new configuration file name and phase mask.
+        std::string newFilename = args.at(0).get<std::string>();
+        std::string newPhaseMask = args.at(1).get<std::string>();
+
+        // Pause the RTC loop.
+        pauseRTC();
+        std::cout << "RTC paused for configuration reload." << std::endl;
+
+        // Parse the new TOML configuration file.
+        config = toml::parse_file(newFilename);
+        std::cout << "Loaded new configuration file: " << newFilename << std::endl;
+
+        // Update the phase mask globally.
+        phasemask = newPhaseMask;
+
+        // Construct the beam key based on the current beam number.
+        std::string beamKey = "beam" + std::to_string(beam_id);
+
+        // Update rtc_config using the new configuration.
+        rtc_config = readBDRConfig(config, beamKey, phasemask);
+        std::cout << "rtc_config updated using beam " << beamKey << " and phase mask " << phasemask << std::endl;
+
+        // Reinitialize PID controllers using the new controller configuration.
+        {
+            std::lock_guard<std::mutex> lock(ctrl_mutex);
+            ctrl_LO = PIDController(rtc_config.ctrl_LO_config);
+            ctrl_HO = PIDController(rtc_config.ctrl_HO_config);
+            std::cout << "PID controllers reinitialized: "
+                      << "ctrl_LO.kp.size()=" << ctrl_LO.kp.size() << ", "
+                      << "ctrl_HO.kp.size()=" << ctrl_HO.kp.size() << std::endl;
+        }
+
+        // Optionally: reinitialize any other state or telemetry if needed.
+        // For example:
+        rtc_config.telem = bdr_telem();  // Reset telemetry buffers.
+
+        // Resume the RTC loop.
+        resumeRTC();
+        std::cout << "RTC resumed after configuration reload." << std::endl;
+
+        return json{{"status", "New configuration loaded successfully"}};
+    }
+    catch (const std::exception &ex) {
+        std::cerr << "Error reloading configuration: " << ex.what() << std::endl;
+        // Make sure to resume if necessary, or signal an error state.
+        resumeRTC();
+        return json{{"error", ex.what()}};
+    }
+}
 
 
 COMMANDER_REGISTER(m)
@@ -499,13 +647,42 @@ COMMANDER_REGISTER(m)
     m.def("save_telemetry", save_telemetry,
           "dump telemetry in the circular buffer to file","mode"_arg);
 
+    m.def("pause_baldr_rtc", [](){
+        pauseRTC();
+        return std::string("RTC paused.");
+    }, "Pause the RTC loop.");
 
-    m.def("update_pid_gain", update_pid_gain,
-          "Update a PID gain vector (in ctrl_LO). Parameters: [gain_type, indices, value].\n"
+    m.def("resume_baldr_rtc", [](){
+        resumeRTC();
+        return std::string("RTC resumed.");
+    }, "Resume the RTC loop.");
+
+
+    //update_pid_param ["LO","kp", "all", 0.0] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
+    m.def("update_pid_param", update_pid_param,
+          "Update a PID gain vector (in ctrl_LO). Parameters: [mode, gain_type, indices, value].\n"
+          "  - mode: LO or HO"
           "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
           "  - indices: a comma-separated list of indices or \"all\"\n"
           "  - value: the new gain value (number)",
           "args"_arg);
+
+    //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
+    m.def("print_pid_attribute", print_pid_attribute,
+          "Print the specified attribute of a PID controller.\n"
+          "Usage: print_pid_attribute [controller, attribute]\n"
+          "  - controller: \"LO\" or \"HO\"\n"
+          "  - attribute: one of \"kp\", \"ki\", \"kd\", \"lower_limits\", \"upper_limits\", \"set_point\", "
+          "\"output\", \"integrals\", or \"prev_errors\"",
+          "args"_arg);
+
+    //e.g. reload_config ["new_config.toml", "H5"]
+    m.def("reload_config", reload_config,
+          "Reload a new configuration file with a specified phasemask. It must be .toml \n"
+          "from the baldr calibration pipeline. Also assumes the same beam_id as is currently configured.\n"
+          "Usage: reload_config [\"new_filename.toml\", \"new_mask\"]",
+          "args"_arg);
+
  }
 
 
@@ -603,3 +780,45 @@ int main(int argc, char* argv[]) {
 }
 
 
+
+
+
+/// TO TEST ZMQ COMMUNICATION TO CAMERA WITHIN RTC (FOR CHECKING STATE - PARAMETERS ARE NORMALIZED ADU/s SO NEED TO CONVERT TO ADU)
+// req_client.cpp
+// #include <zmq.hpp>
+// #include <string>
+// #include <iostream>
+
+// int main() {
+//     // Create a ZeroMQ context with one I/O thread.
+//     zmq::context_t context(1);
+    
+//     // Create a REQ (request) socket.
+//     zmq::socket_t socket(context, zmq::socket_type::req);
+    
+//     // Connect to the server (adjust hostname and port as needed).
+//     std::string endpoint = "tcp://localhost:5555";
+//     socket.connect(endpoint);
+//     std::cout << "Client: Connected to " << endpoint << std::endl;
+    
+//     // Create a request message.
+//     std::string request_str = "Hello from C++ REQ";
+//     zmq::message_t request(request_str.data(), request_str.size());
+    
+//     // Send the request (this puts the socket in a send-wait state).
+//     std::cout << "Client: Sending request..." << std::endl;
+//     socket.send(request, zmq::send_flags::none);
+    
+//     // Now wait for and receive the reply.
+//     zmq::message_t reply;
+//     // Note: The socket must be in the receive state now.
+//     auto res = socket.recv(reply, zmq::recv_flags::none);
+//     if (res) {
+//         std::string reply_str(static_cast<char*>(reply.data()), reply.size());
+//         std::cout << "Client: Received reply: " << reply_str << std::endl;
+//     } else {
+//         std::cerr << "Client: No reply received!" << std::endl;
+//     }
+    
+//     return 0;
+// }

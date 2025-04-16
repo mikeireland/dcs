@@ -6,7 +6,8 @@
 #include <mutex>
 #include <thread>
 #include <boost/circular_buffer.hpp>
-
+#include <condition_variable>
+#include <atomic>
 //#include <string>
 //#include <toml++/toml.h>
 #include <Eigen/Dense>
@@ -108,7 +109,8 @@ struct bdr_state {
     std::string signal_space;   // where we consider our signals (pixel or dm)
     int LO;                       // low-order modes (e.g., 2)
     std::string controller_type;  // e.g., "PID"
-    std::string inverse_method;   // e.g., "map"
+    std::string inverse_method_LO;   // e.g., "map"
+    std::string inverse_method_HO;   // e.g., "map"
     std::string phasemask; // what phasemask are we using 
     int auto_close; // do we close loops automatically? 
     int auto_open;// do we open loops automatically?  
@@ -123,8 +125,10 @@ struct bdr_state {
             throw std::runtime_error("bdr_state: LO must be positive.");
         if (controller_type.empty())
             throw std::runtime_error("bdr_state: controller_type is empty.");
-        if (inverse_method.empty())
-            throw std::runtime_error("bdr_state: inverse_method is empty.");
+        if (inverse_method_LO.empty())
+           throw std::runtime_error("bdr_state: inverse_method_LO is empty.");
+        if (inverse_method_HO.empty())
+           throw std::runtime_error("bdr_state: inverse_method_HO is empty.");
     }
 };
 
@@ -518,6 +522,13 @@ extern int servo_mode_HO;
 // We at least need a mutex for RTC parameters.
 extern std::mutex rtc_mutex;
 extern std::mutex telemetry_mutex;
+extern std::mutex ctrl_mutex;
+// extern std::mutex ctrl_LO_mutex;
+// extern std::mutex ctrl_HO_mutex;
+extern std::atomic<bool> pause_rtc;        // When true, RTC should pause.
+extern std::mutex rtc_pause_mutex;         // Protects shared access to pause state.
+extern std::condition_variable rtc_pause_cv; // Notifies RTC to resume.
+
 
 // The C-Red Image subarray and DM
 extern IMAGE subarray;

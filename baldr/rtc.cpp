@@ -193,9 +193,9 @@ void rtc(){
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_LO.size() << std::endl;
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_HO.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << ctrl_LO.kp.size() << std::endl;
+    std::cout << "ctrl kp LO size: " << ctrl_LO.kp.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << ctrl_LO.kp.size() << std::endl;
+    std::cout << "ctrl kp size: " << ctrl_HO.kp.size() << std::endl;
     std::cout << "Controller ki size: " << ctrl_LO.ki.size() << std::endl;
     std::cout << "Controller kd size: " << ctrl_LO.kd.size() << std::endl;
     std::cout << "Controller lower_limits size: " << ctrl_LO.lower_limits.size() << std::endl;
@@ -231,8 +231,8 @@ void rtc(){
         ////heree
         // PIDController ctrl_LO( rtc_config.controller );
         // PIDController ctrl_HO( rtc_config.controller ); // this will have to use different configs / lengths !  
-        PIDController ctrl_LO( rtc_config.ctrl_HO_config );
-        PIDController ctrl_HO( rtc_config.ctrl_LO_config ); // this will have to use different configs / lengths !  
+        ctrl_LO = PIDController( rtc_config.ctrl_LO_config );
+        ctrl_HO = PIDController( rtc_config.ctrl_HO_config ); // this will have to use different configs / lengths !  
         }
     else{
         std::cout << "no ctrl match" << std::endl;
@@ -277,7 +277,15 @@ void rtc(){
 
         //std::cout << servo_mode_LO << std::endl;
         //std::cout << servo_mode_HO << std::endl;
-
+        // Check if we need to pause the loop.
+        {
+            // Use a unique_lock with the mutex for the condition variable.
+            // (A condition variable’s wait functions require a std::unique_lock<std::mutex> rather than a std::lock_guard<std::mutex> because the condition variable needs the flexibility to unlock and later re-lock the mutex during the wait. )
+            std::unique_lock<std::mutex> lock(rtc_pause_mutex);
+            // Wait until pause_rtc becomes false.
+            // This lambda serves as a predicate.
+            rtc_pause_cv.wait(lock, [](){ return !pause_rtc.load(); });
+        }
 
         start = std::chrono::steady_clock::now();
 
@@ -305,7 +313,7 @@ void rtc(){
                 std::cout << "LO IN CLOSED LOOP" << std::endl;
 
             }
-
+            std::lock_guard<std::mutex> lock(ctrl_mutex);
             u_LO = ctrl_LO.process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
@@ -352,7 +360,10 @@ void rtc(){
             
         }
 
+        //std::cout << "e_LO size = " << e_LO.size() << std::endl;
+        //std::cout << "e_HO size = " << e_HO.size() << std::endl;
 
+        
         dmCmd = c_LO + c_HO;
 
         if (dmCmd.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
