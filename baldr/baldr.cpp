@@ -7,7 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 
-
+using json = nlohmann::json;
 //----------Globals-------------------
 
 // The input configuration
@@ -24,6 +24,7 @@ extern PIDController ctrl_HO;
 int servo_mode;
 int servo_mode_LO;
 int servo_mode_HO;
+std::string telemFormat = "json";
 //vector::<int> telescopes;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
@@ -174,7 +175,7 @@ toml::table readConfig(const std::string &filename) {
 }
 
 
-// Helper function to read RTC config from a TOML table. const std::string &filename,
+// Helper function to read RTC config from a TOML table (from the baldr calibration pipeline). const std::string &filename,
 bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamKey, const std::string& phaseKey) {
     
     bdr_rtc_config rtc;
@@ -189,9 +190,15 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
         std::exit(1);
     }
     auto beam_tbl = *beam_node.as_table();
-
+    // Check if the specified phase mask exists.
+    if (!beam_tbl.contains(phaseKey)) {
+        std::cerr << "Error: Phase mask \"" << phaseKey
+                  << "\" not found in configuration for beam " << beamKey << std::endl;
+        throw std::runtime_error("Phase mask not found");
+    }
     {
         auto phase_tbl = *beam_tbl[phaseKey].as_table();
+        
         if (auto ctrl_node = phase_tbl["ctrl_model"]; ctrl_node && ctrl_node.is_table()) {
             auto ctrl_tbl = *ctrl_node.as_table();
 
@@ -343,21 +350,15 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 }
 
 
-int load_configuration(std::string pth){
-    std::cout << pth << std::endl;
-    return 1;
-}
+// int load_configuration(std::string pth){
+//     std::cout << pth << std::endl;
+//     return 1;
+// }
 
 
 //----------commander functions from here---------------
 
 
-// int update_servo_mode(int mode) {
-//     // mode 2 is open
-//     servo_mode = mode;
-//     std::cout << "servo_mode updated to " << servo_mode << std::endl;
-//     return 0;  // return 0 to indicate success
-// }
 
 
 void stop_baldr() {
@@ -391,17 +392,27 @@ void open_baldr_HO() {
 }
 
 
-// // Function to update the capacity of the telemetry image ring buffer.
-// int set_telem_img_capacity(int new_capacity) {
-//     try {
-//         rtc_config.telem.img.set_capacity(new_capacity);
-//         std::cout << "Telemetry image buffer capacity updated to " << new_capacity << std::endl;
-//     } catch (const std::exception &ex) {
-//         std::cerr << "Error setting telemetry img capacity: " << ex.what() << std::endl;
-//         return -1;
-//     }
-//     return 0;
-// }
+// Function to update the capacity of the telemetry image ring buffer.
+json set_telem_capacity(json args) {
+    // Expect one argument: [new_capacity]
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"error", "Expected an array with one element: [new_capacity]"}};
+    }
+    try {
+        size_t newCapacity = args.at(0).get<size_t>();
+
+        // Lock the telemetry mutex during the update.
+        std::lock_guard<std::mutex> lock(telemetry_mutex);
+        rtc_config.telem.setCapacity(newCapacity);
+        
+        std::cout << "Telemetry ring buffers capacity updated to " << newCapacity << std::endl;
+        return json{{"status", "Telemetry capacity updated to " + std::to_string(newCapacity)}};
+    }
+    catch (const std::exception &ex) {
+        std::cerr << "Error updating telemetry capacity: " << ex.what() << std::endl;
+        return json{{"error", ex.what()}};
+    }
+}
 
 void save_telemetry(){
     rtc_config.state.take_telemetry = 1;
@@ -422,7 +433,31 @@ void resumeRTC() {
     std::cout << "RTC resumed." << std::endl;
 }
 
-using json = nlohmann::json;
+
+json set_telem_save_format(json args) {
+    // Check that the argument is an array with exactly one element.
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"error", "Expected an array with one element: [\"json\" or \"fits\"]"}};
+    }
+    try {
+        // Get the format string from the argument.
+        std::string format = args.at(0).get<std::string>();
+        // Convert to lowercase to allow case-insensitive matching.
+        std::transform(format.begin(), format.end(), format.begin(), ::tolower);
+        // Check that format is either "json" or "fits".
+        if (format != "json" && format != "fits") {
+            return json{{"error", "Invalid format. Please use \"json\" or \"fits\"."}};
+        }
+        // Update the global telemFormat variable.
+        telemFormat = format;
+        std::cout << "Telemetry output format updated to: " << telemFormat << std::endl;
+        return json{{"status", "Telemetry format updated successfully"}};
+    } catch (const std::exception& ex) {
+        return json{{"error", ex.what()}};
+    }
+}
+
+
 // This Commander function accepts one JSON parameter: an array of three items:
 // [ gain_type, indices, value ]
 // e.g. in interactive shell : > update_pid_param ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_param ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
@@ -620,9 +655,7 @@ COMMANDER_REGISTER(m)
     // m.def("load_configuration", load_configuration, "Load a configuration file. Return true if successful.", 
     //     "filename"_arg="def.toml");
 
-    // m.def("update_servo_mode", update_servo_mode,
-    //       "Update the servo_mode global variable. For example, use 2 (SERVO_STOP) to stop the servo.",
-    //       "mode"_arg);
+    
 
     m.def("stop_baldr", stop_baldr,
           "stop the baldr rtc loop","mode"_arg);
@@ -640,12 +673,18 @@ COMMANDER_REGISTER(m)
           "open the HO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
 
 
-    // m.def("set_telem_buffer_size", set_telem_buffer_size,
-    //       "Set the capacity for the telemetry image (img) ring buffer.",
-    //       "new_capacity"_arg);
-
     m.def("save_telemetry", save_telemetry,
           "dump telemetry in the circular buffer to file","mode"_arg);
+
+    m.def("set_telem_capacity", set_telem_capacity,
+          "Set the capacity for all telemetry ring buffers (how many samples we hold). e.g: set_telem_capacity [200]",
+          "args"_arg);
+
+    m.def("set_telem_save_format", set_telem_save_format,
+          "Update the telemetry output format. Acceptable values: \"json\", \"fits\".\n"
+          "Usage: set_telem_format [\"json\"] or set_telem_format [\"fits\"]",
+          "args"_arg);
+
 
     m.def("pause_baldr_rtc", [](){
         pauseRTC();
@@ -660,11 +699,12 @@ COMMANDER_REGISTER(m)
 
     //update_pid_param ["LO","kp", "all", 0.0] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
     m.def("update_pid_param", update_pid_param,
-          "Update a PID gain vector (in ctrl_LO). Parameters: [mode, gain_type, indices, value].\n"
+          "Update a PID gain vector or set_point, upper_limit or lower_limit. Parameters: [mode, parameter, indices, value].\n"
           "  - mode: LO or HO"
           "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
           "  - indices: a comma-separated list of indices or \"all\"\n"
-          "  - value: the new gain value (number)",
+          "  - value: the new gain value (number)\n"
+          "e.g. update_pid_param ['LO','kp', 'all', 0.0] or update_pid_param ['HO','kp','1,3,5,42',0.1] or ",
           "args"_arg);
 
     //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
@@ -754,12 +794,30 @@ int main(int argc, char* argv[]) {
 
     // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
     // where N is the beam number.
-    ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id) ).c_str());
-
-    // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
-    std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02" ;
-    ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
-
+    // 
+    //     ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id) ).c_str());
+        
+    //     // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
+    //     std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02" ;
+    //     ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+    // 
+    if (!rtc_config.state.simulation_mode) {
+        // Real mode: open real images from the shared memory.
+        ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
+        
+        // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
+        std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
+        ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+    } else {
+        // Simulation mode: if not yet implemented, raise an error.
+        std::cerr << "Simulation mode not implemented. Aborting." << std::endl;
+        throw std::runtime_error("Simulation mode not implemented");
+        
+        // Alternatively, if you prefer to use dummy simulation images,
+        // you might do something like:
+        // ImageStreamIO_openIm(&subarray, "simulated_baldr.im.shm");
+        // ImageStreamIO_openIm(&dm_rtc, "simulated_dm.im.shm");
+    }
     // Start the main RTC and telemetry threads. 
     std::thread rtc_thread(rtc);
     std::thread telemetry_thread(telemetry);

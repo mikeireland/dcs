@@ -2,7 +2,7 @@ CC=g++
 
 CFLAGS  = -std=c++17 -Wall -Wextra -g -O3 -ggdb -I/Documents/dcs/libImageStreamIO -I/usr/include/eigen3
 #pthread is only needed for ImageStreamIO
-LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lb64 -lboost_program_options -lfmt -lpthread
+LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lb64 -lboost_program_options -lfmt -lpthread -lcfitsio
 EXEC    = baldr
 OBJECTS = baldr.o rtc.o telemetry.o
 

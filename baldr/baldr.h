@@ -325,6 +325,21 @@ struct bdr_telem {
         c_HO(capacity)
     {}
     
+    // Method to update capacity for all ring buffers.
+    void setCapacity(size_t newCapacity) {
+        timestamp.set_capacity(newCapacity);
+        LO_servo_mode.set_capacity(newCapacity);
+        HO_servo_mode.set_capacity(newCapacity);
+        img.set_capacity(newCapacity);
+        img_dm.set_capacity(newCapacity);
+        signal.set_capacity(newCapacity);
+        e_LO.set_capacity(newCapacity);
+        u_LO.set_capacity(newCapacity);
+        e_HO.set_capacity(newCapacity);
+        u_HO.set_capacity(newCapacity);
+        c_LO.set_capacity(newCapacity);
+        c_HO.set_capacity(newCapacity);
+    }
     //void validate() const {
     // Add any validation if needed.
     //}
@@ -529,6 +544,8 @@ extern std::atomic<bool> pause_rtc;        // When true, RTC should pause.
 extern std::mutex rtc_pause_mutex;         // Protects shared access to pause state.
 extern std::condition_variable rtc_pause_cv; // Notifies RTC to resume.
 
+//
+extern std::string telemFormat;
 
 // The C-Red Image subarray and DM
 extern IMAGE subarray;
