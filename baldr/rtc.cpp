@@ -313,8 +313,8 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    // LOOP SPEED (us)
-    std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
+
+    
     ///////////////////////////////////////
 
 
@@ -337,9 +337,14 @@ void rtc(){
     }
 
 
-    //bool just_resumed = false;
+
     // pick an arbitrary preferred sem index (0 is fine)
     int semid = ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
+
+    // LOOP SPEED (us)
+    //std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
+    constexpr auto loop_time = std::chrono::microseconds(1500); //  1 kHz
+    auto next_tick = std::chrono::steady_clock::now();
 
     // before entering main loop, drain any stale posts:
     catch_up_with_sem(&subarray, semid);
@@ -484,7 +489,7 @@ void rtc(){
         
         dmCmd = c_LO + c_HO;
 
-        if (dmCmd.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
+        if (c_HO.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
             // Find index of maximum absolute value.
             //int culprit = 0;
             //double maxVal = u_HO.cwiseAbs().maxCoeff(&culprit);
@@ -575,16 +580,31 @@ void rtc(){
             rtc_config.telem.counter++;
         }
 
+        // schedule next wakeup
+        next_tick += loop_time;
+        std::this_thread::sleep_until(next_tick);
+
+        // detect overrun
+        auto now = std::chrono::steady_clock::now();
+        if (now > next_tick) {
+            auto over = now - next_tick;
+            std::cerr<<"Loop overran by "
+                    << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
+                    <<" μs\n";
+        }
+        
         end = std::chrono::steady_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
-        // std::cout << "duration microsec:  " << duration.count() << std::endl;
+        std::cout << "duration microsec:  " << duration.count() << std::endl;
 
         /////////////////////// SLEEP ///////////////////////
-        //if (duration < loop_time){
+
+
+        // if (duration < loop_time){
         //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
-        //}
+        // }
 
 
     }
