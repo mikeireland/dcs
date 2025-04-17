@@ -443,7 +443,7 @@ struct bdr_rtc_config {
 
 
     // some pre inits
-    Eigen::VectorXd img ; // image from SHM (size could change)
+    //Eigen::VectorXd img ; // image from SHM (size could change)
     Eigen::VectorXd zeroCmd ; // zero dm command for rtc channel
 
     // ----------------------- IMPORTANT 

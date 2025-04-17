@@ -823,14 +823,14 @@ COMMANDER_REGISTER(m)
     }, "Resume the RTC loop.\n\n");
 
 
-    //update_pid_param ["LO","kp", "all", 0.0] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
+    //update_pid_param ["LO","kp", "all",0.1] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
     m.def("update_pid_param", update_pid_param,
           "Update a PID gain vector or set_point, upper_limit or lower_limit. Parameters: [mode, parameter, indices, value].\n"
           "  - mode: LO or HO"
           "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
           "  - indices: a comma-separated list of indices or \"all\"\n"
           "  - value: the new gain value (number)\n"
-          "e.g. update_pid_param ['LO','kp', 'all', 0.0] or update_pid_param ['HO','kp','1,3,5,42',0.1] or ",
+          "e.g. (use double quotation) update_pid_param [''LO'',''kp'',''all'', 0.0] or update_pid_param [''HO'',''kp'',''1,3,5,42'',0.1] or ",
           "args"_arg);
 
     //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
@@ -950,6 +950,8 @@ int main(int argc, char* argv[]) {
         // ImageStreamIO_openIm(&dm_rtc, "simulated_dm.im.shm");
     }
     // Start the main RTC and telemetry threads. 
+
+
     std::thread rtc_thread(rtc);
     std::thread telemetry_thread(telemetry);
 

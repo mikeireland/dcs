@@ -82,6 +82,16 @@ Eigen::VectorXd dmCmd;
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
 
+
+//------------------------------------------------------------------------------
+// Drain any outstanding semaphore “posts” so that
+// the next semwait() really waits for a fresh frame.
+//------------------------------------------------------------------------------
+static inline void catch_up_with_sem(IMAGE* img, int semid) {
+    // keep grabbing until there are no more pending posts
+    while (ImageStreamIO_semtrywait(img, semid) == 0) { /* nothing just do it*/; }
+}
+
 /**
  Reads a frame from shared memory which should match the expected number of pixels expectedPixels.
 **/
@@ -103,6 +113,7 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
     }
     
     // Assume the image data is stored as 16-bit unsigned ints.
+    ImageStreamIO_semwait( &subarray, 1);  // waiting for image update
     uint16_t* data = subarray.array.UI16;
     if (!data) {
         //ImageStreamIO_destroyIm(&subarray);
@@ -144,6 +155,9 @@ void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
     // Signal that we are writing.
     dm_rtc.md->write = 1;
     
+    // Ensure the write‐flag store happens before the memcpy
+    std::atomic_thread_fence(std::memory_order_release);
+
     // Use memcpy to copy the new DM command values into the shared memory.
     // Ensure that the Eigen vector data is contiguous by using .data()
     std::memcpy(dm_rtc.array.D, dmCmd.data(), dm_totalElements * sizeof(double));
@@ -211,6 +225,10 @@ void rtc(){
     std::cout << "secondary strehl matrix: " << rtc_config.matrices.I2rms_sec << std::endl;
     std::cout << "exterior strehl matrix: " << rtc_config.matrices.I2rms_ext << std::endl;
     
+    std::cout << "szm: " << rtc_config.matrices.szm << std::endl;
+    std::cout << "sza: " << rtc_config.matrices.sza << std::endl;
+    std::cout << "szp: " << rtc_config.matrices.szp << std::endl;
+
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
         int dm_width = dm_rtc.md->size[0];
@@ -308,26 +326,85 @@ void rtc(){
     //////////////////////////////////////
 
 
+    const int expectedPixels = 32 * 32;
+
+    // Pre‑compute totalPixels so we only do it once
+    int nx = subarray.md->size[0];
+    int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
+    int totalPixels = nx * ny;
+    if (totalPixels != expectedPixels) {
+        throw std::runtime_error("RTC: shared‑memory geometry mismatch");
+    }
+
+
+    //bool just_resumed = false;
+    // pick an arbitrary preferred sem index (0 is fine)
+    int semid = ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
+
+    // before entering main loop, drain any stale posts:
+    catch_up_with_sem(&subarray, semid);
+
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode != SERVO_STOP){
 
         //std::cout << servo_mode_LO << std::endl;
         //std::cout << servo_mode_HO << std::endl;
         // Check if we need to pause the loop.
-        {
+        if (pause_rtc.load()) {
             // Use a unique_lock with the mutex for the condition variable.
             // (A condition variable’s wait functions require a std::unique_lock<std::mutex> rather than a std::lock_guard<std::mutex> because the condition variable needs the flexibility to unlock and later re-lock the mutex during the wait. )
             std::unique_lock<std::mutex> lock(rtc_pause_mutex);
             // Wait until pause_rtc becomes false.
             // This lambda serves as a predicate.
             rtc_pause_cv.wait(lock, [](){ return !pause_rtc.load(); });
+            // catch up on any missed semaphore posts exactly once after pause
+            catch_up_with_sem(&subarray, semid);
+            std::cout<< "caught up with semaphores amd resuming" << std::endl;
+            //just_resumed = true;
         }
+
+        // catch up on any missed semaphore posts exactly once after pause
+        // if (just_resumed) {
+        //     //ImageStreamIO_semflush(&subarray, -1); // maybe this but not clear
+        //     catch_up_with_sem(&subarray, semid);
+        //     just_resumed = false;
+        //     std::cout<< "flushed semaphores amd resuming" << std::endl;
+        // }
 
         start = std::chrono::steady_clock::now();
 
-        // need to subtract dark , bias norm ( do this next)
-        img =  getFrameFromSharedMemory(32*32); //32*32);
+
+        //img =  getFrameFromSharedMemory(32*32); //32*32);
         
+        //ImageStreamIO_semwait(&subarray, /*timeout=*/-1);
+
+        ImageStreamIO_semwait(&subarray, semid);
+
+        //  MAP & COPY into an Eigen vector
+        //    (we know data is stored U16 so we cast to uint16_t*)
+        uint16_t *raw = subarray.array.UI16;
+        // Eigen::VectorXd img(totalPixels);
+        // for (int i = 0; i < totalPixels; ++i) {
+        //     img(i) = static_cast<double>(raw[i]);
+        // }
+        // a better way 
+        // 1) Map the raw uint16_t buffer as an Eigen array:
+        Eigen::Map<const Eigen::Array<uint16_t,Eigen::Dynamic,1>> rawArr(raw, totalPixels);
+
+        // 2) Cast it to double—and store into a VectorXd:
+        Eigen::VectorXd img = rawArr.cast<double>();
+
+        //std::cout  << img.size() << std::endl;
+        //uint64_t totalFramesWritten = subarray.md->cnt0;
+        //uint64_t lastSliceIndex     = ImageStreamIO_readLastWroteIndex(&subarray);
+
+        // // Print them
+        // std::cout 
+        //     << "Frame #" << totalFramesWritten 
+        //     << " landed in buffer slot " << lastSliceIndex 
+        //     << std::endl;
+            
+
         // model of residual rms in DM units using secondary obstruction 
         dm_rms_est_1 = rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
 
@@ -470,7 +547,7 @@ void rtc(){
             rtc_config.telem.HO_servo_mode.push_back(servo_mode_HO);          // 'c_HO' is Eigen::VectorXd
 
             //std::cout << "img size: " << img.size() << std::endl;
-            rtc_config.telem.img.push_back(rtc_config.img);          // 'img' is Eigen::VectorXd
+            rtc_config.telem.img.push_back(img);          // 'img' is Eigen::VectorXd
             //std::cout << "img_dm size: " << img_dm.size() << std::endl;
             rtc_config.telem.img_dm.push_back(img_dm);          // 'img' is Eigen::VectorXd
             //std::cout << ", sig size: " << sig.size() << std::endl;
@@ -502,12 +579,12 @@ void rtc(){
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
-        //std::cout << "duration microsec:  " << duration.count() << std::endl;
+        // std::cout << "duration microsec:  " << duration.count() << std::endl;
 
         /////////////////////// SLEEP ///////////////////////
-        if (duration < loop_time){
-            std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
-        }
+        //if (duration < loop_time){
+        //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
+        //}
 
 
     }
