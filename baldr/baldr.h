@@ -559,9 +559,12 @@ extern bdr_rtc_config rtc_config;
 
 
 //extern std::vector<bdr_rtc_config> rtc_config_list; // what the rtc will use and edit
-extern int servo_mode;
-extern int servo_mode_LO;
-extern int servo_mode_HO;
+extern std::atomic<int> servo_mode; 
+extern std::atomic<int> servo_mode_LO;
+extern std::atomic<int> servo_mode_HO;
+// extern int servo_mode;
+//extern int servo_mode_LO;
+//extern int servo_mode_HO;
 // extern vector::<int> telescopes;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander

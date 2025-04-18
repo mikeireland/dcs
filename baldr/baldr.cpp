@@ -21,9 +21,12 @@ bdr_rtc_config rtc_config;
 //extern PIDController ctrl_HO; // this is now derived in rtc_config
 
 
-int servo_mode;
-int servo_mode_LO;
-int servo_mode_HO;
+// int servo_mode;
+std::atomic<int> servo_mode; 
+std::atomic<int> servo_mode_LO;
+std::atomic<int> servo_mode_HO;
+// int servo_mode_LO;
+// int servo_mode_HO;
 std::string telemFormat = "json";
 //vector::<int> telescopes;
 
@@ -121,7 +124,7 @@ Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
             if (integrals(i) > upper_limits(i))
                 integrals(i) = upper_limits(i);
         }
-        double derivative = error - prev_errors(i);
+        double derivative = error - prev_errors(i); // if error bigger than previous error you want to dampen output
         output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
         prev_errors(i) = error;
     }
@@ -939,6 +942,10 @@ int main(int argc, char* argv[]) {
         // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
         std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
         ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+
+        //add.
+        ImageStreamIO_semflush(&dm_rtc, /*index=*/-1);
+
     } else {
         // Simulation mode: if not yet implemented, raise an error.
         std::cerr << "Simulation mode not implemented. Aborting." << std::endl;

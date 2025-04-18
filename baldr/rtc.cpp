@@ -133,48 +133,80 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
 }
 
 
-/**                     
-writes to DM SHM.
-**/
 void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
+    auto *md = dm_rtc.md;
+    const int N = md->nelement;
 
-    // Get image parameters (assumed constant during runtime)
-    //int dm_naxis = dm_rtc.md->naxis;
-    //int dm_width  = dm_rtc.md->size[0];
-    //int dm_height = (naxis > 1) ? dm_rtc.md->size[1] : 1;
-    int dm_totalElements = dm_rtc.md->nelement; // e.g., 1600 for 40x40
-    
-
-    // Check that dmCmd has the proper size.
-    if (dmCmd.size() != dm_totalElements) {
-        std::cerr << "DM command vector size mismatch: expected " 
-                  << dm_totalElements << ", got " << dmCmd.size() << std::endl;
+    if ((int)dmCmd.size() != N) {
+        std::cerr << "DM command size mismatch: expected " 
+                  << N << ", got " << dmCmd.size() << "\n";
         return;
     }
-    
-    // Signal that we are writing.
-    dm_rtc.md->write = 1;
-    
-    // Ensure the write‐flag store happens before the memcpy
+
+    // 1) mark that we're writing
+    md->write = 1;
+
+    // 2) copy the data
+    std::memcpy(dm_rtc.array.D, dmCmd.data(), N * sizeof(double));
+
+    // 3) bump the update counter
+    md->cnt0++;
+    md->cnt1 = 0;
+
+    // 4) make sure all stores are visible before we wake the reader
     std::atomic_thread_fence(std::memory_order_release);
 
-    // Use memcpy to copy the new DM command values into the shared memory.
-    // Ensure that the Eigen vector data is contiguous by using .data()
-    std::memcpy(dm_rtc.array.D, dmCmd.data(), dm_totalElements * sizeof(double));
-    
-    // Update counters to notify consumers that data has been updated.
-    dm_rtc.md->cnt0++;  
-    dm_rtc.md->cnt1 = 0;
-    
-    // Post the semaphore once to signal that new data is available.
-    int ret = ImageStreamIO_sempost(&dm_rtc, -1);
-    if (ret != 0) {
-        std::cerr << "Error posting semaphore: " << ret << std::endl;
+    // 5) wake *only* semaphore #1 (the DM thread is waiting on index=1)
+    if (ImageStreamIO_sempost(&dm_rtc, /*semid=*/1) != 0) {
+        std::cerr << "Error posting DM semaphore #1\n";
     }
-    
-    // Clear the write flag.
-    dm_rtc.md->write = 0;
+
+    // 6) clear the write flag
+    md->write = 0;
 }
+
+// /**                     
+// writes to DM SHM.
+// **/
+// void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
+
+//     // Get image parameters (assumed constant during runtime)
+//     //int dm_naxis = dm_rtc.md->naxis;
+//     //int dm_width  = dm_rtc.md->size[0];
+//     //int dm_height = (naxis > 1) ? dm_rtc.md->size[1] : 1;
+//     int dm_totalElements = dm_rtc.md->nelement; // e.g., 1600 for 40x40
+    
+
+//     // Check that dmCmd has the proper size.
+//     if (dmCmd.size() != dm_totalElements) {
+//         std::cerr << "DM command vector size mismatch: expected " 
+//                   << dm_totalElements << ", got " << dmCmd.size() << std::endl;
+//         return;
+//     }
+    
+//     // Signal that we are writing.
+//     dm_rtc.md->write = 1;
+    
+//     // Ensure the write‐flag store happens before the memcpy
+//     std::atomic_thread_fence(std::memory_order_release);
+
+//     // Use memcpy to copy the new DM command values into the shared memory.
+//     // Ensure that the Eigen vector data is contiguous by using .data()
+//     std::memcpy(dm_rtc.array.D, dmCmd.data(), dm_totalElements * sizeof(double));
+    
+//     // Update counters to notify consumers that data has been updated.
+//     dm_rtc.md->cnt0++;  
+//     dm_rtc.md->cnt1 = 0;
+    
+//     // Post the semaphore once to signal that new data is available.
+//     int ret = ImageStreamIO_sempost(&dm_rtc, -1);
+//     if (ret != 0) {
+//         std::cerr << "Error posting semaphore: " << ret << std::endl;
+//     }
+    
+//     // Clear the write flag.
+//     dm_rtc.md->write = 0;
+//}
 
 
 // A helper function to print the dimension information of a matrix.
@@ -228,6 +260,9 @@ void rtc(){
     std::cout << "szm: " << rtc_config.matrices.szm << std::endl;
     std::cout << "sza: " << rtc_config.matrices.sza << std::endl;
     std::cout << "szp: " << rtc_config.matrices.szp << std::endl;
+
+    std::cout << "I2A.cols() : " << rtc_config.matrices.I2A.cols() << std::endl;
+    std::cout << "I2A.rows() : " << rtc_config.matrices.I2A.rows() << std::endl;
 
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
@@ -325,14 +360,16 @@ void rtc(){
     // }
     //////////////////////////////////////
 
-
-    const int expectedPixels = 32 * 32;
+    /// this can cause problems and should be automatic!!!! 
+    const int expectedPixels = rtc_config.matrices.I2A.cols(); //31 * 31;
 
     // Pre‑compute totalPixels so we only do it once
     int nx = subarray.md->size[0];
     int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
     int totalPixels = nx * ny;
     if (totalPixels != expectedPixels) {
+        std::cout << "totalPixels" << totalPixels << std::endl;
+        std::cout << "expectePixels" << expectedPixels << std::endl; 
         throw std::runtime_error("RTC: shared‑memory geometry mismatch");
     }
 
@@ -350,7 +387,7 @@ void rtc(){
     catch_up_with_sem(&subarray, semid);
 
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
-    while(servo_mode != SERVO_STOP){
+    while(servo_mode.load() != SERVO_STOP){
 
         //std::cout << servo_mode_LO << std::endl;
         //std::cout << servo_mode_HO << std::endl;
@@ -431,17 +468,21 @@ void rtc(){
 
 
         // LO CALCULATIONS 
-        if (servo_mode_LO == SERVO_CLOSE){
+        if (servo_mode_LO.load() == SERVO_CLOSE){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_CLOSE) {
                 std::cout << "LO IN CLOSED LOOP" << std::endl;
 
             }
+            
             std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+            //std::cout << "HERE NOW, LO IN CLOSED LOOP" << std::endl;
+
             u_LO = rtc_config.ctrl_LO.process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
         
-        }else if(servo_mode_LO == SERVO_OPEN){
+        }else if(servo_mode_LO.load() == SERVO_OPEN){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting LO controller" << std::endl;
                 //reset controllers
@@ -455,7 +496,7 @@ void rtc(){
         }
 
         // HO CALCULATIONS 
-        if (servo_mode_HO == SERVO_CLOSE){
+        if (servo_mode_HO.load() == SERVO_CLOSE){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_CLOSE) {
                 std::cout << "HO IN CLOSED LOOP" << std::endl;
 
@@ -469,7 +510,7 @@ void rtc(){
             //std::cout << rtc_config.matrices.M2C_HO.cwiseAbs().maxCoeff() << std::endl; 
             //std::cout << sig.cwiseAbs().maxCoeff() << std::endl; 
 
-        }else if(servo_mode_HO == SERVO_OPEN){
+        }else if(servo_mode_HO.load() == SERVO_OPEN){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
                 //reset controllers
@@ -488,8 +529,16 @@ void rtc(){
 
         
         dmCmd = c_LO + c_HO;
+        //if (dmCmd.cwiseAbs().maxCoeff() > 0) {
+        //    std::cout << "max dmCmd = " << dmCmd.cwiseAbs().maxCoeff() << std::endl;
+        //};
+        //rtc_config.limits.open_on_dm_limit
+        if (dmCmd.cwiseAbs().maxCoeff() > 0.3) {
+            std::cout << "going bad" << std::endl;
+            rtc_config.state.take_telemetry=1;
+            servo_mode = SERVO_STOP;
 
-        if (c_HO.cwiseAbs().maxCoeff() > rtc_config.limits.open_on_dm_limit) {
+            // open_baldr_LO
             // Find index of maximum absolute value.
             //int culprit = 0;
             //double maxVal = u_HO.cwiseAbs().maxCoeff(&culprit);
@@ -530,7 +579,7 @@ void rtc(){
 
         // ******************** UPDATE DM ******************************
 
-        //updateDMSharedMemory( dmCmd ) ;
+        updateDMSharedMemory( dmCmd ) ;
 
         // ******************** --------- ******************************
 
@@ -588,20 +637,21 @@ void rtc(){
         auto now = std::chrono::steady_clock::now();
         if (now > next_tick) {
             auto over = now - next_tick;
-            std::cerr<<"Loop overran by "
-                    << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
-                    <<" μs\n";
+            //std::cerr<<"Loop overran by "
+            //        << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
+            //        <<" μs\n";
         }
         
         end = std::chrono::steady_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
-        std::cout << "duration microsec:  " << duration.count() << std::endl;
+        //std::cout << "duration microsec:  " << duration.count() << std::endl;
 
         /////////////////////// SLEEP ///////////////////////
 
-
+        //std::cout << servo_mode_LO.load() << std::endl;
+        
         // if (duration < loop_time){
         //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
         // }
