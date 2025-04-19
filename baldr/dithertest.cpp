@@ -62,7 +62,7 @@ void updateDMSharedMemory(IMAGE &dmImg, const Eigen::VectorXd &dmCmd) {
 
     // 7) Bump counters
     md->cnt0++;
-    md->cnt1 = 0;
+    md->cnt1++; //!!! MJI, not sure why this was set to 0.
 
     // 8) Post semaphore
     int ret = ImageStreamIO_sempost(&dmImg, -1);
@@ -96,13 +96,19 @@ int main(int argc, char** argv) {
 
     // Form the shared-memory name, e.g. "dm2disp02"
     std::string name = "dm" + std::to_string(beam_id) + "disp02";
+    std::string name0 = "dm" + std::to_string(beam_id);
     std::cout << "[INFO] Opening DM SHM \"" << name << "\"\n";
 
-    IMAGE dmImage;
+    IMAGE dmImage, dmImage0;
     if (ImageStreamIO_openIm(&dmImage, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
         std::cerr << "[ERROR] Failed to open DM SHM \"" << name << "\"\n";
         return 1;
     }
+    if (ImageStreamIO_openIm(&dmImage0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+        std::cerr << "[ERROR] Failed to open DM SHM \"" << name0 << "\"\n";
+        return 1;
+    }
+
 
     // Query dimensions
     auto *md = dmImage.md;
@@ -130,6 +136,9 @@ int main(int argc, char** argv) {
 
         std::cout << "[INFO] Writing cross with amplitude " << amp << "\n";
         updateDMSharedMemory(dmImage, dmCmd);
+
+        // Signal the master DM process to update itself.
+        ImageStreamIO_sempost(&dmImage0, 1);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     }
