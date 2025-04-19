@@ -7,6 +7,7 @@
 #include <toml.hpp>
 #include <mutex>
 #include <thread>
+#include <Eigen/Dense>
 
 //----------Defines-----------
 #define FT_STARTING 0
@@ -17,7 +18,13 @@
 #define SERVO_LACOUR 1
 #define SERVO_STOP 2
 
-#define MAX_N_GD_BOXCAR 16
+// The maximum number of frames to average for group delay. Delay error in wavelength from group
+// delay can be 0.4/which scales to a phasor error of 0.04, while phase error can only be 0.2
+// Group delay has naturally an SNR that is 2.5 times lower, so the SNR ratio is 0.2/0.04*2.5 = 12.5
+// ... this means we need 12.5^2 = ~150 times more frames to average for group delay than for
+// phase delay.
+#define MAX_N_GD_BOXCAR 128
+
 #define MAX_N_BS_BOXCAR 256   // Maximum number of frames to average for bispectrum
 #define MAX_N_PS_BOXCAR 256   // Maximum number of frames to average for power spectrum
 
@@ -90,6 +97,7 @@ struct ControlA{
     double gd;
     double pd;
     double delay;
+    double pd_offset;
 }
 
 struct Baseline{

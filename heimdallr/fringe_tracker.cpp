@@ -1,12 +1,13 @@
 #include "heimdallr.h"
 
-long unsigned int ft_cnt=0;
+long unsigned int ft_cnt=0, cnt_since_init=0;
 long unsigned int nerrors=0;
 double x_px_K1[N_BL], y_px_K1[N_BL], x_px_K2[N_BL], y_px_K2[N_BL], sign[N_BL], gd_to_K1=1.0;
 dcomp K1_phasor[N_BL], K2_phasor[N_BL];
 
 // Initialise variables assocated with baselines.
 void initialise_baselines(){
+    cnt_since_init = 0;
     for (int i=0; i<N_BL; i++){
         baselines[i].gd=0;
         baselines[i].pd=0;
@@ -61,6 +62,7 @@ void fringe_tracker(){
     initialise_baselines();
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
+        cnt_since_init++; //This should "never" wrap around, as a long int is big.
         // Wait for the next frame to be ready in K1
         while(K1ft->cnt == ft_cnt || K2ft->cnt == ft_cnt){
             usleep(50); //!!! Need to be more sophisticated here
@@ -106,15 +108,17 @@ void fringe_tracker(){
             double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - baselines[bl].pd + 0.5), 1.0) - 0.5;
             baselines[bl].pd += pdiff;
 
-            // Now we need the gd_snr and pd_snr for this baseline. !!! Check functions.
-            pd_snr = std::fabs(K1_phasor[bl])/std::sqrt(K1ft->power_spectrum_inst_bias);
-            // GD is harder!
-            // gd_snr = std::fabs(K1_phasor[bl])/std::sqrt(power_spectrum_inst_bias);
-         
+            // Now we need the gd_snr and pd_snr for this baseline. 
+            baselines[bl].pd_snr = std::fabs(K1_phasor[bl])/std::sqrt(K1ft->power_spectrum_inst_bias);
+            // The GD_phasor has a variance sqrt(baselines[bl].n_gd_boxcar) larger than a
+            // single phasor, so we need to divide by that.
+            baselines[bl].gd_snr = std::fabs(gd_phasor[bl])/
+                std::sqrt(K1ft->power_spectrum_bias*K2ft_>power_spectrum_bias)/
+                std::sqrt(baselines[bl].n_gd_boxcar);         
         }
         // Now we have the group delays and phase delays, we can regularise by multipliying by the  
-        // I6gd matrix and the I6pd matrix. Then in a Bayesian approach, we use the phase and 
-        // knowledge of the previous state to compute the true delay in a nonlinear way. 
+        // I6gd matrix and the I6pd matrix. 
+        
         
         // Multiply by the K1 wavelength config["wave"]["K1"].value_or(2.05)
 

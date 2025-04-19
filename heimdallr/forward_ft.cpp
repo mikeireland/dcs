@@ -102,15 +102,17 @@ void ForwardFt::loop() {
                         power_spectra[ps_index][ii*szj + jj]/MAX_N_PS_BOXCAR;
                 }
             }
-            // Compute the power spectrum bias
+            // Compute the power spectrum bias and instantaneous bias.
             power_spectrum_bias=0;
             power_spectrum_inst_bias=0;
-            for (unsigned int ii=szj-szj/4; ii<szj+szj/4; ii++) {
-                for (unsigned int jj=szj/4; jj<szj; jj++) {
+            for (unsigned int ii=subim_iz/2-subim_sz/8; ii<subim_sz/2+subim_sz/8; ii++) {
+                for (unsigned int jj=szj - subim_sz/8; jj<szj; jj++) {
                     power_spectrum_bias += power_spectrum[ii*szj + jj];
                     power_spectrum_inst_bias += power_spectra[next_ps_ix][ii*szj + jj];
                 }
             }
+            power_spectrum_bias /= subim_sz*subim_sz/32; //two squares 1/8 of the subim
+            power_spectrum_inst_bias /= subim_sz*subim_sz/32; //two squares 1/8 of the subim
             ps_index = next_ps_ix;
 
 #ifdef PRINT_TIMING
