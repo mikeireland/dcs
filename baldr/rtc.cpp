@@ -136,6 +136,7 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
 void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
     auto *md = dm_rtc.md;
     const int N = md->nelement;
+    
 
     if ((int)dmCmd.size() != N) {
         std::cerr << "DM command size mismatch: expected " 
@@ -143,23 +144,24 @@ void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
         return;
     }
 
-    // 1) mark that we're writing
+    // mark that we're writing
     md->write = 1;
 
-    // 2) copy the data
+    // copy the data
     std::memcpy(dm_rtc.array.D, dmCmd.data(), N * sizeof(double));
 
-    // 3) bump the update counter
+    // bump the update counter
     md->cnt0++;
     md->cnt1 = 0;
 
-    // 4) make sure all stores are visible before we wake the reader
+    // make sure all stores are visible before we wake the reader
     std::atomic_thread_fence(std::memory_order_release);
 
+    ImageStreamIO_sempost(&dm_rtc, -1)
     // 5) wake *only* semaphore #1 (the DM thread is waiting on index=1)
-    if (ImageStreamIO_sempost(&dm_rtc, /*semid=*/1) != 0) {
-        std::cerr << "Error posting DM semaphore #1\n";
-    }
+    //if (ImageStreamIO_sempost(&dm_rtc, /*semid=*/1) != 0) {
+    //    std::cerr << "Error posting DM semaphore #1\n";
+    //}
 
     // 6) clear the write flag
     md->write = 0;
