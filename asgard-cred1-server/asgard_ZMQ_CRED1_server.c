@@ -926,6 +926,7 @@ int main(int argc, char **argv) {
   // --------------------------
   // start the commander server
   // --------------------------
+  fetch();
   co::Server s(argc, argv);
   s.run();
   
