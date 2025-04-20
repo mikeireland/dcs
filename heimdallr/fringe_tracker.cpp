@@ -14,7 +14,7 @@ Eigen::Matrix<double, N_BL, 1> pd_filtered, gd_filtered;
 
 // Convenience matrices and vectors.
 // A 4x4 matrix of zeros to store the diagonal.
-Eigen::Matrix<double, N_BL, N_BL> singularDiag = Eigen::Matrix<double, N_BL, N_BL>::Zero();
+Eigen::Matrix<double, N_TEL, N_TEL> singularDiag = Eigen::Matrix<double, N_TEL, N_TEL>::Zero();
 
 // A 4x4 identity matrix.
 Eigen::Matrix4d I4 = Eigen::Matrix4d::Identity();
@@ -23,23 +23,26 @@ Eigen::Matrix4d I4 = Eigen::Matrix4d::Identity();
 Eigen::Vector4d search_vector_scale(-2.75,-1.75,1.25,3.25);
 
 // Make the pseudo-inverse matrix needed to project onto delay line (telescope) space.
+#define NUMERIC_LIMIT 2e-6
 Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold){
     using namespace Eigen;
     // This function computes the pseudo-inverse of the matrix M^T *  W * M, using the
     // SVD method. The threshold is used to set the minimum eigenvalue, and the
     // minimum eigenvalue is used to set the minimum eigenvalue of the pseudo-inverse.
-    JacobiSVD<MatrixXf, ComputeThinU | ComputeThinV> svd(M_lacour.transpose() * W * M_lacour);
+    // W * M_lacour is a 6x4 matrix, and M_lacour.transpose() * W * M_lacour is a 4x4 matrix.
+    // Was ComputeThinU
+   SelfAdjointEigenSolver<Matrix4d> es(M_lacour.transpose() * W * M_lacour);
     // Start with a diagonal vector of 4 zeros.
-    for (int i=0; i<N_BL; i++){
-        if (svd.singularValues()(i) <= threshold){
-            if (threshold > 0){
-                singularDiag(i,i) = svd.singularValues()(i)/threshold/threshold;
+    for (int i=0; i<N_TEL; i++){
+         if ((es.eigenvalues()(i) <= threshold) || (es.eigenvalues()(i) < NUMERIC_LIMIT)){
+             if (threshold > 0){
+                 singularDiag(i,i) = es.eigenvalues()(i)/threshold/threshold;
             } else singularDiag(i,i) = 0;
         } else {
-            singularDiag(i,i) = 1.0/svd.singularValues()(i);
+            singularDiag(i,i) = 1.0/es.eigenvalues()(i);
         }
     }
-    return svd.matrixV().transpose() * singularDiag * svd.matrixU().transpose();
+     return  es.eigenvectors() * singularDiag * es.eigenvectors().transpose();
 }
 
 // Initialise variables assocated with baselines.
