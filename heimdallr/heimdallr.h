@@ -73,32 +73,55 @@ const char closure2bl[N_CP][3] = {
     {3, 5, 4}
 };
 
-// These are from Lacour et al. 2019, so we'll keep the same definitions.
-const char M[N_BL][N_TEL] = {
+// These are from Lacour et al. 2019, so we'll keep the same definitions. However,
+// The matrix should be an Eigen matrix for rapid multiplication later.
+const Eigen::Matrix<double, N_BL, N_TEL> M_lacour = (Eigen::Matrix<double, N_BL, N_TEL>() << 
+    -1, 1, 0, 0,
+    -1, 0, 1, 0,
+    -1, 0, 0, 1,
+    0, -1, 1, 0,
+    0, -1, 0, 1,
+    0, 0, -1, 1).finished();
+// Also, we need the pseudo-inverse of this matrix for the inverse operation.
+const Eigen::Matrix<double, N_TEL, N_BL> M_lacour_dag = (Eigen::Matrix<double, N_TEL, N_BL>() << 
+    -0.25, -0.25, -0.25, 0,
+    0.25, 0, 0, -0.25,
+    0, 0.25, 0, 0.25,
+    0, 0, 0.25, 0).finished();
+
+/* const char M[N_BL][N_TEL] = {
     {-1, 1, 0, 0},
     {-1, 0, 1, 0},
     {-1, 0, 0, 1},
     {0, -1, 1, 0},
     {0, -1, 0, 1},
     {0, 0, -1, 1}
-};
+};*/
 
 //----- Structures and typedefs------
 typedef std::complex<double> dcomp;
 
+// As we are using Eigen and not C, we will package data from many baselines into
+// a single struct
 struct ControlU{
-    double dl;
-    double piezo;
-    double dm_piston;
+    Eigen::Vector4d dl;
+    Eigen::Vector4d piezo;
+    Eigen::Vector4d dm_piston;
+    Eigen::Vector4d search;
+    Eigen::Vector4d dl_offload;
+    double search_delta, omega_dl, dit;
+    unsigned int search_Nsteps, steps_to_turnaround;
 };
 
-// This is our knowledge of the per-telescope delay state.
+// This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
 struct ControlA{
     double gd;
     double pd;
     double delay;
     double pd_offset;
-}
+    double delay_dm;
+    double delay_dl;
+};
 
 struct Baseline{
     double gd;
@@ -143,8 +166,8 @@ extern toml::table config;
 // Servo parameters. These are the parameters that will be adjusted by the commander
 extern int servo_mode;
 extern PIDSettings pid_settings;
-extern ControlU control_us[N_TEL];
-extern ControlA control_as[N_TEL];
+extern ControlU control_u;
+extern ControlA control_a;
 extern Baseline baselines[N_BL];
 extern Bispectrum bispectra[N_CP];
 
@@ -193,8 +216,12 @@ private:
     int mode=FT_STARTING;
     void loop();
 };
+
 // Main thread function for fringe tracking.
 void fringe_tracker();
+
+// Seeting the delay lines (needed form the main thread and from the commander)
+void set_delay_lines(Eigen::Vector4d &dl);
 
 //The forward Fourier transforms
 extern ForwardFt *K1ft, *K2ft;

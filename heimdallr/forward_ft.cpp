@@ -105,7 +105,7 @@ void ForwardFt::loop() {
             // Compute the power spectrum bias and instantaneous bias.
             power_spectrum_bias=0;
             power_spectrum_inst_bias=0;
-            for (unsigned int ii=subim_iz/2-subim_sz/8; ii<subim_sz/2+subim_sz/8; ii++) {
+            for (unsigned int ii=subim_sz/2-subim_sz/8; ii<subim_sz/2+subim_sz/8; ii++) {
                 for (unsigned int jj=szj - subim_sz/8; jj<szj; jj++) {
                     power_spectrum_bias += power_spectrum[ii*szj + jj];
                     power_spectrum_inst_bias += power_spectra[next_ps_ix][ii*szj + jj];

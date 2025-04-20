@@ -42,8 +42,6 @@ namespace commander::server
             try {
                 if (pos == std::string::npos)
                     name = command;
-                    if (command == "exit")
-                        break;
                 else
                 {
                     name = command.substr(0, pos);
@@ -51,6 +49,12 @@ namespace commander::server
                     args = json::parse(command);
                 }
 
+                // Treat the exit command as a special case
+                if (name == "exit"){
+                    fmt::print("Exiting socket server\n");
+                    sock.send(zmq::message_t("Exiting!", 8), zmq::send_flags::none);
+                    break;
+                }
                 auto res = module_.execute(name, args).dump();
 
                 fmt::print("Sending response: {}\n", res);

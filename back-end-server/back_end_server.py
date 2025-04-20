@@ -173,3 +173,7 @@ class BackEndServer:
         print("RTS command received: ", parameters)
         # Validate and process parameters as needed
         return self.create_response("OK")
+    
+if __name__ == "__main__":
+    server = BackEndServer()
+    server.run()

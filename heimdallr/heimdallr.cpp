@@ -16,8 +16,8 @@ toml::table config;
 // Servo parameters. These are the parameters that will be adjusted by the commander
 int servo_mode=SERVO_PID;
 PIDSettings pid_settings;
-ControlU control_us[N_TEL];
-ControlA control_as[N_TEL];
+ControlU control_u;
+ControlA control_a;
 Baseline baselines[N_BL];
 Bispectrum bispectra[N_CP];
 
@@ -66,6 +66,15 @@ std::string encode(const char* input, unsigned int size)
     free(output);
 
     return output_str;
+}
+
+void set_delay_lines(Eigen::Vector4d &dl) {
+    // This function sets the delay line to the given value.
+    // It is a placeholder for now, as we don't have a delay line yet.
+    // In the future, this will be replaced with code to set the delay line.
+    beam_mutex.lock();
+    std::cout << "Setting delay lines to: " << dl.transpose() << std::endl;
+    beam_mutex.unlock();
 }
 
 //----------commander functions from here---------------
