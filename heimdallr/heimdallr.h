@@ -84,10 +84,10 @@ const Eigen::Matrix<double, N_BL, N_TEL> M_lacour = (Eigen::Matrix<double, N_BL,
     0, 0, -1, 1).finished();
 // Also, we need the pseudo-inverse of this matrix for the inverse operation.
 const Eigen::Matrix<double, N_TEL, N_BL> M_lacour_dag = (Eigen::Matrix<double, N_TEL, N_BL>() << 
-    -0.25, -0.25, -0.25, 0,
-    0.25, 0, 0, -0.25,
-    0, 0.25, 0, 0.25,
-    0, 0, 0.25, 0).finished();
+    -0.25, -0.25, -0.25, 0,0,0,
+    0.25, 0, 0,-0.25,-0.25,0,
+    0, 0.25, 0, 0.25,0,-0.25,
+    0, 0, 0.25, 0,0.25,0.25).finished();
 
 /* const char M[N_BL][N_TEL] = {
     {-1, 1, 0, 0},

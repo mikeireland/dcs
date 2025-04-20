@@ -1,6 +1,6 @@
 CC=g++
 
-CFLAGS  = -std=c++17 -Wall -Wextra -ggdb 
+CFLAGS  = -std=c++17 -Wall -Wextra -ggdb -O3
 LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lb64 -lpthread -lboost_program_options -lfmt -lfftw3  
 EXEC    = heimdallr
 OBJECTS = heimdallr.o forward_ft.o fringe_tracker.o

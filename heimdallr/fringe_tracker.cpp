@@ -1,4 +1,6 @@
 #include "heimdallr.h"
+#define PRINT_TIMING
+//#define PRINT_TIMING_ALL
 
 long unsigned int ft_cnt=0, cnt_since_init=0;
 long unsigned int nerrors=0;
@@ -30,8 +32,17 @@ Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold)
     // SVD method. The threshold is used to set the minimum eigenvalue, and the
     // minimum eigenvalue is used to set the minimum eigenvalue of the pseudo-inverse.
     // W * M_lacour is a 6x4 matrix, and M_lacour.transpose() * W * M_lacour is a 4x4 matrix.
-    // Was ComputeThinU
-   SelfAdjointEigenSolver<Matrix4d> es(M_lacour.transpose() * W * M_lacour);
+#ifdef PRINT_TIMING_ALL
+    timespec now, then;
+    clock_gettime(CLOCK_REALTIME, &then);
+#endif
+    SelfAdjointEigenSolver<Matrix4d> es(M_lacour.transpose() * W * M_lacour);
+#ifdef PRINT_TIMING_ALL
+    clock_gettime(CLOCK_REALTIME, &now);
+    if (then.tv_sec == now.tv_sec)
+        std::cout << "SVD time: " << now.tv_nsec-then.tv_nsec << std::endl;
+    then = now;
+#endif
     // Start with a diagonal vector of 4 zeros.
     for (int i=0; i<N_TEL; i++){
          if ((es.eigenvalues()(i) <= threshold) || (es.eigenvalues()(i) < NUMERIC_LIMIT)){
@@ -42,7 +53,12 @@ Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold)
             singularDiag(i,i) = 1.0/es.eigenvalues()(i);
         }
     }
-     return  es.eigenvectors() * singularDiag * es.eigenvectors().transpose();
+#ifdef PRINT_TIMING_ALL
+    clock_gettime(CLOCK_REALTIME, &now);
+    if (then.tv_sec == now.tv_sec)
+        std::cout << "Thresholding time: " << now.tv_nsec-then.tv_nsec << std::endl;
+#endif
+    return  es.eigenvectors() * singularDiag * es.eigenvectors().transpose();
 }
 
 // Initialise variables assocated with baselines.
@@ -113,13 +129,13 @@ void reset_search(){
     control_u.omega_dl = 10;
     control_u.dit = 0.001;
     control_u.search_Nsteps = 0;
-    control_u.steps_to_turnaround = 0;
+    control_u.steps_to_turnaround = 1000;
     beam_mutex.unlock();
 }
 
 // The main fringe tracking function
 void fringe_tracker(){
-    timespec now, last_dl_offload;
+    timespec now, then, last_dl_offload;
     last_dl_offload.tv_sec = 0;
     last_dl_offload.tv_nsec = 0;
     using namespace std::complex_literals;
@@ -144,6 +160,9 @@ void fringe_tracker(){
             nerrors++;
         }
         ft_cnt++;
+#ifdef PRINT_TIMING
+        clock_gettime(CLOCK_REALTIME, &then);
+#endif
         // Extract the phases from the Fourier transforms 
         //std::cout << ft_cnt << std::endl;
         for (int bl=0; bl<N_BL; bl++){
@@ -194,8 +213,8 @@ void fringe_tracker(){
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
         // Fill a Vector of baseline group and phase delay.
-        //I6gd = M_lacour * make_pinv(Wgd, 0) * M_lacour.transpose() * Wgd;
-        //I6pd = M_lacour * make_pinv(Wpd, 0) * M_lacour.transpose() * Wpd;
+        I6gd = M_lacour * make_pinv(Wgd, 0) * M_lacour.transpose() * Wgd;
+        I6pd = M_lacour * make_pinv(Wpd, 0) * M_lacour.transpose() * Wpd;
         I4_search_projection = I4 - M_lacour_dag * I6gd * M_lacour;
         for (int bl=0; bl<N_BL; bl++){
             gd_bl(bl) = baselines[bl].gd;
@@ -215,6 +234,13 @@ void fringe_tracker(){
             // Apply the signal to the DM! !!!
 
         }
+
+#ifdef PRINT_TIMING
+        clock_gettime(CLOCK_REALTIME, &now);
+        if (then.tv_sec == now.tv_sec)
+            std::cout << "FT Computation time: " << now.tv_nsec-then.tv_nsec << std::endl;
+        then = now;
+#endif
 
         // Now do the delay line control. This is slower, so occurs after the servo.
         // Compute the search sign.

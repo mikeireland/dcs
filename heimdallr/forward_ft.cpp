@@ -1,5 +1,5 @@
 #include "heimdallr.h"
-//#define PRINT_TIMING
+#define PRINT_TIMING
 
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
      subarray = subarray_in;
