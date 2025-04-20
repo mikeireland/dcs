@@ -78,9 +78,40 @@ Eigen::VectorXd c_LO;
 Eigen::VectorXd c_HO;
 Eigen::VectorXd dmCmd;
 
+std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
+
 // dm rms model
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
+
+const size_t boxcar = 5; // how many samples we average
+
+
+template<typename Buffer>
+Eigen::VectorXd weightedAverage(const Buffer &buf, size_t K) {
+    size_t M = buf.size();
+    if (M == 0) 
+        throw std::runtime_error("empty telemetry buffer");
+
+    // Only consider up to the last K samples:
+    size_t window = std::min(M, K);
+    if (window == 1) 
+        return buf[M-1];
+
+    // We'll average buf[M-window] ... buf[M-1]
+    int N = buf[0].size();
+    Eigen::VectorXd acc = Eigen::VectorXd::Zero(N);
+    double sumW = 0.0;
+
+    // weights w_j = j/(window-1), j=0..window-1
+    for (size_t j = 0; j < window; ++j) {
+        double w = double(j) / double(window - 1);
+        acc += w * buf[M - window + j];
+        sumW += w;
+    }
+
+    return acc / sumW;
+}
 
 
 //------------------------------------------------------------------------------
@@ -398,6 +429,10 @@ void rtc(){
     //double b_e = rtc_config.matrices.I2rms_sec(1, 1);
 
 
+    // try this 
+    auto A = rtc_config.I2M_LO_runtime;  // size 2×P
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeFullU);
+    Eigen::Matrix2d U = svd.matrixU();
 
 
     // naughty actuator or modes 
@@ -437,7 +472,7 @@ void rtc(){
 
 
     // pick an arbitrary preferred sem index (0 is fine)
-    int semid = ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
+    int semid = 1 ; //ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
     //int semid_dm = ImageStreamIO_getsemwaitindex(&dm_rtc0, /*preferred*/ 1);
 
     // LOOP SPEED (us)
@@ -445,11 +480,28 @@ void rtc(){
     constexpr auto loop_time = std::chrono::microseconds(1500); //  1 kHz
     auto next_tick = std::chrono::steady_clock::now();
 
+    // ------------------- to try
+    // //to try 
+    // // online calibration of TT modal leakage
+    // auto A = rtc_config.I2M_LO_runtime;      // 2×P interaction matrix
+    // Eigen::Matrix2d D = Eigen::Matrix2d::Identity();  // decoupling matrix
+
+    // // tone injection parameters
+    // constexpr double inj_freq = 10.0;      // Hz
+    // constexpr double inj_amp  = 0.008;     // small amplitude
+    // double phase  = 0.0;
+    // double dt_s = loop_time.count() * 1e-6;            // loop_time in seconds
+
+    // // demod accumulators
+    // std::complex<double> Z_tt{0,0}, Z_tl{0,0};
+    // double norm_c = 0.0;
+    // int calibCount = 0;
+    // ------------------- end to try
+
     // before entering main loop, drain any stale posts:
     catch_up_with_sem(&subarray, semid);
-    //catch_up_with_sem(&dm_rtc0, semid_dm);
+    catch_up_with_sem(&dm_rtc0, 1); // necessary?
 
-    // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode.load() != SERVO_STOP){
 
         //std::cout << servo_mode_LO << std::endl;
@@ -483,7 +535,10 @@ void rtc(){
         
         //ImageStreamIO_semwait(&subarray, /*timeout=*/-1);
 
-        ImageStreamIO_semwait(&subarray, semid);
+        ImageStreamIO_semwait(&subarray, 1); //semid);
+
+        // check skipped frames 
+        //std::cout << subarray.md->cnt0 << std::endl;
 
         //  MAP & COPY into an Eigen vector
         //    (we know data is stored U16 so we cast to uint16_t*)
@@ -519,12 +574,64 @@ void rtc(){
         // should actually read the current fps rather then get it from config file
         img_dm = (rtc_config.matrices.I2A *  img)  -  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
 
+        //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        
+
+        //BCB
+        //  Compute the averaged signal
+        size_t M = rtc_config.telem.signal.size();
         sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
-        //sig = (rtc_config.matrices.I2A *  img - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        
+        // add to telemetry! 
+        rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
+        //if (M > boxcar) {
+        //    sig = weightedAverage(rtc_config.telem.signal, boxcar);
+        //} 
 
-        e_LO =  rtc_config.I2M_LO_runtime * sig; //rtc_config.matrices.I2M_LO * sig ;
+        
+        //  Project into LO/HO as before, but now using the smoother sig_avg
+        e_LO = rtc_config.I2M_LO_runtime * sig;
 
-        e_HO =  rtc_config.I2M_HO_runtime * sig; //rtc_config.matrices.I2M_HO * sig ;
+        e_HO = rtc_config.I2M_HO_runtime * sig;
+
+        //-------------------------------
+        // try this 
+        // //   Compute the raw tip/tilt errors
+        // Eigen::Vector2d e_raw = rtc_config.I2M_LO_runtime * sig;
+
+        // //   Inject a little sine tone onto the tip channel
+        // double inj = inj_amp * std::sin(phase);
+        // e_raw(0) += inj;
+        // phase = std::fmod(phase + 2*M_PI*inj_freq*dt_s, 2*M_PI);
+
+        // //  Demodulate both channels at inj_freq
+        // double c = std::cos(phase);
+        // Z_tt  += e_raw(0) * c;  // in‑phase tip response
+        // Z_tl  += e_raw(1) * c;  // in‑phase tilt “leakage”
+        // norm_c += c*c;
+
+        // //   Every 1 k frames, update your C→D calibration
+        // if (++calibCount == 1000) {
+        //     // build static 2×2 gain matrix from demodulated tips
+        //     Eigen::Matrix2d C;
+        //     C << Z_tt.real()/norm_c,  Z_tl.real()/norm_c,
+        //         Z_tl.real()/norm_c,  Z_tt.real()/norm_c;  
+        //     D = C.inverse();              // new decoupling matrix
+
+        //     // reset accumulators
+        //     Z_tt.setZero(); Z_tl.setZero();
+        //     norm_c = 0.0;  calibCount = 0;
+        // }
+
+        // //  2.5) Apply decoupling to your error vector
+        // e_LO = D * e_raw;
+
+
+
+        // 3) continue with controller.process(e_LO), etc.
+        //e_LO =  rtc_config.I2M_LO_runtime * sig; //rtc_config.matrices.I2M_LO * sig ;
+
+        //e_HO =  rtc_config.I2M_HO_runtime * sig; //rtc_config.matrices.I2M_HO * sig ;
 
 
         // if auto mode change state based on signals
@@ -679,7 +786,9 @@ void rtc(){
             //std::cout << "img_dm size: " << img_dm.size() << std::endl;
             rtc_config.telem.img_dm.push_back(img_dm);          // 'img' is Eigen::VectorXd
             //std::cout << ", sig size: " << sig.size() << std::endl;
-            rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
+            
+            /// WE DO THIS WHEN WE ARE IN LOOP TO CALCULATE AVERAGE
+            //rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
 
             //std::cout << ", sig size: " << sig.size() << std::endl;
             rtc_config.telem.e_LO.push_back(e_LO);          // 'e_LO' is Eigen::VectorXd
@@ -726,9 +835,9 @@ void rtc(){
 
         //std::cout << servo_mode_LO.load() << std::endl;
         
-        // if (duration < loop_time){
-        //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
-        // }
+        if (duration < loop_time){
+            std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
+        }
 
 
     }

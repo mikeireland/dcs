@@ -42,7 +42,7 @@
 int wxsz, wysz;          // window size
 int ii;                  // dummy index value
 IMAGE **shmarray = NULL; // shared memory img pointer (defined in ImageStreamIO.h)
-int nch         = 4;     // number of DM channels (default = 4)
+int nch         = 5;     // number of DM channels (default = 5)
 int dms         = 12;    // linear size of the DM in actuators
 int nact        = 140;   // number of "real" actuators of the DM
 int nvact       = 144;   // number of "virtual" acutators of the DM
@@ -62,7 +62,7 @@ char drv_status[8] = "idle"; // to keep track of server status
 
 // order to be reshuffled when reassembling the instrument
 const char snumbers[4][BMC_SERIAL_NUMBER_LEN+1] = \
-  {"17DW019#113", "17DW019#053", "17DW019#093", "17DW019#122"};
+  {"17DW019#122", "17DW019#053", "17DW019#093", "17DW019#113"};
 
 pthread_t tid_loop;      // thread ID for DM control loop
 unsigned int targs[4] = {1, 2, 3, 4}; // thread integer arguments
@@ -340,9 +340,9 @@ void reset(int dmid, int channel) {
 }
 
 void quit() {
-  /* -------------------------------------------------------------------------
+  /* -----------------------------------------------------------------------
    *                       Clean exit of the program.
-   * ------------------------------------------------------------------------- */
+   * ----------------------------------------------------------------------- */
   int kk, ii;
   if (keepgoing == 1) stop();
   
@@ -391,6 +391,7 @@ COMMANDER_REGISTER(m) {
   m.def("get_nch", get_nch, "Returns the number of virtual channels per DM.");
   m.def("set_nch", set_nch, "Updates the number of virtual channels per DM.");
   m.def("reset", reset, "Resets DM #arg_0 channel #arg_1 (or if arg_1=-1).");
+  m.def("quit", quit, "Stops and closes the server.");  
 }
 
 /* =========================================================================
@@ -426,8 +427,8 @@ int main(int argc, char **argv) {
   printf("/_/   \\_\\____/ \\____/_/   \\_\\_| \\_\\____/      |____/|_|  |_|\n");
   printf("%s", dashline);
 
-  // start the commander server
-  co::Server s(argc, argv);
+  start();  // start the DM with the default number of channels
+  co::Server s(argc, argv);    // start the commander server
   s.run();
   
   // --------------------------
