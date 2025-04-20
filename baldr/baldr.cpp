@@ -47,7 +47,7 @@ std::condition_variable rtc_pause_cv; //condition variable is used to block (put
 
 IMAGE subarray; // The C-red subarray
 IMAGE dm_rtc; // The DM subarray
-
+IMAGE dm_rtc0; // The DM subarray master to post semaphores to
 
 
 
@@ -938,13 +938,31 @@ int main(int argc, char* argv[]) {
         std::cout << "SHM configuration not in simulation mode" << std::endl;
         // Real mode: open real images from the shared memory.
         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
-        
-        // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
-        std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
-        ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
 
-        //add.
-        ImageStreamIO_semflush(&dm_rtc, /*index=*/-1);
+        // Form the shared-memory name, e.g. "dm2disp02"
+        std::string name = "dm" + std::to_string(beam_id) + "disp02";
+        std::string name0 = "dm" + std::to_string(beam_id);
+        std::cout << "[INFO] Opening DM SHM \"" << name << "\"\n";
+        
+        if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
+            std::cerr << "[ERROR] Failed to open DM SHM \"" << name << "\"\n";
+            return 1;
+        }
+        if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+            std::cerr << "[ERROR] Failed to open DM SHM \"" << name0 << "\"\n";
+            return 1;
+        }
+        // BCB        
+        // // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
+        // std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
+        // ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+
+        // // master process for DM 
+        // std::string name0 = "dm" + std::to_string(beam_id);
+        // ImageStreamIO_openIm(&dm_rtc0, name0.c_str());
+
+        // //add.
+        // ImageStreamIO_semflush(&dm_rtc0, /*index=*/-1);
 
     } else {
         // Simulation mode: if not yet implemented, raise an error.

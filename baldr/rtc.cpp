@@ -133,39 +133,98 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
 }
 
 
-void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
-    auto *md = dm_rtc.md;
-    const int N = md->nelement;
-    
 
+void updateDMSharedMemory(IMAGE &dmImg, const Eigen::VectorXd &dmCmd) {
+    auto *md = dmImg.md;
+    int N = md->nelement;
+
+    // 1) Entry log
+    //std::cout << "[DBG] updateDMSharedMemory() called with dmCmd.size() = "
+    //          << dmCmd.size() << " (expecting " << N << ")\n";
+
+    // 2) Check size
     if ((int)dmCmd.size() != N) {
-        std::cerr << "DM command size mismatch: expected " 
-                  << N << ", got " << dmCmd.size() << "\n";
+        std::cerr << "[ERROR] size mismatch: got " << dmCmd.size()
+                  << " vs " << N << "\n";
         return;
     }
 
-    // mark that we're writing
+    // 3) Log a few sample values from the command
+    //std::cout << "[DBG] dmCmd first 5 vals: ";
+    //for (int i = 0; i < std::min(5, N); ++i) std::cout << dmCmd[i] << " ";
+    //std::cout << "\n";
+
+    // 4) Print metadata before write
+    //std::cout << "[DBG] Before write: cnt0=" << md->cnt0
+    //          << "  cnt1=" << md->cnt1
+    //          << "  write=" << md->write << "\n";
+
+    // 5) Mark write
     md->write = 1;
-
-    // copy the data
-    std::memcpy(dm_rtc.array.D, dmCmd.data(), N * sizeof(double));
-
-    // bump the update counter
-    md->cnt0++;
-    md->cnt1 = 0;
-
-    // make sure all stores are visible before we wake the reader
     std::atomic_thread_fence(std::memory_order_release);
 
-    ImageStreamIO_sempost(&dm_rtc, -1)
-    // 5) wake *only* semaphore #1 (the DM thread is waiting on index=1)
-    //if (ImageStreamIO_sempost(&dm_rtc, /*semid=*/1) != 0) {
-    //    std::cerr << "Error posting DM semaphore #1\n";
-    //}
+    // 6) Copy the data
+    std::memcpy(dmImg.array.D, dmCmd.data(), N * sizeof(double));
 
-    // 6) clear the write flag
+    // 7) Bump counters
+    md->cnt0++;
+    md->cnt1++; //!!! MJI, not sure why this was set to 0.
+
+    // 8) Post semaphore
+    int ret = ImageStreamIO_sempost(&dmImg, -1);
+    //std::cout << "[DBG] ImageStreamIO_sempost returned " << ret << "\n";
+
+    // 9) Clear write flag
     md->write = 0;
+
+    // 10) Print metadata after write
+    //std::cout << "[DBG] After write: cnt0=" << md->cnt0
+    //          << "  cnt1=" << md->cnt1
+    //          << "  write=" << md->write << "\n";
+
+    // 11) Peek at shared memory contents
+    //std::cout << "[DBG] dmImg.array.D first 10 vals: ";
+    //for (int i = 0; i < std::min(10, N); ++i) std::cout << dmImg.array.D[i] << " ";
+    //std::cout << "\n";
 }
+
+//BCB
+// void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {
+//     auto *md = dm_rtc.md;
+//     const int N = md->nelement;
+    
+
+//     if ((int)dmCmd.size() != N) {
+//         std::cerr << "DM command size mismatch: expected " 
+//                   << N << ", got " << dmCmd.size() << "\n";
+//         return;
+//     }
+
+//     // mark that we're writing
+//     md->write = 1;
+
+//     // copy the data
+//     std::memcpy(dm_rtc.array.D, dmCmd.data(), N * sizeof(double));
+
+//     // bump the update counter
+//     md->cnt0++;
+//     md->cnt1++; // could this be my type = 0;
+
+//     // make sure all stores are visible before we wake the reader
+//     std::atomic_thread_fence(std::memory_order_release);
+
+//     //ImageStreamIO_sempost(&dm_rtc, -1)
+//     ImageStreamIO_sempost(&dm_rtc0, 1); // post to master!! 
+    
+//     // 5) wake *only* semaphore #1 (the DM thread is waiting on index=1)
+//     //if (ImageStreamIO_sempost(&dm_rtc, /*semid=*/1) != 0) {
+//     //    std::cerr << "Error posting DM semaphore #1\n";
+//     //}
+
+//     // 6) clear the write flag
+//     md->write = 0;
+//}
+
 
 // /**                     
 // writes to DM SHM.
@@ -379,6 +438,7 @@ void rtc(){
 
     // pick an arbitrary preferred sem index (0 is fine)
     int semid = ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
+    //int semid_dm = ImageStreamIO_getsemwaitindex(&dm_rtc0, /*preferred*/ 1);
 
     // LOOP SPEED (us)
     //std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
@@ -387,6 +447,7 @@ void rtc(){
 
     // before entering main loop, drain any stale posts:
     catch_up_with_sem(&subarray, semid);
+    //catch_up_with_sem(&dm_rtc0, semid_dm);
 
     // either if we're open or closed loop we always keep a time consistent record of the telemetry members 
     while(servo_mode.load() != SERVO_STOP){
@@ -483,6 +544,11 @@ void rtc(){
             u_LO = rtc_config.ctrl_LO.process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
+
+            //std::cout << "max e_LO" << e_LO.cwiseAbs().maxCoeff() << std::endl;
+            //std::cout << "max u_LO" << u_LO.cwiseAbs().maxCoeff() << std::endl;
+            //std::cout << "max C_LO" << c_LO.cwiseAbs().maxCoeff() << std::endl;
+
         
         }else if(servo_mode_LO.load() == SERVO_OPEN){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
@@ -530,7 +596,7 @@ void rtc(){
         //std::cout << "e_HO size = " << e_HO.size() << std::endl;
 
         
-        dmCmd = c_LO + c_HO;
+        dmCmd = -1 * (c_LO + c_HO);
         //if (dmCmd.cwiseAbs().maxCoeff() > 0) {
         //    std::cout << "max dmCmd = " << dmCmd.cwiseAbs().maxCoeff() << std::endl;
         //};
@@ -581,7 +647,13 @@ void rtc(){
 
         // ******************** UPDATE DM ******************************
 
-        updateDMSharedMemory( dmCmd ) ;
+        updateDMSharedMemory(dm_rtc, dmCmd);
+
+        // Signal the master DM process to update itself.
+        ImageStreamIO_sempost(&dm_rtc0, 1);
+
+        //BCB
+        //updateDMSharedMemory( dmCmd ) ;
 
         // ******************** --------- ******************************
 

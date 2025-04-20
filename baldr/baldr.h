@@ -585,6 +585,7 @@ extern std::string telemFormat;
 // The C-Red Image subarray and DM
 extern IMAGE subarray;
 extern IMAGE dm_rtc;
+extern IMAGE dm_rtc0; // master
 
 // Main thread function for the RTC
 void rtc();
