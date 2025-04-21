@@ -784,6 +784,7 @@ void set_split_mode(int _mode) {
   if (keepgoing == 1) {
     keepgoing = 0;  // interrupt the acquisition
     wasrunning = 1; // keep that in mind
+    sleep(1);
   }
   
   if (_mode <= 0) {
@@ -795,8 +796,10 @@ void set_split_mode(int _mode) {
     printf("Splitmode was turned ON\n");
   }
   // back to prior business
-  if (wasrunning == 1)
+  if (wasrunning == 1) {
+    sleep(1);
     fetch();
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -810,6 +813,7 @@ void set_crop_mode(int _mode) {
   if (keepgoing == 1) {
     keepgoing = 0;  // interrupt the acquisition
     wasrunning = 1; // keep that in mind
+    sleep(1);
   }
 
   // update the cropmode internal flag according to the command
@@ -822,8 +826,10 @@ void set_crop_mode(int _mode) {
   shm_setup(1);                     // reallocate main SHM memory
 
   // back to prior business
-  if (wasrunning == 1)
+  if (wasrunning == 1) {
+    sleep(1);
     fetch();
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -836,20 +842,45 @@ void set_ndmr_mode(int _mode) {
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
 
-  if (_mode <= 0) {  // ------ engineering mode -----
+  int wasrunning = 0;
+  
+  // if the acquisition is running, interrupt it and remember it was running
+  if (keepgoing == 1) {
+    keepgoing = 0;  // interrupt the acquisition
+    wasrunning = 1; // keep that in mind
+    sleep(1);
+  }
+
+  if (_mode <= 2) {  // ------ engineering mode -----
     sprintf(cmd_cli, "set mode globalresetcds");
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
+
+    sprintf(cmd_cli, "set rawimages off");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+
   }
   else {  // ------------------- science mode ------------------
     sprintf(cmd_cli, "set mode globalresetbursts");
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
 
-    sprintf(cmd_cli, "set nbreadworeset %d", camconf->nbreads);
+    // camconf->nbreads = _mode;
+    sprintf(cmd_cli, "set nbreadworeset %d", _mode);
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
-  } 
+
+    sprintf(cmd_cli, "set rawimages on");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+  }
+
+  // back to prior business
+  if (wasrunning == 1) {
+    sleep(1);
+    fetch();
+  }
 }
 
 namespace co=commander;

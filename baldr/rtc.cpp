@@ -430,9 +430,9 @@ void rtc(){
 
 
     // try this 
-    auto A = rtc_config.I2M_LO_runtime;  // size 2×P
-    Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeFullU);
-    Eigen::Matrix2d U = svd.matrixU();
+    // auto A = rtc_config.I2M_LO_runtime;  // size 2×P
+    // Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeFullU);
+    // Eigen::Matrix2d U = svd.matrixU();
 
 
     // naughty actuator or modes 
@@ -477,7 +477,7 @@ void rtc(){
 
     // LOOP SPEED (us)
     //std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
-    constexpr auto loop_time = std::chrono::microseconds(1500); //  1 kHz
+    constexpr auto loop_time = std::chrono::microseconds(5000); //  200Hz #1 kHz
     auto next_tick = std::chrono::steady_clock::now();
 
     // ------------------- to try
@@ -820,7 +820,7 @@ void rtc(){
         auto now = std::chrono::steady_clock::now();
         if (now > next_tick) {
             auto over = now - next_tick;
-            //std::cerr<<"Loop overran by "
+            // std::cerr<<"Loop overran by "
             //        << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
             //        <<" μs\n";
         }
@@ -835,9 +835,9 @@ void rtc(){
 
         //std::cout << servo_mode_LO.load() << std::endl;
         
-        if (duration < loop_time){
-            std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
-        }
+        //if (duration < loop_time){
+        //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
+        //}
 
 
     }
