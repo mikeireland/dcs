@@ -72,9 +72,9 @@ void updateDMSharedMemory(IMAGE &dmImg, const Eigen::VectorXd &dmCmd) {
 int main(int argc, char** argv) {
     // Default parameters ────────────────────────────────
     int    beam_id        = 1;
-    int    poke_interval  = 20;        // frames on/off
-    double poke_amp       = 0.05;      // DM units
-    double duration_s     = 10.0;      // total test time in seconds
+    int    poke_interval  = 100;        // frames on/off
+    double poke_amp       = 0.1;      // DM units
+    double duration_s     = 5.0;      // total test time in seconds
 
     //  Parse CLI args ───────────────────────────────────
     static struct option long_opts[] = {
@@ -100,6 +100,7 @@ int main(int argc, char** argv) {
     }
 
     // ── Open shared‑memory images ─────────────────────────
+    std::cout << "open shared memory" << std::endl;
     IMAGE subarray{}, dm_rtc{}, dm_rtc0{};
     std::string subname = "baldr" + std::to_string(beam_id);
     if (ImageStreamIO_openIm(&subarray, subname.c_str()) != IMAGESTREAMIO_SUCCESS) {
@@ -142,24 +143,29 @@ int main(int argc, char** argv) {
     // ───  Main loop @ ~1 kHz
     auto start_time = std::chrono::steady_clock::now();
     auto next_tick  = start_time;
-    const auto loop_time = std::chrono::microseconds(1000);
-
+    //const auto loop_time = std::chrono::microseconds(500);
+    //--to run slow as test
+    //const auto loop_time = std::chrono::milliseconds(500);
+    //duration_s = poke_interval * 2;   // 20*2 = 40.0 seconds
     int frameCount = 0;
+    
+    std::cout << "starting while loop" << std::endl;
     while (true) {
         // exit after duration_s
         auto now = std::chrono::steady_clock::now();
         if (now - start_time > std::chrono::duration<double>(duration_s))
             break;
-
+        //std::cout << "looping wait new frame" << std::endl;
         // wait for new frame
         ImageStreamIO_semwait(&subarray, semid);
-
+        //std::cout << "looping got new frame" << std::endl;
         // timestamp ms
         double t_ms = std::chrono::duration<double,std::milli>(
                         now - start_time).count();
         timestamps.push_back(t_ms);
 
         // grab image
+        
         uint16_t* raw = subarray.array.UI16;
         images.emplace_back(raw, raw + totalPixels);
 
@@ -167,6 +173,7 @@ int main(int argc, char** argv) {
         bool onPhase = ((frameCount / poke_interval) % 2) == 0;
         dmCmd.setZero();
         if (onPhase) {
+            //std::cout << "poke here" << std::endl;
             for (int idx : crossIdx) dmCmd(idx) = poke_amp;
         }
 
@@ -178,8 +185,8 @@ int main(int argc, char** argv) {
         frameCount++;
 
         // throttle to 1kHz
-        next_tick += loop_time;
-        std::this_thread::sleep_until(next_tick);
+        //next_tick += loop_time;
+        //std::this_thread::sleep_until(next_tick);
     }
 
     // ───Save telemetry..

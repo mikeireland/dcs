@@ -114,8 +114,9 @@ time.sleep(1
 #if args.fps is not None: 
 c.send_fli_cmd(f"set fps {args.fps}")
 
-time.sleep(1)
-c.send_fli_cmd(f"set mode {args.mode}")
+print("CHECK YOU ARE IN THE CORRECT CAMERA MODE: (SHOULD BE {args.mode}). I DON'T DO THIS FOR YOU NOW!")
+#time.sleep(1) # Don't do this it can make things strange if done while server running! 
+#c.send_fli_cmd(f"set mode {args.mode}")
 
 time.sleep(1)
 
