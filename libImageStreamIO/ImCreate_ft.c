@@ -31,7 +31,14 @@
 #endif
 #include "ImageStreamIO.h"
 
-const float hole_radius = 1.5;      // Radius of the hole in pupil pixels
+/* [geometry] 
+hole_diameter   = 9e-3
+beam_x          = [-15.6e-3,15.6e-3,0,0]
+beam_y          = [-9e-3,-9e-3,0,18e-3]
+pix = 24.0
+ */
+
+const float hole_radius = 1.65;      // Radius of the hole in pupil pixels
 const float hole_x[4] = {-3.46*hole_radius, 0,0,3.46*hole_radius}; // Hole x center in pupil pixels
 const float hole_y[4] = {-2*hole_radius, 4*hole_radius, 0 , -2*hole_radius}; // Hole y center in pupil pixels
 float phase=0.0;
@@ -45,7 +52,7 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Make our hole phasors
     for (int kk=0; kk<4; kk++)
-        hole_phasors[kk] = cexp(I*kk*sin(phase)*wavenum_scale);
+        hole_phasors[kk] = cexp(2.5*I*kk*sin(phase)*wavenum_scale);
 
     // Fill the pupil with the holes
     for(int jj=0; jj<SZ; jj++)            // loop rows
@@ -74,8 +81,8 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
     {
         for (int jj=0; jj<SZ; jj++)
         {
-            rnoise = rand()/(float)RAND_MAX/2.0 - 0.5;
-            *(dotF++) = powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*100;
+            rnoise = rand()/(float)RAND_MAX - 0.5;
+            *(dotF++) = powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*50;
         }
     }
 
@@ -120,8 +127,8 @@ int main()
     while (1)
     {
         make_image(imarray, pupil_K1, image_K1, plan_K1, 1.0, 1.0);
-        make_image(imarray+1, pupil_K2, image_K2, plan_K2, 0.9, 0.5);
-        phase += 0.1;
+        make_image(imarray+1, pupil_K2, image_K2, plan_K2, 0.9, 0.6);
+        phase += 0.02;
         phase = fmod(phase, 2*M_PI);
         usleep(dtus);           // Wait 10ms
     }

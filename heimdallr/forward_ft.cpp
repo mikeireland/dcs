@@ -1,5 +1,5 @@
 #include "heimdallr.h"
-#define PRINT_TIMING
+//#define PRINT_TIMING
 
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
      subarray = subarray_in;
@@ -60,7 +60,7 @@ void ForwardFt::loop() {
         if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;
-            if ((subarray->md->cnt0 > cnt+1) && (mode == FT_RUNNING)) {
+            if ((subarray->md->cnt0 != cnt+1)  && (mode == FT_RUNNING)) {
                 std::cout << "Missed frame" << subarray->md->cnt0 << cnt << std::endl;
                 nerrors++;
             }
@@ -75,7 +75,7 @@ void ForwardFt::loop() {
                     ii_shift = (ii + subim_sz/2) % subim_sz;
                     jj_shift = (jj + subim_sz/2) % subim_sz;
                     subim[ii_shift*subim_sz + jj_shift] = 
-                        subarray->array.F[ii*subim_sz + jj]
+                        (double)(subarray->array.F[ii*subim_sz + jj])
                             * window[ii*subim_sz + jj];
                 }
             }
@@ -91,29 +91,33 @@ void ForwardFt::loop() {
 
             // Compute the power spectrum. Other than SNR purposes, this isn't 
             // time critical, but doesn't take long so we can do it here. 
-            int next_ps_ix = (subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
+            ps_index = (subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;
             for (unsigned int ii=0; ii<subim_sz; ii++) {
                 for (unsigned int jj=0; jj<szj; jj++) {
-                    power_spectra[next_ps_ix][ii*szj + jj] = 
-                        ft[ii*szj + jj][0] * ft[ii*szj + jj][0] +
-                        ft[ii*szj + jj][1] * ft[ii*szj + jj][1];
-                    power_spectrum[ii*szj + jj] += 
-                        power_spectra[next_ps_ix][ii*szj + jj]/MAX_N_PS_BOXCAR -
-                        power_spectra[ps_index][ii*szj + jj]/MAX_N_PS_BOXCAR;
+                    int f_ix = ii*szj + jj; // Flattened index
+                    power_spectrum[f_ix] -= 
+                        power_spectra[ps_index][f_ix]/MAX_N_PS_BOXCAR;
+                    power_spectra[ps_index][f_ix] = 
+                        ft[f_ix][0] * ft[f_ix][0] +
+                        ft[f_ix][1] * ft[f_ix][1];
+                    power_spectrum[f_ix] += 
+                        power_spectra[ps_index][f_ix]/MAX_N_PS_BOXCAR;
                 }
             }
+            //std::cout << "PS00: " << power_spectrum[0] << std::endl;
+
             // Compute the power spectrum bias and instantaneous bias.
             power_spectrum_bias=0;
             power_spectrum_inst_bias=0;
             for (unsigned int ii=subim_sz/2-subim_sz/8; ii<subim_sz/2+subim_sz/8; ii++) {
                 for (unsigned int jj=szj - subim_sz/8; jj<szj; jj++) {
                     power_spectrum_bias += power_spectrum[ii*szj + jj];
-                    power_spectrum_inst_bias += power_spectra[next_ps_ix][ii*szj + jj];
+                    power_spectrum_inst_bias += power_spectra[ps_index][ii*szj + jj];
                 }
             }
             power_spectrum_bias /= subim_sz*subim_sz/32; //two squares 1/8 of the subim
             power_spectrum_inst_bias /= subim_sz*subim_sz/32; //two squares 1/8 of the subim
-            ps_index = next_ps_ix;
+
 
 #ifdef PRINT_TIMING
             clock_gettime(CLOCK_REALTIME, &now);

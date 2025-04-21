@@ -8,6 +8,10 @@
 #include <mutex>
 #include <thread>
 #include <Eigen/Dense>
+#include <fmt/core.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 //----------Defines-----------
 #define FT_STARTING 0
@@ -17,16 +21,18 @@
 #define SERVO_PID 0
 #define SERVO_LACOUR 1
 #define SERVO_STOP 2
+#define SERVO_SIMPLE 3
+#define SERVO_OFF 4
 
 // The maximum number of frames to average for group delay. Delay error in wavelength from group
 // delay can be 0.4/which scales to a phasor error of 0.04, while phase error can only be 0.2
 // Group delay has naturally an SNR that is 2.5 times lower, so the SNR ratio is 0.2/0.04*2.5 = 12.5
 // ... this means we need 12.5^2 = ~150 times more frames to average for group delay than for
 // phase delay.
-#define MAX_N_GD_BOXCAR 128
+#define MAX_N_GD_BOXCAR 64
 
-#define MAX_N_BS_BOXCAR 256   // Maximum number of frames to average for bispectrum
-#define MAX_N_PS_BOXCAR 256   // Maximum number of frames to average for power spectrum
+#define MAX_N_BS_BOXCAR 64   // Maximum number of frames to average for bispectrum
+#define MAX_N_PS_BOXCAR 64   // Maximum number of frames to average for power spectrum
 
 
 #define N_TEL 4 // Number of telescopes
@@ -84,10 +90,10 @@ const Eigen::Matrix<double, N_BL, N_TEL> M_lacour = (Eigen::Matrix<double, N_BL,
     0, 0, -1, 1).finished();
 // Also, we need the pseudo-inverse of this matrix for the inverse operation.
 const Eigen::Matrix<double, N_TEL, N_BL> M_lacour_dag = (Eigen::Matrix<double, N_TEL, N_BL>() << 
-    -0.25, -0.25, -0.25, 0,0,0,
-    0.25, 0, 0,-0.25,-0.25,0,
-    0, 0.25, 0, 0.25,0,-0.25,
-    0, 0, 0.25, 0,0.25,0.25).finished();
+   -0.25,-0.25, -0.25,    0,    0,    0,
+    0.25,    0,     0,-0.25,-0.25,    0,
+    0,    0.25,     0, 0.25,    0,-0.25,
+    0,       0,  0.25,    0, 0.25, 0.25).finished();
 
 /* const char M[N_BL][N_TEL] = {
     {-1, 1, 0, 0},
@@ -190,6 +196,7 @@ public:
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
     double *power_spectrum;
+    double *subim;
     double power_spectrum_bias;
     double power_spectrum_inst_bias;
     int ps_index = MAX_N_PS_BOXCAR-1;
@@ -209,7 +216,6 @@ public:
     // Clean-up and join the FFT thread.
     void stop();
 private:
-    double *subim;
     double *window;
     fftw_plan plan;
     std::thread thread; 
@@ -221,7 +227,7 @@ private:
 void fringe_tracker();
 
 // Seeting the delay lines (needed form the main thread and from the commander)
-void set_delay_lines(Eigen::Vector4d &dl);
+void set_delay_lines(Eigen::Vector4d dl);
 
 //The forward Fourier transforms
 extern ForwardFt *K1ft, *K2ft;

@@ -10,4 +10,4 @@ pix = 24.0
 #All units are in microns
 [wave]
 K1  = 2.05 
-K2  = 2.35 
+K2  = 2.25 

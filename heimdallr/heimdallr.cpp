@@ -9,12 +9,13 @@ extern "C" {
 #include <b64/cencode.h> // Base64 encoding, in C so Frantz can see how it works.
 }
 //----------Globals-------------------
+int controllinoSocket;
 
 // The input configuration
 toml::table config;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
-int servo_mode=SERVO_PID;
+int servo_mode=SERVO_OFF;
 PIDSettings pid_settings;
 ControlU control_u;
 ControlA control_a;
@@ -68,13 +69,21 @@ std::string encode(const char* input, unsigned int size)
     return output_str;
 }
 
-void set_delay_lines(Eigen::Vector4d &dl) {
+#define DM_TO_DL 60
+void set_delay_lines(Eigen::Vector4d dl) {
     // This function sets the delay line to the given value.
-    // It is a placeholder for now, as we don't have a delay line yet.
-    // In the future, this will be replaced with code to set the delay line.
-    beam_mutex.lock();
-    std::cout << "Setting delay lines to: " << dl.transpose() << std::endl;
-    beam_mutex.unlock();
+    // For now, just the piezo delay lines
+    char message[20];
+    char buffer[64] = { 0 };
+    int dl_value;
+    for (int i = 0; i < N_TEL; i++) {
+        dl_value = 2048 + (int)(dl(i) * DM_TO_DL);
+        sprintf(message, "a%d %d", i, dl_value);
+        send(controllinoSocket, message, strlen(message), 0);
+        char buffer[1024] = { 0 };
+        recv(controllinoSocket, buffer, sizeof(buffer), 0);
+        std::cout << "Message from controllino: " << buffer << std::endl;
+    }
 }
 
 //----------commander functions from here---------------
@@ -104,6 +113,27 @@ void linear_search(uint beam, double start, double stop, double rate, std::strin
     return;
 }
 
+void set_servo_mode(std::string mode) {
+    if (mode == "off") {
+        servo_mode = SERVO_OFF;
+    } else if (mode == "simple") {
+        servo_mode = SERVO_SIMPLE;
+    } else if (mode == "pid") {
+        servo_mode = SERVO_PID;
+    } else if (mode == "lacour") {
+        servo_mode = SERVO_LACOUR;
+    } else {
+        std::cout << "Servo mode not recognised" << std::endl;
+        return;
+    }
+    // Reset the control_u parameters
+    control_u.dl.setZero();
+    control_u.piezo.setZero();
+    control_u.dm_piston.setZero();
+    std::cout << "Servo mode updated to " << servo_mode << std::endl;
+    return;
+}
+
 // EncodedImage  // std::string
 EncodedImage get_ps(std::string filter) {
     // We get the power spectrum for one filter. This is a 2D array.
@@ -111,16 +141,28 @@ EncodedImage get_ps(std::string filter) {
     // for each filter, but that would be overkill for now.
 
     ForwardFt *ft;
+    bool instantaneous=false;
+    std::string encoded_ps;
     if (filter == "K1") {
         ft = K1ft;
     } else if (filter == "K2") {
         ft = K2ft;
+    } else if (filter == "K1i") {
+        ft = K1ft;
+        instantaneous=true;
+    } else if (filter == "K2i") {
+        ft = K2ft;
+        instantaneous=true;
     } else {
         throw std::runtime_error("Filter not recognised - please edit this code for a better error response");
     }
     unsigned int sz_in_bytes = ft->subim_sz * (ft->subim_sz / 2 + 1) * sizeof(double);
     // Encoding doesn't over-write the array, so pass directly to encode.
-    std::string encoded_ps = encode((char*)ft->power_spectrum, sz_in_bytes);
+    if (instantaneous){
+        encoded_ps = encode((char*)ft->power_spectra[ft->ps_index], sz_in_bytes);
+    } else {
+        encoded_ps = encode((char*)ft->power_spectrum, sz_in_bytes);
+    }
     EncodedImage ei = {ft->subim_sz, ft->subim_sz / 2 + 1, "double", encoded_ps};
     return ei; //encoded_ps;  
 }
@@ -134,6 +176,7 @@ COMMANDER_REGISTER(m)
     m.def("linear_search", linear_search, "Execute a linear fringe search on a single beam.", 
         "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=10.0, "actuator"_arg="HFO");
     m.def("get_ps", get_ps, "Get the power spectrum in 2D", "filter"_arg="K1");
+    m.def("servo", set_servo_mode, "Set the servo mode", "mode"_arg="off");
  }
 
 int main(int argc, char* argv[]) {
@@ -147,6 +190,16 @@ int main(int argc, char* argv[]) {
         config = toml::parse_file(argv[1]);
         std::cout << "Configuration file read: "<< config["name"] << std::endl;
     }
+
+    // Connect to the Controllino
+    controllinoSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in serverAddress;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(23);
+    serverAddress.sin_addr.s_addr = inet_addr("172.16.8.200");
+    connect(controllinoSocket, (struct sockaddr*)&serverAddress,
+            sizeof(serverAddress));
+    set_delay_lines(Eigen::Vector4d::Zero());
 
     // Initialise the two forward Fourier transform objects
     ImageStreamIO_openIm(&K1, "K1");
@@ -172,4 +225,6 @@ int main(int argc, char* argv[]) {
     // // Join the FFTW threads
     K1ft->stop();
     K2ft->stop();
+
+    close(controllinoSocket);
 }
