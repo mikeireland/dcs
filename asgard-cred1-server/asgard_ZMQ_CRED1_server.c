@@ -543,8 +543,13 @@ void* fetch_imgs(void *arg) {
   long nbpix_cub = camconf->nbpix_cub;
 
   pthread_t tid_save; // thread ID for the saving of a data-cube
+
+  int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
+  unsigned short *liveroi;
+  int ixsz, xsz, ysz, x0, y0;
   
   // ----- image fetching loop starts here -----
+  ixsz = shm_img->md->size[0];
 
   while (keepgoing > 0) {
     pdv_timeout_restart(pdv_p, true);
@@ -571,6 +576,29 @@ void* fetch_imgs(void *arg) {
       liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
       shm_img->md->cnt1 = liveindex;       // idem
 
+      // =============================
+      if (splitmode == 1) {
+	for (ri = 0; ri < nroi; ri++) {
+	  liveroi = shm_ROI[ri].array.UI16; // live ROI data pointer
+	  xsz = shm_ROI[ri].md->size[0];
+	  ysz = shm_ROI[ri].md->size[1];
+	  x0 = ROI[ri].x0;
+	  y0 = ROI[ri].y0;
+
+	  shm_ROI[ri].md->write = 1;
+	  for (jj = 0; jj < ysz; jj++) {
+	    for (ii = 0; ii < xsz; ii++) {
+	      liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
+	    }
+	  }
+	  shm_ROI[ri].md->write = 0;
+	  ImageStreamIO_sempost(&shm_ROI[ri], -1);
+	  shm_ROI[ri].md->cnt0++;
+	  shm_ROI[ri].md->cnt1++;
+	}
+      }
+
+      // =============================
       // another approach here would be to have a thread running in // when savemode=1
       // this thread would use an internal semaphore to know when to save a FITS file
 
@@ -651,12 +679,12 @@ void fetch() {
     printf("Triggering the fetching data\n");
     pthread_create(&tid_fetch, NULL, fetch_imgs, NULL);
 
-    if (splitmode == 1) {
-      printf("ROI splitting mechanism is ON\n");
-      free(ROI);
-      refresh_image_splitting_configuration();
-      pthread_create(&tid_split, NULL, split_imgs, NULL);
-    }
+    /* if (splitmode == 1) { */
+    /*   printf("ROI splitting mechanism is ON\n"); */
+    /*   free(ROI); */
+    /*   refresh_image_splitting_configuration(); */
+    /*   pthread_create(&tid_split, NULL, split_imgs, NULL); */
+    /* } */
   }
   sprintf(status_cstr, "%s", "running");
 }
@@ -794,6 +822,9 @@ void set_split_mode(int _mode) {
   else {
     splitmode = 1;
     printf("Splitmode was turned ON\n");
+
+    free(ROI);
+    refresh_image_splitting_configuration();
   }
   // back to prior business
   if (wasrunning == 1) {
