@@ -486,6 +486,46 @@ struct bdr_rtc_config {
         //img = Eigen::VectorXd::Zero(matrices.szp);
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
         
+        //// -------------------- TO ADD IN 
+        // FPS and gain handling
+        // float cal_gain = std::stof(cam.gain);
+        // float cal_fps = std::stof(cam.fps);
+
+        // if (override_gain_fps) {
+        //     fps = fps_override;
+        //     gain = gain_override;
+        //     std::cout << "[INFO] Overriding FPS = " << fps << ", Gain = " << gain << std::endl;
+        // } else {
+        //     fps = cal_fps;
+        //     gain = cal_gain;
+        //     std::cout << "[INFO] Using FPS and Gain from TOML: " << fps << ", " << gain << std::endl;
+        // }
+
+        // scale = gain / fps; // used for scaling I2M and references
+
+        // // Scale interaction matrices and reference intensities
+        // I2M_LO_runtime = scale * matrices.I2M_LO;
+        // I2M_HO_runtime = scale * matrices.I2M_HO;
+        // N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
+        // I0_dm_runtime = scale * reference_pupils.I0_dm;
+
+        // // Adjust dark frame using calibration gain vs runtime gain
+        // dark_dm_runtime = (1.0 / fps) * (cal_gain / gain) * reduction.dark_dm;
+
+        ///// ALSO 
+        // in baldr.cpp before main define!
+        // float gain_override = 1.0f;
+        // float fps_override = 1000.0f;
+        // bool override_gain_fps = false;
+
+        /// add to end of bldr.h
+        // extern float gain_override;
+        // extern float fps_override;
+        // extern bool override_gain_fps;
+
+
+        //// -------------------- 
+
         // Convert the camera parameters (stored as strings) to doubles.
         fps = std::stof(cam.fps);
         gain = std::stof(cam.gain);
@@ -499,6 +539,7 @@ struct bdr_rtc_config {
         
         // Normalize dark according to fps.
         dark_dm_runtime = (1.0 / fps) * reduction.dark_dm;
+        //dark_dm_runtime = 1 / float(IM_cam_config["gain"]) *  scale * reduction.dark_dm;
         
         // Strehl model parameters.
         // secondary_pixels is an Eigen column vector; use (4) to get the fifth element.

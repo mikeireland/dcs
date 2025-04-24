@@ -9,13 +9,13 @@ extern "C" {
 #include <b64/cencode.h> // Base64 encoding, in C so Frantz can see how it works.
 }
 //----------Globals-------------------
-int controllinoSocket;
-
 // The input configuration
 toml::table config;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 int servo_mode=SERVO_OFF;
+int offload_mode=OFFLOAD_OFF;
+uint offload_time_ms=1000;
 PIDSettings pid_settings;
 ControlU control_u;
 ControlA control_a;
@@ -27,6 +27,15 @@ std::mutex baseline_mutex, beam_mutex;
 
 //The forward Fourier transforms
 ForwardFt *K1ft, *K2ft;
+
+// Offload globals
+bool keep_offloading = true;
+int offloads_to_do = 0;
+Eigen::Vector4d search_offset = Eigen::Vector4d::Zero();
+std::string delay_line_type="piezo";
+
+IMAGE DMs[N_TEL];
+IMAGE master_DMs[N_TEL];
 
 // Utility functions
 
@@ -69,23 +78,6 @@ std::string encode(const char* input, unsigned int size)
     return output_str;
 }
 
-#define DM_TO_DL 60
-void set_delay_lines(Eigen::Vector4d dl) {
-    // This function sets the delay line to the given value.
-    // For now, just the piezo delay lines
-    char message[20];
-    char buffer[64] = { 0 };
-    int dl_value;
-    for (int i = 0; i < N_TEL; i++) {
-        dl_value = 2048 + (int)(dl(i) * DM_TO_DL);
-        sprintf(message, "a%d %d", i, dl_value);
-        send(controllinoSocket, message, strlen(message), 0);
-        char buffer[1024] = { 0 };
-        recv(controllinoSocket, buffer, sizeof(buffer), 0);
-        std::cout << "Message from controllino: " << buffer << std::endl;
-    }
-}
-
 //----------commander functions from here---------------
 void linear_search(uint beam, double start, double stop, double rate, std::string actuator) {
     if (beam >= N_TEL) {
@@ -93,14 +85,12 @@ void linear_search(uint beam, double start, double stop, double rate, std::strin
         return;
     }
     beam_mutex.lock();
-    //!!! Add code to set the DM piston offset to zero
+    
+    // Set the delay line to the start position
+    set_delay_line(beam, start);
 
-    // Move the delay line or piezo to the start position
-    if (actuator=="piezo") {
-        //!!! Add code to move the piezo
-    } else {
-        //!!! Add code to move the delay line
-    }
+    //!!! Add code to set the DM piston offset to zero?
+
     beam_mutex.unlock();
     usleep(DELAY_MOVE_USEC); // Wait for the delay line to move
     // Set the SNR values to zero.
@@ -110,9 +100,15 @@ void linear_search(uint beam, double start, double stop, double rate, std::strin
         baselines[i].pd_snr=0;
     }
     baseline_mutex.unlock();
+
+    // Start the search.
+    start_search(beam, start,  stop, rate);
+    fmt::print("Starting search for beam {} from {} to {} at rate {} with actuator {}\n", 
+        beam, start, stop, rate, actuator);
     return;
 }
 
+// Set the servo mode
 void set_servo_mode(std::string mode) {
     if (mode == "off") {
         servo_mode = SERVO_OFF;
@@ -132,6 +128,45 @@ void set_servo_mode(std::string mode) {
     control_u.dm_piston.setZero();
     std::cout << "Servo mode updated to " << servo_mode << std::endl;
     return;
+}
+
+// Set the offload time
+void set_offload_time(uint time) {
+    if (time < 100 || time > 10000) {
+        std::cout << "Offload time out of range (0.01 to 10s)" << std::endl;
+        return;
+    }
+    offload_time_ms = time;
+    std::cout << "Offload time updated to " << offload_time_ms << " ms" << std::endl;
+    return;
+}
+
+// Set the offload mode
+void set_offload_mode(std::string mode) {
+    if (mode == "off") {
+        offload_mode = OFFLOAD_OFF;
+    } else if (mode == "nested") {
+        offload_mode = OFFLOAD_NESTED;
+    } else if (mode == "gd") {
+        offload_mode = OFFLOAD_GD;
+    } else {
+        std::cout << "Offload mode not recognised" << std::endl;
+        return;
+    }
+    std::cout << "Offload mode updated to " << offload_mode << std::endl;
+    return;
+}
+
+// Set the delay line offsets (from the servo loop)
+void set_search_offset(std::vector<double> offset_in_microns) {
+    for (uint i = 0; i < N_TEL; i++) {
+        if (i < offset_in_microns.size()) {
+            search_offset(i) = offset_in_microns[i];
+        } else {
+            search_offset(i) = 0.0;
+        }
+    }
+    std::cout << "Search offset updated to " << search_offset.transpose() << std::endl;
 }
 
 // EncodedImage  // std::string
@@ -174,9 +209,13 @@ COMMANDER_REGISTER(m)
     // You can register a function or any other callable object as
     // long as the signature is deductible from the type.
     m.def("linear_search", linear_search, "Execute a linear fringe search on a single beam.", 
-        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=10.0, "actuator"_arg="HFO");
+        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=1.0, "actuator"_arg="HFO");
     m.def("get_ps", get_ps, "Get the power spectrum in 2D", "filter"_arg="K1");
     m.def("servo", set_servo_mode, "Set the servo mode", "mode"_arg="off");
+    m.def("offload", set_offload_mode, "Set the offload (slow servo) mode", "mode"_arg="off");
+    m.def("offload_time", set_offload_time, "Set the offload time in ms", "time"_arg=1000);
+    m.def("set_search_offset", set_search_offset, "Set the search offset in microns", 
+        "offset"_arg=std::vector<double>(N_TEL, 0.0));
  }
 
 int main(int argc, char* argv[]) {
@@ -191,19 +230,15 @@ int main(int argc, char* argv[]) {
         std::cout << "Configuration file read: "<< config["name"] << std::endl;
     }
 
-    // Connect to the Controllino
-    controllinoSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in serverAddress;
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(23);
-    serverAddress.sin_addr.s_addr = inet_addr("172.16.8.200");
-    connect(controllinoSocket, (struct sockaddr*)&serverAddress,
-            sizeof(serverAddress));
-    set_delay_lines(Eigen::Vector4d::Zero());
+    // Initialise the DMs
+    for (int i = 0; i < N_TEL; i++) {
+        ImageStreamIO_openIm(&DMs[i], ("dm" + std::to_string(i+1) + "disp04").c_str());
+        ImageStreamIO_openIm(&master_DMs[i], ("dm" + std::to_string(i+1)).c_str());
+    }
 
-    // Initialise the two forward Fourier transform objects
-    ImageStreamIO_openIm(&K1, "K1");
-    ImageStreamIO_openIm(&K2, "K2");
+    // Initialise the two forward Fourier transform objects, 
+    ImageStreamIO_openIm(&K1, "hei_k1");
+    ImageStreamIO_openIm(&K2, "hei_k2");
     K1ft = new ForwardFt(&K1);
     K2ft = new ForwardFt(&K2);
 
@@ -213,10 +248,15 @@ int main(int argc, char* argv[]) {
 
     // Start the main fringe-tracking thread. 
     std::thread fringe_thread(fringe_tracker);
-
+    std::thread offloading_thread(dl_offload);
+    
     // Initialize the commander server and run it
     commander::Server s(argc, argv);
     s.run();
+    
+    keep_offloading=false;
+    offloading_thread.join();
+    
 
     // Join the fringe-tracking thread
     servo_mode = SERVO_STOP;
@@ -225,6 +265,4 @@ int main(int argc, char* argv[]) {
     // // Join the FFTW threads
     K1ft->stop();
     K2ft->stop();
-
-    close(controllinoSocket);
 }

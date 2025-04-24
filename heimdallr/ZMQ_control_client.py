@@ -8,8 +8,8 @@ import base64
 server_port = 6660
 context = zmq.Context()
 socket = context.socket(zmq.REQ)
-#socket.connect(f"tcp://mimir:{server_port}")
-socket.connect(f"tcp://localhost:{server_port}")
+socket.connect(f"tcp://172.16.8.6:{server_port}")
+#socket.connect(f"tcp://localhost:{server_port}")
 
 print(f"ZMQ shell interface to talk to the DM server on port {server_port}")
 

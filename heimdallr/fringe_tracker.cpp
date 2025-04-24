@@ -2,7 +2,8 @@
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
 //#define DEBUG
-#define OPD_PER_DM_UNIT 6.0 //!!! This is a guess.
+#define GD_THRESHOLD 2.5
+#define PD_THRESHOLD 2.5
 
 long unsigned int ft_cnt=0, cnt_since_init=0;
 long unsigned int nerrors=0;
@@ -63,9 +64,15 @@ Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold)
     return  es.eigenvectors() * singularDiag * es.eigenvectors().transpose();
 }
 
-void set_dm_piston(Eigen::Vector4d &dm_piston){
+void set_dm_piston(Eigen::Vector4d dm_piston){
     // This function sets the DM piston to the given value.
-    std::cout << "Setting DM piston to: " << dm_piston.transpose() << std::endl;
+    //for(int i = 0; i < N_TEL; i++) {
+    for(int i = 0; i < 2; i++) {
+            for (int j=0; j<144; j++){
+            DMs[i].array.D[j] = dm_piston(i);
+        }
+        ImageStreamIO_sempost(&master_DMs[i], 1);
+    }
 }
 
 // Initialise variables assocated with baselines.
@@ -154,6 +161,7 @@ void fringe_tracker(){
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
+    set_dm_piston(Eigen::Vector4d::Zero());
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
@@ -162,8 +170,8 @@ void fringe_tracker(){
             usleep(50); //!!! Need to be more sophisticated here
         }
         // Check for missed frames
-        if (K1ft->cnt > ft_cnt+1 || K2ft->cnt > ft_cnt+1){
-            std::cout << "Missed frame! K1: " << K1ft->cnt << " K2: " 
+        if (K1ft->cnt > ft_cnt+2 || K2ft->cnt > ft_cnt+2){
+            std::cout << "Missed FT frames! K1: " << K1ft->cnt << " K2: " 
                 << K2ft->cnt << " FT: " << ft_cnt << std::endl;
             nerrors++;
         }
@@ -177,13 +185,13 @@ void fringe_tracker(){
         for (int bl=0; bl<N_BL; bl++){
             int gd_ix = (baselines[bl].ix_gd_boxcar + 1) % baselines[bl].n_gd_boxcar;
             // Use the peak of the splodge to compute the phase
-            x_px = lround(x_px_K1[bl]);
-            y_px = lround(y_px_K1[bl]);
+            x_px = lround(x_px_K1[bl]) % K1ft->subim_sz;
+            y_px = lround(y_px_K1[bl]) % K1ft->subim_sz;
             stride = K1ft->subim_sz/2 + 1;
             K1_phasor[bl] = K1ft->ft[y_px*stride + x_px][0] + 
                 1i*K1ft->ft[y_px*stride + x_px][1]*sign[bl];
-            x_px = lround(x_px_K2[bl]);
-            y_px = lround(y_px_K2[bl]);
+            x_px = lround(x_px_K2[bl]) % K2ft->subim_sz;
+            y_px = lround(y_px_K2[bl]) % K2ft->subim_sz;
             stride = K2ft->subim_sz/2 + 1;
             K2_phasor[bl] = K2ft->ft[y_px*stride + x_px][0] + 
                 1i*K2ft->ft[y_px*stride + x_px][1]*sign[bl];
@@ -208,11 +216,11 @@ void fringe_tracker(){
             // Compute the unwrapped phase delay and signal to noise. 
             // Until SNR is high enough, pd_filtered is zero
             // The phase delay is in units of the K1 central wavelength. 
-            // !!! The 5.5 is a John Monnnier hack, due to fmod's treatment of negative numbers.
-            double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - pd_filtered(bl) + 5.5), 1.0) - 0.5;
+            // !!! The 7.5 is a John Monnnier hack, due to fmod's treatment of negative numbers.
+            double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - pd_filtered(bl) + 7.5), 1.0) - 0.5;
             baselines[bl].pd = pd_filtered(bl) + pdiff;
             if (std::fabs(pdiff) > 0.5){
-                std::cout << "*** This isn't possible!!! ***" << std::endl;
+                //std::cout << "*** This isn't possible!!! ***" << std::endl;
             }
             //baselines[bl].pd = std::arg(K1_phasor[bl])/2/M_PI; // Temporarily overwrite this. !!!
 
@@ -227,8 +235,14 @@ void fringe_tracker(){
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
-            Wgd(bl, bl) = baselines[bl].gd_snr*baselines[bl].gd_snr;
-            Wpd(bl, bl) = baselines[bl].pd_snr*baselines[bl].pd_snr;
+            if (baselines[bl].gd_snr*baselines[bl].gd_snr > GD_THRESHOLD)
+                Wgd(bl, bl) = baselines[bl].gd_snr*baselines[bl].gd_snr;
+            else 
+                Wgd(bl, bl) = 0;
+            if (baselines[bl].gd_snr*baselines[bl].gd_snr > PD_THRESHOLD)
+                Wpd(bl, bl) = baselines[bl].pd_snr*baselines[bl].pd_snr;
+            else
+                Wpd(bl, bl) = 0;
         }
 
 #ifndef DEBUG
@@ -253,10 +267,10 @@ void fringe_tracker(){
                 gd_to_K1*gd_to_K1/baselines[bl].gd_snr/baselines[bl].gd_snr);
             //fmt::print("B{} pd_snr: {:.1e} gd_snr: {:.1e} delay_error: {:.3f}\n", bl,
             //    baselines[bl].pd_snr, baselines[bl].gd_snr, delay_error);
-            if ( (delay_error < 0.4) && (gd_filtered(bl)-pd_filtered(bl) > 0.8) &&
-                ((gd_filtered(bl)-pd_filtered(bl))/delay_error > 3.0)){
-                    fmt::print("Phase jump: B{} pd: {:.3f} pdf: {:.3f} gd: {:.3f} delay_error: {:.3f}\n", bl,
-                        pd_bl(bl), pd_filtered(bl), gd_filtered(bl), delay_error);
+            if ( (delay_error < 0.4) && (std::fabs(gd_filtered(bl)-pd_filtered(bl)) > 0.8) &&
+                (std::fabs(gd_filtered(bl)-pd_filtered(bl))/delay_error > 3.0)){
+                    //fmt::print("Phase jump: B{} pd: {:.3f} pdf: {:.3f} gd: {:.3f} delay_error: {:.3f}\n", bl,
+                    //    pd_bl(bl), pd_filtered(bl), gd_filtered(bl), delay_error);
                     pd_filtered(bl) += std::round(gd_filtered(bl)-pd_filtered(bl));
                 }
         }
@@ -271,6 +285,10 @@ void fringe_tracker(){
         //std::cout << "gd_bl:       " << gd_bl.transpose() << std::endl;
         //std::cout << "gd_filtered: " << gd_filtered.transpose() << std::endl;
         //std::cout << "gd_tel:      " << gd_tel.transpose() << std::endl;
+        if (cnt_since_init % 1000 == 0){
+            std::cout << "pd_tel:      " << pd_tel.transpose() << std::endl;
+            std::cout << "gd_tel:      " << gd_tel.transpose() << std::endl;
+        }
         //std::cout << "pd_tel:      " << pd_tel.transpose() << std::endl;
  
         // Do the Fringe tracking! The error signal is the "delay" variable.
@@ -285,10 +303,10 @@ struct ControlU{
     double search_delta, omega_dl, dit;
     unsigned int search_Nsteps, steps_to_turnaround;
 };
-        // Just use a proportional servo with fixed gain of 0.5.
+        // Just use a proportional servo on group delay with fixed gain of 0.5.
         if (servo_mode==SERVO_SIMPLE){
             // Compute the piezo control signal. !!!
-            control_u.dm_piston -= 0.5*config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT * pd_tel;
+            control_u.dm_piston -= 0.001*config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT * pd_tel;
             // Apply the signal to the DM!
             set_dm_piston(control_u.dm_piston);
         }
@@ -309,13 +327,16 @@ struct ControlU{
             * search_vector_scale;
 
         // Compute the delay line offload.
-        control_u.dl_offload -= control_u.omega_dl * control_u.dit * control_u.dm_piston;
+        control_u.dl_offload -= control_u.omega_dl * control_u.dit * control_u.dm_piston * OPD_PER_DM_UNIT;
 
         // Apply the DL offload if enough time has passed since the last offload. !!! Remove 2 zeros.
         clock_gettime(CLOCK_REALTIME, &now);
         if (servo_mode != SERVO_OFF) if (now.tv_sec > last_dl_offload.tv_sec || 
-            (now.tv_sec == last_dl_offload.tv_sec && now.tv_nsec - last_dl_offload.tv_nsec > 1000000000)){
-            set_delay_lines(control_u.dl_offload);
+            (now.tv_sec == last_dl_offload.tv_sec && now.tv_nsec - last_dl_offload.tv_nsec > offload_time_ms*1000000)){
+            if (offload_mode == OFFLOAD_NESTED)
+                set_delay_lines(control_u.dl_offload);
+            else if (offload_mode == OFFLOAD_GD)
+                set_delay_lines(gd_tel * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
     

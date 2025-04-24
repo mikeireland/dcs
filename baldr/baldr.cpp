@@ -535,77 +535,6 @@ json update_pid_param(json args) {
         return json{{"error", ex.what()}};
     }
 }
-// json update_pid_param(json args) {
-//     // Expect an array with exactly 4 elements:
-//     // [controller, parameter_type, indices, value]
-//     if (!args.is_array() || args.size() != 4) {
-//         return json{{"error", "Expected an array with four elements: [controller, parameter_type, indices, value]"}};
-//     }
-//     try {
-//         std::string controller_str = args.at(0).get<std::string>();
-//         std::string parameter_type = args.at(1).get<std::string>();
-//         std::string indices_str = args.at(2).get<std::string>();
-//         double value = args.at(3).get<double>();
-
-//         // Lock the PID mutex to protect concurrent access.
-//         std::lock_guard<std::mutex> lock(ctrl_mutex);
-
-//         // Select the appropriate PID controller.
-//         PIDController* pid_ctrl = nullptr;
-//         if (controller_str == "LO") {
-//             pid_ctrl = &ctrl_LO;
-//         } else if (controller_str == "HO") {
-//             pid_ctrl = &ctrl_HO;
-//         } else {
-//             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
-//         }
-        
-//         // Choose the target parameter vector. For parameters that are represented as Eigen::VectorXd, 
-//         // we use a pointer to that vector.
-//         Eigen::VectorXd* target_vector = nullptr;
-//         if (parameter_type == "kp") {
-//             target_vector = &pid_ctrl->kp;
-//         } else if (parameter_type == "ki") {
-//             target_vector = &pid_ctrl->ki;
-//         } else if (parameter_type == "kd") {
-//             target_vector = &pid_ctrl->kd;
-//         } else if (parameter_type == "set_point") {
-//             target_vector = &pid_ctrl->set_point;
-//         } else if (parameter_type == "lower_limits") {
-//             target_vector = &pid_ctrl->lower_limits;
-//         } else if (parameter_type == "upper_limits") {
-//             target_vector = &pid_ctrl->upper_limits;
-//         } else {
-//             return json{{"error", "Invalid parameter type: " + parameter_type + ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
-//         }
-        
-//         int n = target_vector->size();
-//         if (indices_str == "all") {
-//             target_vector->setConstant(value);
-//             std::cout << "Updated all elements of " << parameter_type << " in controller " << controller_str 
-//                       << " to " << value << std::endl;
-//         } else {
-//             // Use your split_indices helper function to split indices_str by commas.
-//             std::vector<int> idxs = split_indices(indices_str);
-//             if (idxs.empty()) {
-//                 return json{{"error", "No valid indices provided"}};
-//             }
-//             for (int idx : idxs) {
-//                 if (idx < 0 || idx >= n) {
-//                     return json{{"error", "Index " + std::to_string(idx) + " out of range for " + parameter_type 
-//                                         + " vector of size " + std::to_string(n)}};
-//                 }
-//                 (*target_vector)(idx) = value;
-//             }
-//             std::cout << "Updated indices (" << indices_str << ") of " << parameter_type << " in controller " 
-//                       << controller_str << " with value " << value << std::endl;
-//         }
-//         return json{{"status", "success"}};
-//     }
-//     catch (const std::exception &ex) {
-//         return json{{"error", ex.what()}};
-//     }
-// }
 
 json print_pid_attribute(json args) {
     // Expect exactly two elements: [controller, attribute]
@@ -662,57 +591,6 @@ json print_pid_attribute(json args) {
         return json{{"error", ex.what()}};
     }
 }
-// json print_pid_attribute(json args) {
-//     // Expect exactly two elements: [controller, attribute]
-//     if (!args.is_array() || args.size() != 2) {
-//         return json{{"error", "Expected an array with two elements: [controller, attribute]"}};
-//     }
-    
-//     try {
-//         std::string controller_str = args.at(0).get<std::string>();
-//         std::string attribute = args.at(1).get<std::string>();
-        
-//         PIDController* ctrl = nullptr;
-//         if (controller_str == "LO") {
-//             ctrl = &ctrl_LO;
-//         } else if (controller_str == "HO") {
-//             ctrl = &ctrl_HO;
-//         } else {
-//             return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
-//         }
-        
-//         // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>
-//         auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
-//             return std::vector<double>(v.data(), v.data() + v.size());
-//         };
-        
-//         // Compare the attribute string and return the corresponding value.
-//         if (attribute == "kp") {
-//             return json{{"kp", eigen_to_vector(ctrl->kp)}};
-//         } else if (attribute == "ki") {
-//             return json{{"ki", eigen_to_vector(ctrl->ki)}};
-//         } else if (attribute == "kd") {
-//             return json{{"kd", eigen_to_vector(ctrl->kd)}};
-//         } else if (attribute == "lower_limits") {
-//             return json{{"lower_limits", eigen_to_vector(ctrl->lower_limits)}};
-//         } else if (attribute == "upper_limits") {
-//             return json{{"upper_limits", eigen_to_vector(ctrl->upper_limits)}};
-//         } else if (attribute == "set_point") {
-//             return json{{"set_point", eigen_to_vector(ctrl->set_point)}};
-//         } else if (attribute == "output") {
-//             return json{{"output", eigen_to_vector(ctrl->output)}};
-//         } else if (attribute == "integrals") {
-//             return json{{"integrals", eigen_to_vector(ctrl->integrals)}};
-//         } else if (attribute == "prev_errors") {
-//             return json{{"prev_errors", eigen_to_vector(ctrl->prev_errors)}};
-//         } else {
-//             return json{{"error", "Unknown attribute: " + attribute}};
-//         }
-//     } catch (const std::exception &ex) {
-//         return json{{"error", ex.what()}};
-//     }
-// }
-
 
 
 
@@ -856,42 +734,7 @@ COMMANDER_REGISTER(m)
 
 
 
-// int main(int argc, char* argv[]) {
-
-//     // Read in the configuration file
-//     if (argc < 2) {
-        
-//         std::cout << "Usage: " << argv[0] << " <config file>.toml [options]" << std::endl;
-//         //load_configuration(argv[0]);
-//         return 1;
-//     } else {
-
-//         for 
-//         config = toml::parse_file(argv[1]);
-//         std::cout << "Configuration file read: "<< config["name"] << std::endl;
-
-//     }
-
-//     // !!! This C-Red image should likely come from the toml
-//     ImageStreamIO_openIm(&subarray, "CRed");
-
-//     // Start the main RTC and telemetry threads. 
-//     std::thread rtc_thread(rtc);
-//     std::thread telemetry_thread(telemetry);
-
-//     // Initialize the commander server and run it
-//     commander::Server s(argc, argv);
-//     s.run();
-
-//     // Join the fringe-tracking thread
-//     servo_mode = SERVO_STOP;
-//     rtc_thread.join();
-//     telemetry_thread.join();
-// }
-
-
-
-// configure like ./baldr 1 H3 2 H3 3 H3 4 H3
+// configure like ./baldr 1 H3 
 int main(int argc, char* argv[]) {
     // We expect pairs of arguments: <beam_id> <phaseMask>
     if (argc != 3) {
@@ -997,7 +840,99 @@ int main(int argc, char* argv[]) {
 }
 
 
+//// gain and fps as inputs! 
+// int main(int argc, char* argv[]) {
+//     // Usage check
+//     if (argc < 3) {
+//         std::cerr << "Usage: " << argv[0] << " <beam_id> <phaseMask> [--gain <float>] [--fps <float>]" << std::endl;
+//         return 1;
+//     }
 
+//     // Required positional arguments
+//     beam_id = std::stoi(argv[1]);
+//     phasemask = argv[2];
+
+//     // Parse optional arguments
+// for (int i = 3; i < argc; ++i) {
+//     std::string arg = argv[i];
+//     if (arg == "--gain" && i + 1 < argc) {
+//         gain_override = std::stof(argv[++i]);
+//         override_gain_fps = true;
+//         std::cout << "Setting gain = " << gain_override << std::endl;
+//     } else if (arg == "--fps" && i + 1 < argc) {
+//         fps_override = std::stof(argv[++i]);
+//         override_gain_fps = true;
+//         std::cout << "Setting fps = " << fps_override << std::endl;
+//     } else {
+//         std::cerr << "[ERROR] Unknown or incomplete argument: " << arg << std::endl;
+//         return 1;
+//     }
+// }
+
+//     // Construct config filename and parse
+//     std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";
+//     try {
+//         config = toml::parse_file(filename);
+//         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error parsing file " << filename << ": " << e.what() << std::endl;
+//         return 1;
+//     }
+
+//     // Read beam configuration
+//     std::string beamKey = "beam" + std::to_string(beam_id);
+//     try {
+//         rtc_config = readBDRConfig(config, beamKey, phasemask);
+//         std::cout << "after read in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+//         rtc_config.initDerivedParameters();
+//         std::cout << "after initDerived parameters in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+//         std::cout << "Initialized configuration for beam " << beam_id << std::endl;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
+//         return 1;
+//     }
+
+//     if (!rtc_config.state.simulation_mode) {
+//         std::cout << "SHM configuration not in simulation mode" << std::endl;
+
+//         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
+
+//         std::string name = "dm" + std::to_string(beam_id) + "disp02";
+//         std::string name0 = "dm" + std::to_string(beam_id);
+//         std::cout << "[INFO] Opening DM SHM \"" << name << "\"\n";
+
+//         if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
+//             std::cerr << "[ERROR] Failed to open DM SHM \"" << name << "\"\n";
+//             return 1;
+//         }
+//         if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+//             std::cerr << "[ERROR] Failed to open DM SHM \"" << name0 << "\"\n";
+//             return 1;
+//         }
+//     } else {
+//         std::cerr << "Simulation mode not implemented. Aborting." << std::endl;
+//         throw std::runtime_error("Simulation mode not implemented");
+//     }
+
+//     // Start RTC and telemetry threads
+//     std::thread rtc_thread(rtc);
+//     std::thread telemetry_thread(telemetry);
+
+//     std::cout << "after rtc thread started in main rtc.ctrl_LO_config.kp.size() = "
+//               << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+
+//     // Start command server
+//     commander::Server s(argc, argv);
+//     s.run();
+
+//     // Cleanup and join
+//     servo_mode = SERVO_STOP;
+//     rtc_thread.join();
+//     telemetry_thread.join();
+
+//     std::cout << "DONE" << std::endl;
+//     return 0;
+// }
 
 
 /// TO TEST ZMQ COMMUNICATION TO CAMERA WITHIN RTC (FOR CHECKING STATE - PARAMETERS ARE NORMALIZED ADU/s SO NEED TO CONVERT TO ADU)

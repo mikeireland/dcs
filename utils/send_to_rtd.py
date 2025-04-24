@@ -92,7 +92,7 @@ context = zmq.Context()
 socket = context.socket(zmq.PUSH)
 
 # Connect to the RTD server on wag2
-socket.connect("tcp://wag2:7000")
+socket.connect("tcp://wag:7000")
 
 exiting=False
 # Set the signal handler to handle SIGINT (Ctrl+C) gracefully

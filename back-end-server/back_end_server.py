@@ -109,7 +109,7 @@ import datetime
 import time
 
 class BackEndServer:
-    def __init__(self, port=7002, \
+    def __init__(self, port=7004, \
             server_ports = {"hdlr": 6660, "hdlr_align": 6661, "baldr": 6662, "cam_server": 6667, "DM_server": 6666}):
         self.port = port
         self.context = zmq.Context()

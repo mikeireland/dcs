@@ -477,7 +477,7 @@ void rtc(){
 
     // LOOP SPEED (us)
     //std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
-    constexpr auto loop_time = std::chrono::microseconds(5000); //  200Hz #1 kHz
+    constexpr auto loop_time = std::chrono::microseconds(1400); //(5000); //  200Hz #1 kHz
     auto next_tick = std::chrono::steady_clock::now();
 
     // ------------------- to try
@@ -699,17 +699,76 @@ void rtc(){
             
         }
 
-        //std::cout << "e_LO size = " << e_LO.size() << std::endl;
-        //std::cout << "e_HO size = " << e_HO.size() << std::endl;
+
+        // === HO Safety Check: Zero gains for misbehaving actuators ===
+        const double ho_threshold = 0.1; // around 700nm! assuming 7000nm/DM cmd unit
+
+        if (u_HO.cwiseAbs().maxCoeff() > ho_threshold) {
+            bool disabled_this_frame = false;
+
+            for (int i = 0; i < u_HO.size(); ++i) {
+                if (std::abs(u_HO(i)) > ho_threshold) {
+                    //std::cout << "[SAFETY] HO actuator " << i << " exceeded threshold with value " << u_HO(i) << std::endl;
+
+                    // Reset controller state
+                    rtc_config.ctrl_HO.integrals(i) = 0.0;
+                    rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+
+                    // Track misbehavior
+                    naughty_list[i]++;
+
+                    // Disable gains only once when crossing threshold
+                    if (naughty_list[i] == 100) {
+                        std::cout << "[SAFETY] Disabling gains for actuator " << i << " after 100 violations" << std::endl;
+                        rtc_config.ctrl_HO.kp(i) = 0.0;
+                        rtc_config.ctrl_HO.ki(i) = 0.0;
+                        rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        disabled_this_frame = true;
+                    }
+                }
+            }
+
+            // If any actuator was just disabled (not already at 0), zero DM once
+            if (disabled_this_frame) {
+                std::cout << "[SAFETY] Zeroing DM due to newly disabled actuator" << std::endl;
+                std::cout << "[SAFETY] Re-locking the loop" << std::endl;
+                updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
+                ImageStreamIO_sempost(&dm_rtc0, 1);
+            }
+        }
 
         
+        if (c_LO.cwiseAbs().maxCoeff() > 0.2) {
+            // Reset controller state
+            for (int i = 0; i < u_LO.size(); ++i) {
+                rtc_config.ctrl_LO.integrals(i) = 0.0;
+                rtc_config.ctrl_LO.prev_errors(i) = 0.0;
+            }
+
+            updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
+            ImageStreamIO_sempost(&dm_rtc0, 1);
+            std::cout << "[SAFETY] Zeroing DM due and Reset LO integrals" << std::endl;
+            std::cout << "[SAFETY] Re-locking the loop" << std::endl;
+        }
+
+
+        /// ============= FINAL DM CMD ==============
         dmCmd = -1 * (c_LO + c_HO);
+        /// =========================================
+
         //if (dmCmd.cwiseAbs().maxCoeff() > 0) {
         //    std::cout << "max dmCmd = " << dmCmd.cwiseAbs().maxCoeff() << std::endl;
         //};
         //rtc_config.limits.open_on_dm_limit
-        if (dmCmd.cwiseAbs().maxCoeff() > 0.3) {
-            std::cout << "going bad" << std::endl;
+
+        
+        if (dmCmd.cwiseAbs().maxCoeff() > 0.4) {
+            std::cout << "going bad, stop" << std::endl;
+            
+            updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
+            ImageStreamIO_sempost(&dm_rtc0, 1);
+
             rtc_config.state.take_telemetry=1;
             servo_mode = SERVO_STOP;
 
@@ -812,6 +871,7 @@ void rtc(){
             rtc_config.telem.counter++;
         }
 
+        // -------------------- DEAD TIME BEGINS HERE 
         // schedule next wakeup
         next_tick += loop_time;
         std::this_thread::sleep_until(next_tick);
@@ -820,9 +880,9 @@ void rtc(){
         auto now = std::chrono::steady_clock::now();
         if (now > next_tick) {
             auto over = now - next_tick;
-            // std::cerr<<"Loop overran by "
-            //        << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
-            //        <<" μs\n";
+            //std::cerr<<"Loop overran by "
+            //       << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
+            //       <<" μs\n";
         }
         
         end = std::chrono::steady_clock::now();
@@ -835,9 +895,9 @@ void rtc(){
 
         //std::cout << servo_mode_LO.load() << std::endl;
         
-        //if (duration < loop_time){
+        // if (duration < loop_time){
         //    std::this_thread::sleep_for(std::chrono::microseconds(loop_time - duration));
-        //}
+        // }
 
 
     }

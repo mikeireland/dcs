@@ -14,15 +14,24 @@
 #include <arpa/inet.h>
 
 //----------Defines-----------
+#define OPD_PER_DM_UNIT 6.0 
+#define OPD_PER_PIEZO_UNIT 0.3 
+
 #define FT_STARTING 0
 #define FT_RUNNING 1
 #define FT_STOPPING 2
 
+// Fast servo type
 #define SERVO_PID 0
 #define SERVO_LACOUR 1
 #define SERVO_STOP 2
 #define SERVO_SIMPLE 3
 #define SERVO_OFF 4
+
+// Slow (offload) servo type
+#define OFFLOAD_NESTED 0
+#define OFFLOAD_GD 1
+#define OFFLOAD_OFF 2
 
 // The maximum number of frames to average for group delay. Delay error in wavelength from group
 // delay can be 0.4/which scales to a phasor error of 0.04, while phase error can only be 0.2
@@ -163,14 +172,31 @@ struct EncodedImage
     std::string type;
     std::string message;
 };
+
+// The status, encoded as std::vector<double> for 
+// key variables.
+struct status
+{
+    std::vector<double> gd_bl;
+    std::vector<double> pd_bl;
+    std::vector<double> gd_tel;
+    std::vector<double> pd_tel;
+    std::vector<double> gd_snr;
+    std::vector<double> pd_snr;
+    std::vector<double> pd_offset;
+    std::vector<double> closure_phase;
+};
 //-------End of Commander structs------
 
 // -------- Extern global definitions ------------
+extern IMAGE DMs[N_TEL];
+extern IMAGE master_DMs[N_TEL];
 // The statit initial input parameters
 extern toml::table config;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
-extern int servo_mode;
+extern int servo_mode, offload_mode;
+extern uint offload_time_ms;
 extern PIDSettings pid_settings;
 extern ControlU control_u;
 extern ControlA control_a;
@@ -180,6 +206,11 @@ extern Bispectrum bispectra[N_CP];
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;
 
+// DL offload variables
+extern bool keep_offloading;
+extern int offloads_to_do;
+extern std::string delay_line_type;
+extern Eigen::Vector4d search_offset;
 
 // ForwardFt class
 class ForwardFt {   
@@ -231,3 +262,9 @@ void set_delay_lines(Eigen::Vector4d dl);
 
 //The forward Fourier transforms
 extern ForwardFt *K1ft, *K2ft;
+
+// Delay line offloads
+void set_delay_lines(Eigen::Vector4d dl);
+void set_delay_line(int dl, double value);
+void dl_offload();
+void start_search(uint search_dl_in, double start, double stop, double rate);

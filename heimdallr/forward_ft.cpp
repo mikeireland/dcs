@@ -60,8 +60,8 @@ void ForwardFt::loop() {
         if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;
-            if ((subarray->md->cnt0 != cnt+1)  && (mode == FT_RUNNING)) {
-                std::cout << "Missed frame" << subarray->md->cnt0 << cnt << std::endl;
+            if ((subarray->md->cnt0 > cnt+2)  && (mode == FT_RUNNING)) {
+                std::cout << "Missed cam frames: " << subarray->md->cnt0 << cnt << std::endl;
                 nerrors++;
             }
             mode = FT_RUNNING;
@@ -75,8 +75,12 @@ void ForwardFt::loop() {
                     ii_shift = (ii + subim_sz/2) % subim_sz;
                     jj_shift = (jj + subim_sz/2) % subim_sz;
                     subim[ii_shift*subim_sz + jj_shift] = 
-                        (double)(subarray->array.F[ii*subim_sz + jj])
-                            * window[ii*subim_sz + jj];
+                        (double)(subarray->array.UI16[ii*subim_sz + jj])
+                            * window[ii*subim_sz + jj] - 100;
+                    // K2 bad pixel
+                    if ((jj==18) && (ii==1)) subim[ii_shift*subim_sz + jj_shift] = 0.0;
+                    // K1 bad pixel
+                    if ((jj==29) && (ii==9)) subim[ii_shift*subim_sz + jj_shift] = 0.0;
                 }
             }
             // Do the FFT, and then indicate that the frame has been processed
