@@ -810,7 +810,7 @@ int main(int argc, char* argv[]) {
 
 
     // Compute the configuration filename and parse the TOML file.
-    std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";
+    std::string filename = "/usr/local/etc/baldr/baldr_config_" + std::to_string(beam_id) + ".toml";
     try {
         config = toml::parse_file(filename);
         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
