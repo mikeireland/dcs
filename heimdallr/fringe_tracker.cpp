@@ -298,10 +298,6 @@ void fringe_tracker(){
         //std::cout << "gd_bl:       " << gd_bl.transpose() << std::endl;
         //std::cout << "gd_filtered: " << gd_filtered.transpose() << std::endl;
         //std::cout << "gd_tel:      " << gd_tel.transpose() << std::endl;
-        if (cnt_since_init % 1000 == 0){
-            std::cout << "pd_tel:      " << control_a.pd.transpose() << std::endl;
-            std::cout << "gd_tel:      " << control_a.gd.transpose() << std::endl;
-        }
         //std::cout << "pd_tel:      " << pd_tel.transpose() << std::endl;
  
         // Do the Fringe tracking! The error signal is the "delay" variable.
@@ -345,7 +341,7 @@ void fringe_tracker(){
             if (offload_mode == OFFLOAD_NESTED){
                 fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
                     control_u.dl_offload(2), control_u.dl_offload(3));
-                add_to_delay_lines(control_u.dl_offload);
+                add_to_delay_lines(-control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD)

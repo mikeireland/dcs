@@ -3,6 +3,8 @@
 #include <fmt/core.h>
 #include <iostream>
 
+//#define DEBUG
+
 namespace commander::server
 {
 
@@ -32,8 +34,10 @@ namespace commander::server
             }
 
             auto command = std::string(static_cast<char*>(msg.data()), msg.size());
-
+            
+#ifdef DEBUG
             fmt::print("Received command: {}\n", command);
+#endif
 
             auto pos = command.find(' ');
             std::string name;
@@ -56,8 +60,9 @@ namespace commander::server
                     break;
                 }
                 auto res = module_.execute(name, args).dump();
-
+#ifdef DEBUG
                 fmt::print("Sending response: {}\n", res);
+#endif
 
                 sock.send(zmq::message_t(res.c_str(), res.size()), zmq::send_flags::none);
             } catch (const std::exception& e) {
