@@ -870,18 +870,33 @@ void rtc(){
 
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
 
-            // --- Calculate SNR ---
-            double sum = sig.sum();
-            double sumsq = sig.squaredNorm();
-            double mean = sum / sig.size();
-            double variance = (sumsq / sig.size()) - (mean * mean);
-            double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
-            double snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+            // === COMPUTE SNR inside the pupil ===
+            
+            
+
+            double sum = 0.0;
+            double sumsq = 0.0;
+            size_t count = 0;
+
+            for (Eigen::Index i = 0; i < sig.size(); ++i) {
+                if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
+                    double val = sig(i);
+                    sum += val;
+                    sumsq += val * val;
+                    ++count;
+                }
+            }
+
+            double snr_value = 0.0;
+            if (count > 0) {
+                double mean = sum / count;
+                double variance = (sumsq / count) - (mean * mean);
+                double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
+                snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+            }
 
             // Add to telemetry
             rtc_config.telem.snr.push_back(snr_value);
-                        
-
 
             // Increment the counter.
             rtc_config.telem.counter++;

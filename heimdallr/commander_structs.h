@@ -30,6 +30,8 @@ template <> struct adl_serializer<Status> {
         j["closure_phase_K2"] = p.closure_phase_K2;
         j["v2_K1"] = p.v2_K1;
         j["v2_K2"] = p.v2_K2;
+        j["dl_offload"] = p.dl_offload;
+        j["dm_piston"] = p.dm_piston;
     }
     static void from_json(const json& j, Status& p) {
         p = Status();
@@ -44,6 +46,8 @@ template <> struct adl_serializer<Status> {
         j.at("closure_phase_K2").get_to(p.closure_phase_K2);
         j.at("v2_K1").get_to(p.v2_K1);
         j.at("v2_K2").get_to(p.v2_K2);
+        j.at("dl_offload").get_to(p.dl_offload);
+        j.at("dm_piston").get_to(p.dm_piston);
     }
    };
 }

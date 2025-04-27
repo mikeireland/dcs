@@ -19,12 +19,12 @@ uint offload_time_ms=1000;
 PIDSettings pid_settings;
 ControlU control_u;
 ControlA control_a;
-Baseline baselines[N_BL];
+Baselines baselines;
 Bispectrum bispectra_K1[N_CP];
 Bispectrum bispectra_K2[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-std::mutex baseline_mutex, beam_mutex, status_mutex;
+std::mutex baseline_mutex, beam_mutex;
 
 //The forward Fourier transforms
 ForwardFt *K1ft, *K2ft;
@@ -96,10 +96,8 @@ void linear_search(uint beam, double start, double stop, double rate, std::strin
     usleep(DELAY_MOVE_USEC); // Wait for the delay line to move
     // Set the SNR values to zero.
     baseline_mutex.lock();
-    for (int i = 0; i < N_TEL-1; i++) {
-        baselines[i].gd_snr=0;
-        baselines[i].pd_snr=0;
-    }
+    baselines.gd_snr = Eigen::VectorXd::Zero(N_TEL);
+    baselines.pd_snr = Eigen::VectorXd::Zero(N_TEL);
     baseline_mutex.unlock();
 
     // Start the search.
@@ -148,6 +146,8 @@ void set_offload_mode(std::string mode) {
         offload_mode = OFFLOAD_OFF;
     } else if (mode == "nested") {
         offload_mode = OFFLOAD_NESTED;
+        // Reset the offload to zero.
+        control_u.dl_offload.setZero();
     } else if (mode == "gd") {
         offload_mode = OFFLOAD_GD;
     } else {
@@ -209,22 +209,46 @@ void save_dark() {
     K2ft->save_dark_frames = true;
 }
 
+
 Status get_status() {
+    Status status;
     // Get the status of the system. This is a simple struct with the
     // values we want to send back to the commander.
-    Status status;
+    // We have to initialise everything to zero or we get a core dump!
     status.gd_bl = std::vector<double>(N_BL);
     status.pd_bl = std::vector<double>(N_BL);
     status.gd_tel = std::vector<double>(N_TEL);
     status.pd_tel = std::vector<double>(N_TEL);
     status.gd_snr = std::vector<double>(N_BL);
     status.pd_snr = std::vector<double>(N_BL);
-    status.pd_offset = std::vector<double>(N_TEL);
+    status.v2_K1 = std::vector<double>(N_BL);
+    status.v2_K2 = std::vector<double>(N_BL);
     status.closure_phase_K1 = std::vector<double>(N_CP);
     status.closure_phase_K2 = std::vector<double>(N_CP);
-    status.v2_K1 = std::vector<double>(N_CP);
-    status.v2_K2 = std::vector<double>(N_CP);
+    status.pd_offset = std::vector<double>(N_TEL);
+    status.dl_offload = std::vector<double>(N_TEL);
+    status.dm_piston = std::vector<double>(N_TEL);
 
+    // Now fill these in with the values from the control structures.
+    for (int i = 0; i < N_BL; i++) {
+        status.gd_bl[i] = baselines.gd(i);
+        status.pd_bl[i] = baselines.pd(i);
+        status.gd_snr[i] = baselines.gd_snr(i);
+        status.pd_snr[i] = baselines.pd_snr(i);
+        status.v2_K1[i] = baselines.v2_K1(i);
+        status.v2_K2[i] = baselines.v2_K2(i);
+    }
+    for (int i = 0; i < N_TEL; i++) {
+        status.gd_tel[i] = control_a.gd(i);
+        status.pd_tel[i] = control_a.pd(i);
+        status.pd_offset[i] = control_a.pd_offset(i);
+        status.dm_piston[i] = control_u.dm_piston(i);
+        status.dl_offload[i] = control_u.dl_offload(i);
+    }
+    for (int i = 0; i < N_CP; i++) {
+        status.closure_phase_K1[i] = bispectra_K1[i].closure_phase;
+        status.closure_phase_K2[i] = bispectra_K2[i].closure_phase;
+    }
     return status;
 }
 
@@ -245,6 +269,7 @@ COMMANDER_REGISTER(m)
     m.def("dark", save_dark, "Save the dark frames");
     m.def("delay_line", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
+    m.def("status", get_status, "Get the status of the system");
  }
 
 int main(int argc, char* argv[]) {

@@ -26,6 +26,13 @@ struct Status
     std::string message;
 };
 
+// A custom type.
+struct Vstruct
+{
+    std::vector<double> v, w;
+};
+
+
 // A function that return a custom type.
 Status get_status() {
     return {42, "Nominal"};
@@ -34,6 +41,25 @@ Status get_status() {
 // A test function for a vector of floats
 void float_vector(std::vector<float> v) {
     fmt::print("vector: {}\n", fmt::join(v, ", "));
+}
+
+// A test function for a vector of floats
+std::vector<float> return_vector() {
+    std::vector<float> v = {1.0f, 2.0f, 3.0f};
+    fmt::print("returning vector: {}\n", fmt::join(v, ", "));
+    return v;
+}
+
+// A test function for a vector of floats
+Vstruct return_vstruct() {
+    //std::vector<double> v = {1.0f, 2.0f, 3.0f};
+    //std::vector<double> w = {4.0f, 5.0f, 6.0f};
+    std::vector<double> v(3);
+    std::vector<double> w(3);
+    Vstruct vs;
+    vs.v = std::vector<double>(3);
+    vs.w = std::vector<double>(3);
+    return vs;
 }
 
 // A struct including a string
@@ -139,6 +165,21 @@ namespace nlohmann {
     };
 }
 
+namespace nlohmann {
+    template <>
+    struct adl_serializer<Vstruct> {
+        static void to_json(json& j, const Vstruct& p) {
+            j = json{{"v", p.v}, {"w", p.w}};
+        }
+
+        static void from_json(const json& j, Vstruct& p) {
+            j.at("v").get_to(p.v);
+            j.at("w").get_to(p.w);
+
+        }
+    };
+}
+
 void overloaded_function(int i) {
     fmt::print("int: {}\n", i);
 }
@@ -171,6 +212,8 @@ COMMANDER_REGISTER(m)
     m.def("RTS", RTS, "Receive a Real Time System command");
     m.def("set_name_value", set_name_value, "Set a name value pair");
     m.def("float_vector", float_vector, "A function that takes a vector of floats");
+    m.def("return_vector", return_vector, "A function that returns vector of floats");
+    m.def("return_vstruct", return_vstruct, "A function that returns vector of doubles in a struct");
     m.def("name_value_vector", name_value_vector, "A function that takes a vector of name value pairs");
 
     // Let's see if Eigen works too (it doesn't - leave this commented out!)

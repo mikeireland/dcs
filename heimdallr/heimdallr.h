@@ -137,13 +137,10 @@ struct ControlA{
     Eigen::Vector4d pd_offset;
 };
 
-struct Baseline{
-    double gd;
-    double pd;
-    double gd_snr;
-    double pd_snr;
-    dcomp gd_phasors[MAX_N_GD_BOXCAR];
-    dcomp gd_phasor, pd_phasor;
+struct Baselines{
+    Eigen::Matrix<double, N_BL, 1> gd, pd, gd_snr, pd_snr, v2_K1, v2_K2;
+    Eigen::Matrix<dcomp, N_BL, 1> gd_phasor, pd_phasor;
+    Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     int n_gd_boxcar, ix_gd_boxcar;
 };
 
@@ -176,17 +173,13 @@ struct EncodedImage
 // key variables.
 struct Status
 {
-    std::vector<double> gd_bl;
-    std::vector<double> pd_bl;
-    std::vector<double> gd_tel;
-    std::vector<double> pd_tel;
-    std::vector<double> gd_snr;
-    std::vector<double> pd_snr;
+    std::vector<double> gd_bl, pd_bl;
+    std::vector<double> gd_tel, pd_tel;
+    std::vector<double> gd_snr, pd_snr;
     std::vector<double> pd_offset;
-    std::vector<double> closure_phase_K1;
-    std::vector<double> closure_phase_K2;
-    std::vector<double> v2_K1;
-    std::vector<double> v2_K2;
+    std::vector<double> closure_phase_K1, closure_phase_K2;
+    std::vector<double> v2_K1, v2_K2;
+    std::vector<double> dl_offload, dm_piston;
 };
 //-------End of Commander structs------
 
@@ -202,12 +195,12 @@ extern uint offload_time_ms;
 extern PIDSettings pid_settings;
 extern ControlU control_u;
 extern ControlA control_a;
-extern Baseline baselines[N_BL];
+extern Baselines baselines;
 extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-extern std::mutex baseline_mutex, beam_mutex, status_mutex;
+extern std::mutex baseline_mutex, beam_mutex;
 
 // DL offload variables
 extern bool keep_offloading;
