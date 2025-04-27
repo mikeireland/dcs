@@ -31,7 +31,11 @@
 //----------Constant Arrays-----------
 
 //----- Structures and typedefs------
-
+// Declare ZMQ interface functions
+void init_cam_zmq();
+std::string send_cam_cmd(const std::string& command);
+std::string extract_value(const std::string& response);
+float get_float_cam_param(const std::string& command);
 
 
 // just putting everything here for now - will move to commander when blantely obvious that I need to
@@ -344,7 +348,8 @@ struct bdr_telem {
     boost::circular_buffer<Eigen::VectorXd> u_HO;
     boost::circular_buffer<Eigen::VectorXd> c_LO;
     boost::circular_buffer<Eigen::VectorXd> c_HO;
-
+    boost::circular_buffer<double> rmse_est;   // <-- NEW
+    boost::circular_buffer<double> snr;         // <-- NEW
 
     // Constructor that sets a fixed capacity for each ring buffer.
     bdr_telem(size_t capacity = 100) // 100 capacity is about 3 MB in the buffer
@@ -360,7 +365,9 @@ struct bdr_telem {
         e_HO(capacity),
         u_HO(capacity),
         c_LO(capacity),
-        c_HO(capacity)
+        c_HO(capacity),
+        rmse_est(capacity),   // <-- initialize
+        snr(capacity)         // <-- initialize
     {}
     
     // Method to update capacity for all ring buffers.
@@ -377,6 +384,8 @@ struct bdr_telem {
         u_HO.set_capacity(newCapacity);
         c_LO.set_capacity(newCapacity);
         c_HO.set_capacity(newCapacity);
+        rmse_est.set_capacity(newCapacity);  // <-- new
+        snr.set_capacity(newCapacity); // <-- new
     }
     //void validate() const {
     // Add any validation if needed.
@@ -471,82 +480,116 @@ struct bdr_rtc_config {
     double b_s_runtime ; // intercept for rms model (dm units)
     
 
-    // Function to initialize all derived runtime parameters.
+
     void initDerivedParameters() {
-        // Initialize controllers
         if (state.controller_type == "PID") {
             ctrl_LO = PIDController(ctrl_LO_config);
             ctrl_HO = PIDController(ctrl_HO_config);
         } else {
-            std::cout << "no ctrl match" << std::endl;
-            throw std::runtime_error("no valid controller_type in state");
+            throw std::runtime_error("Invalid controller_type");
         }
-        
-        // Initialize image and command vectors.
-        //img = Eigen::VectorXd::Zero(matrices.szp);
+
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
-        
-        //// -------------------- TO ADD IN 
-        // FPS and gain handling
-        // float cal_gain = std::stof(cam.gain);
-        // float cal_fps = std::stof(cam.fps);
 
-        // if (override_gain_fps) {
-        //     fps = fps_override;
-        //     gain = gain_override;
-        //     std::cout << "[INFO] Overriding FPS = " << fps << ", Gain = " << gain << std::endl;
-        // } else {
-        //     fps = cal_fps;
-        //     gain = cal_gain;
-        //     std::cout << "[INFO] Using FPS and Gain from TOML: " << fps << ", " << gain << std::endl;
-        // }
+        // Use ZMQ to query runtime camera settings
+        float cal_gain = std::stof(cam.gain); // used in calibration of interaction matrix 
+        float cal_fps = std::stof(cam.fps);
+        gain = get_float_cam_param("gain raw");
+        fps = get_float_cam_param("fps raw");
 
-        // scale = gain / fps; // used for scaling I2M and references
+        std::cout << "[ZMQ] Using runtime gain = " << gain << ", fps = " << fps << std::endl;
 
-        // // Scale interaction matrices and reference intensities
-        // I2M_LO_runtime = scale * matrices.I2M_LO;
-        // I2M_HO_runtime = scale * matrices.I2M_HO;
-        // N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
-        // I0_dm_runtime = scale * reference_pupils.I0_dm;
-
-        // // Adjust dark frame using calibration gain vs runtime gain
-        // dark_dm_runtime = (1.0 / fps) * (cal_gain / gain) * reduction.dark_dm;
-
-        ///// ALSO 
-        // in baldr.cpp before main define!
-        // float gain_override = 1.0f;
-        // float fps_override = 1000.0f;
-        // bool override_gain_fps = false;
-
-        /// add to end of bldr.h
-        // extern float gain_override;
-        // extern float fps_override;
-        // extern bool override_gain_fps;
-
-
-        //// -------------------- 
-
-        // Convert the camera parameters (stored as strings) to doubles.
-        fps = std::stof(cam.fps);
-        gain = std::stof(cam.gain);
         scale = gain / fps;
-        
-        // Scale matrices and reference intensities.
+
         I2M_LO_runtime = scale * matrices.I2M_LO;
         I2M_HO_runtime = scale * matrices.I2M_HO;
         N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
         I0_dm_runtime = scale * reference_pupils.I0_dm;
-        
-        // Normalize dark according to fps.
-        dark_dm_runtime = (1.0 / fps) * reduction.dark_dm;
-        //dark_dm_runtime = 1 / float(IM_cam_config["gain"]) *  scale * reduction.dark_dm;
-        
-        // Strehl model parameters.
-        // secondary_pixels is an Eigen column vector; use (4) to get the fifth element.
+        dark_dm_runtime = (1.0 / fps) * (gain/cal_gain) * reduction.dark_dm; // our dark is in ADU/s but not normalized by gain, so we need to multiply by ratio of the IM gain and gain for runnning rtc. 
+        // ^^ this feature should be optimized .. by considering gain normalized darks or keep input image in adu/s/gain
+
         sec_idx = pixels.secondary_pixels(4);
         m_s_runtime = scale * matrices.I2rms_sec(0, 0);
         b_s_runtime = matrices.I2rms_sec(1, 1);
     }
+
+    // before zmq camera fps and gain read in . 
+    // // Function to initialize all derived runtime parameters.
+    // void initDerivedParameters() {
+    //     // Initialize controllers
+    //     if (state.controller_type == "PID") {
+    //         ctrl_LO = PIDController(ctrl_LO_config);
+    //         ctrl_HO = PIDController(ctrl_HO_config);
+    //     } else {
+    //         std::cout << "no ctrl match" << std::endl;
+    //         throw std::runtime_error("no valid controller_type in state");
+    //     }
+        
+    //     // Initialize image and command vectors.
+    //     //img = Eigen::VectorXd::Zero(matrices.szp);
+    //     zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
+        
+    //     //// -------------------- TO ADD IN 
+    //     // FPS and gain handling
+    //     // float cal_gain = std::stof(cam.gain);
+    //     // float cal_fps = std::stof(cam.fps);
+
+    //     // if (override_gain_fps) {
+    //     //     fps = fps_override;
+    //     //     gain = gain_override;
+    //     //     std::cout << "[INFO] Overriding FPS = " << fps << ", Gain = " << gain << std::endl;
+    //     // } else {
+    //     //     fps = cal_fps;
+    //     //     gain = cal_gain;
+    //     //     std::cout << "[INFO] Using FPS and Gain from TOML: " << fps << ", " << gain << std::endl;
+    //     // }
+
+    //     // scale = gain / fps; // used for scaling I2M and references
+
+    //     // // Scale interaction matrices and reference intensities
+    //     // I2M_LO_runtime = scale * matrices.I2M_LO;
+    //     // I2M_HO_runtime = scale * matrices.I2M_HO;
+    //     // N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
+    //     // I0_dm_runtime = scale * reference_pupils.I0_dm;
+
+    //     // // Adjust dark frame using calibration gain vs runtime gain
+    //     // dark_dm_runtime = (1.0 / fps) * (cal_gain / gain) * reduction.dark_dm;
+
+    //     ///// ALSO 
+    //     // in baldr.cpp before main define!
+    //     // float gain_override = 1.0f;
+    //     // float fps_override = 1000.0f;
+    //     // bool override_gain_fps = false;
+
+    //     /// add to end of bldr.h
+    //     // extern float gain_override;
+    //     // extern float fps_override;
+    //     // extern bool override_gain_fps;
+
+
+    //     //// -------------------- 
+
+    //     // Convert the camera parameters (stored as strings) to doubles.
+    //     fps = std::stof(cam.fps);
+    //     gain = std::stof(cam.gain);
+    //     scale = gain / fps;
+        
+    //     // Scale matrices and reference intensities.
+    //     I2M_LO_runtime = scale * matrices.I2M_LO;
+    //     I2M_HO_runtime = scale * matrices.I2M_HO;
+    //     N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
+    //     I0_dm_runtime = scale * reference_pupils.I0_dm;
+        
+    //     // Normalize dark according to fps.
+    //     dark_dm_runtime = (1.0 / fps) * reduction.dark_dm;
+    //     //dark_dm_runtime = 1 / float(IM_cam_config["gain"]) *  scale * reduction.dark_dm;
+        
+    //     // Strehl model parameters.
+    //     // secondary_pixels is an Eigen column vector; use (4) to get the fifth element.
+    //     sec_idx = pixels.secondary_pixels(4);
+    //     m_s_runtime = scale * matrices.I2rms_sec(0, 0);
+    //     b_s_runtime = matrices.I2rms_sec(1, 1);
+    // }
 
     void validate() const {
         state.validate();
@@ -590,6 +633,10 @@ struct EncodedImage
 
 
 // -------- Extern global definitions ------------
+
+// Declare ZMQ functions
+
+
 // The static initial input parameters
 //extern toml::table config;
 //extern std::vector<toml::table> config; // initial configuration 
@@ -598,6 +645,9 @@ extern std::string phasemask;
 extern toml::table config;
 extern bdr_rtc_config rtc_config;
 
+//loop time - frame driven so don't use unless testing 
+//extern float loop_time ; //us 
+//extern bool loop_time_override ;
 
 //extern std::vector<bdr_rtc_config> rtc_config_list; // what the rtc will use and edit
 extern std::atomic<int> servo_mode; 

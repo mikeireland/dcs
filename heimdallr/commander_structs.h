@@ -16,8 +16,8 @@ template <> struct adl_serializer<EncodedImage> {
         j.at("message").get_to(p.message);
     }
    };
-template <> struct adl_serializer<status> {
-    static void to_json(json& j, const status& p) {
+template <> struct adl_serializer<Status> {
+    static void to_json(json& j, const Status& p) {
         j = json::object();
         j["gd_bl"] = p.gd_bl;
         j["pd_bl"] = p.pd_bl;
@@ -26,10 +26,13 @@ template <> struct adl_serializer<status> {
         j["gd_snr"] = p.gd_snr;
         j["pd_snr"] = p.pd_snr;
         j["pd_offset"] = p.pd_offset;
-        j["closure_phase"] = p.closure_phase;
+        j["closure_phase_K1"] = p.closure_phase_K1;
+        j["closure_phase_K2"] = p.closure_phase_K2;
+        j["v2_K1"] = p.v2_K1;
+        j["v2_K2"] = p.v2_K2;
     }
-    static void from_json(const json& j, status& p) {
-        p = status();
+    static void from_json(const json& j, Status& p) {
+        p = Status();
         j.at("gd_bl").get_to(p.gd_bl);
         j.at("pd_bl").get_to(p.pd_bl);
         j.at("gd_tel").get_to(p.gd_tel);
@@ -37,7 +40,10 @@ template <> struct adl_serializer<status> {
         j.at("gd_snr").get_to(p.gd_snr);
         j.at("pd_snr").get_to(p.pd_snr);
         j.at("pd_offset").get_to(p.pd_offset);
-        j.at("closure_phase").get_to(p.closure_phase);
+        j.at("closure_phase_K1").get_to(p.closure_phase_K1);
+        j.at("closure_phase_K2").get_to(p.closure_phase_K2);
+        j.at("v2_K1").get_to(p.v2_K1);
+        j.at("v2_K2").get_to(p.v2_K2);
     }
    };
 }

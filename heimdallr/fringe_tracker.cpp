@@ -94,13 +94,21 @@ void initialise_baselines(){
             baselines[i].gd_phasors[j] = 0;
         }
     }
+    // Reset bispectra variables for K1 and K2
     for (int i=0; i<N_CP; i++){
-        bispectra[i].n_bs_boxcar=MAX_N_BS_BOXCAR;
-        bispectra[i].ix_bs_boxcar=MAX_N_BS_BOXCAR-2;
-        bispectra[i].bs_phasor = 0;
-        bispectra[i].closure_phase = 0;
+        bispectra_K1[i].n_bs_boxcar=MAX_N_BS_BOXCAR;
+        bispectra_K1[i].ix_bs_boxcar=0;
+        bispectra_K1[i].bs_phasor = 0;
+        bispectra_K1[i].closure_phase = 0;
         for (int j=0; j<MAX_N_BS_BOXCAR; j++){
-            bispectra[i].bs_phasors[j] = 0;
+            bispectra_K1[i].bs_phasors[j] = 0;
+        }
+        bispectra_K2[i].n_bs_boxcar=MAX_N_BS_BOXCAR;
+        bispectra_K2[i].ix_bs_boxcar=0;
+        bispectra_K2[i].bs_phasor = 0;
+        bispectra_K2[i].closure_phase = 0;
+        for (int j=0; j<MAX_N_BS_BOXCAR; j++){
+            bispectra_K2[i].bs_phasors[j] = 0;
         }
     }
     float pix = config["geometry"]["pix"].value_or(24.0);
@@ -294,15 +302,7 @@ void fringe_tracker(){
         // Do the Fringe tracking! The error signal is the "delay" variable.
         // Only in this part do we ultiply by the K1 wavelength 
         // config["wave"]["K1"].value_or(2.05)
-struct ControlU{
-    Eigen::Vector4d dl;
-    Eigen::Vector4d piezo;
-    Eigen::Vector4d dm_piston;
-    Eigen::Vector4d search;
-    Eigen::Vector4d dl_offload;
-    double search_delta, omega_dl, dit;
-    unsigned int search_Nsteps, steps_to_turnaround;
-};
+
         // Just use a proportional servo on group delay with fixed gain of 0.5.
         if (servo_mode==SERVO_SIMPLE){
             // Compute the piezo control signal. !!!
@@ -331,29 +331,40 @@ struct ControlU{
 
         // Apply the DL offload if enough time has passed since the last offload. !!! Remove 2 zeros.
         clock_gettime(CLOCK_REALTIME, &now);
-        if (servo_mode != SERVO_OFF) if (now.tv_sec > last_dl_offload.tv_sec || 
+        if (now.tv_sec > last_dl_offload.tv_sec || 
             (now.tv_sec == last_dl_offload.tv_sec && now.tv_nsec - last_dl_offload.tv_nsec > offload_time_ms*1000000)){
             if (offload_mode == OFFLOAD_NESTED)
                 set_delay_lines(control_u.dl_offload);
             else if (offload_mode == OFFLOAD_GD)
-                set_delay_lines(gd_tel * config["wave"]["K1"].value_or(2.05));
+                add_to_delay_lines(-gd_tel * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
     
         // Now we sanity check by computing the bispectrum and closure phases.
-        // K1 only... (as this is a quick-look sanity check)
+        // K1 and K2, in case of tracking on resolved objects... 
         for (int cp=0; cp<N_CP; cp++){
-            int next_cp_ix = (bispectra[cp].ix_bs_boxcar + 1) % bispectra[cp].n_bs_boxcar;
+            int K1_ix = bispectra_K1[cp].ix_bs_boxcar;
+            int K2_ix = bispectra_K2[cp].ix_bs_boxcar;
             int bl1 = closure2bl[cp][0];
             int bl2 = closure2bl[cp][1];
             int bl3 = closure2bl[cp][2];
-            bispectra[cp].bs_phasors[next_cp_ix] = 
+            bispectra_K1[cp].bs_phasor -= bispectra_K1[cp].bs_phasors[K1_ix];
+            bispectra_K2[cp].bs_phasor -= bispectra_K2[cp].bs_phasors[K2_ix];
+            bispectra_K1[cp].bs_phasors[K1_ix] = 
                 K1_phasor[bl1] * K1_phasor[bl2] * std::conj(K1_phasor[bl3]);
-            bispectra[cp].bs_phasor += bispectra[cp].bs_phasors[next_cp_ix] - 
-                bispectra[cp].bs_phasors[bispectra[cp].ix_bs_boxcar];
-            bispectra[cp].closure_phase = std::arg(bispectra[cp].bs_phasor);
+            bispectra_K2[cp].bs_phasors[K2_ix] =
+                K2_phasor[bl1] * K2_phasor[bl2] * std::conj(K2_phasor[bl3]);
+            bispectra_K1[cp].bs_phasor += bispectra_K1[cp].bs_phasors[K1_ix];
+            bispectra_K2[cp].bs_phasor += bispectra_K2[cp].bs_phasors[K2_ix];
+            // Compute the closure phase.
+            bispectra_K1[cp].closure_phase = std::arg(bispectra_K1[cp].bs_phasor);
+            bispectra_K2[cp].closure_phase = std::arg(bispectra_K2[cp].bs_phasor);
+            // Increment the counters.
+            bispectra_K1[cp].ix_bs_boxcar = (bispectra_K1[cp].ix_bs_boxcar + 1) % bispectra_K1[cp].n_bs_boxcar;
+            bispectra_K2[cp].ix_bs_boxcar = (bispectra_K2[cp].ix_bs_boxcar + 1) % bispectra_K2[cp].n_bs_boxcar;
             //std::cout << "CP: " << cp << " Phase: " << bispectra[cp].closure_phase << std::endl;
         }
+
 #endif
     }
 }

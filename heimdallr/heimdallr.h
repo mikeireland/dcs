@@ -3,6 +3,7 @@
 #include <ImageStreamIO.h>
 #include <stdlib.h>
 #include <iostream>
+#include <atomic>
 #define TOML_HEADER_ONLY 0
 #include <toml.hpp>
 #include <mutex>
@@ -15,7 +16,7 @@
 
 //----------Defines-----------
 #define OPD_PER_DM_UNIT 6.0 
-#define OPD_PER_PIEZO_UNIT 0.3 
+#define OPD_PER_PIEZO_UNIT 0.26 
 
 #define FT_STARTING 0
 #define FT_RUNNING 1
@@ -43,6 +44,7 @@
 #define MAX_N_BS_BOXCAR 64   // Maximum number of frames to average for bispectrum
 #define MAX_N_PS_BOXCAR 64   // Maximum number of frames to average for power spectrum
 
+#define N_DARK_BOXCAR 256 // Number of frames for the running average of the dark.
 
 #define N_TEL 4 // Number of telescopes
 #define N_BL 6  // Number of baselines
@@ -130,12 +132,9 @@ struct ControlU{
 
 // This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
 struct ControlA{
-    double gd;
-    double pd;
-    double delay;
-    double pd_offset;
-    double delay_dm;
-    double delay_dl;
+    Eigen::Vector4d gd;
+    Eigen::Vector4d pd;
+    Eigen::Vector4d pd_offset;
 };
 
 struct Baseline{
@@ -175,7 +174,7 @@ struct EncodedImage
 
 // The status, encoded as std::vector<double> for 
 // key variables.
-struct status
+struct Status
 {
     std::vector<double> gd_bl;
     std::vector<double> pd_bl;
@@ -184,7 +183,10 @@ struct status
     std::vector<double> gd_snr;
     std::vector<double> pd_snr;
     std::vector<double> pd_offset;
-    std::vector<double> closure_phase;
+    std::vector<double> closure_phase_K1;
+    std::vector<double> closure_phase_K2;
+    std::vector<double> v2_K1;
+    std::vector<double> v2_K2;
 };
 //-------End of Commander structs------
 
@@ -201,10 +203,11 @@ extern PIDSettings pid_settings;
 extern ControlU control_u;
 extern ControlA control_a;
 extern Baseline baselines[N_BL];
-extern Bispectrum bispectra[N_CP];
+extern Bispectrum bispectra_K1[N_CP];
+extern Bispectrum bispectra_K2[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-extern std::mutex baseline_mutex, beam_mutex;
+extern std::mutex baseline_mutex, beam_mutex, status_mutex;
 
 // DL offload variables
 extern bool keep_offloading;
@@ -215,6 +218,9 @@ extern Eigen::Vector4d search_offset;
 // ForwardFt class
 class ForwardFt {   
 public:
+    // Save dark frames as an atomic variable
+    std::atomic<bool> save_dark_frames;
+    
     // Count of the frame number that has been processed
     long unsigned int cnt=0;
     
@@ -227,7 +233,8 @@ public:
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
     double *power_spectrum;
-    double *subim;
+    double *subim, *subim_av, *dark;
+    double *subim_boxcar[N_DARK_BOXCAR];
     double power_spectrum_bias;
     double power_spectrum_inst_bias;
     int ps_index = MAX_N_PS_BOXCAR-1;
@@ -265,6 +272,7 @@ extern ForwardFt *K1ft, *K2ft;
 
 // Delay line offloads
 void set_delay_lines(Eigen::Vector4d dl);
+void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);
 void dl_offload();
 void start_search(uint search_dl_in, double start, double stop, double rate);

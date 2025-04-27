@@ -2,6 +2,9 @@
 #include "baldr.h"
 #include <commander/commander.h>
 #include <math.h> // For old-style C mathematics if needed.
+#include <zmq.hpp>
+#include <string>
+#include <regex>
 // Commander struct definitions for json. This is in a separate file to keep the main code clean.
 #include "commander_structs.h"
 #include <atomic>
@@ -16,10 +19,16 @@ std::string phasemask;
 toml::table config;
 bdr_rtc_config rtc_config;
 
-// Forward declaration of global PID controllers 
-//extern PIDController ctrl_LO;
-//extern PIDController ctrl_HO; // this is now derived in rtc_config
 
+// Initialize global ZMQ variables
+zmq::context_t cam_zmq_context(1);
+zmq::socket_t cam_zmq_socket(cam_zmq_context, zmq::socket_type::req);
+std::string cam_host_str = "tcp://172.16.8.6:6667";
+bool cam_zmq_initialized = false;
+
+// loop time , not nessary when using semaphores for frames - but can be useful for testing 
+//float loop_time = 0.0f; // set later
+//bool loop_time_override = false;
 
 // int servo_mode;
 std::atomic<int> servo_mode; 
@@ -145,6 +154,45 @@ void PIDController::reset() {
 
 
 //----------helper functions from here---------------
+
+
+
+void init_cam_zmq() {
+    if (!cam_zmq_initialized) {
+        cam_zmq_socket.connect(cam_host_str);
+        cam_zmq_initialized = true;
+    }
+}
+
+std::string send_cam_cmd(const std::string& command) {
+    init_cam_zmq();
+    std::string full_cmd = "cli \"" + command + "\"";
+    cam_zmq_socket.send(zmq::buffer(full_cmd), zmq::send_flags::none);
+    zmq::message_t reply;
+    cam_zmq_socket.recv(reply, zmq::recv_flags::none);
+    return std::string(static_cast<char*>(reply.data()), reply.size());
+}
+
+std::string extract_value(const std::string& response) {
+    std::regex re("^\"\\s*(.*?)\\\\r\\\\n");
+    std::smatch match;
+    if (std::regex_search(response, match, re)) {
+        return match[1];
+    }
+    return "N/A";
+}
+
+float get_float_cam_param(const std::string& command) {
+    std::string response = send_cam_cmd(command);
+    std::string val_str = extract_value(response);
+    try {
+        return std::stof(val_str);
+    } catch (...) {
+        std::cerr << "Failed to convert camera response to float: " << val_str << std::endl;
+        return -1.0f;
+    }
+}
+
 
 // Helper function to split a comma-separated string into a vector of ints.
 std::vector<int> split_indices(const std::string &indices_str) {
@@ -736,14 +784,31 @@ COMMANDER_REGISTER(m)
 
 // configure like ./baldr 1 H3 
 int main(int argc, char* argv[]) {
-    // We expect pairs of arguments: <beam_id> <phaseMask>
+    // We expect arguments: <beam_id> <phaseMask>
     if (argc != 3) {
         std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1>" << std::endl;
         return 1;
     }
-    
+    // if (argc != 3 && argc != 4) {
+    //     std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1> [optional loop_time (us)]" << std::endl;
+    //     return 1;
+    // }
+
     beam_id = std::stoi(argv[1]);
     phasemask = argv[2];
+
+
+    // if (argc == 4) {
+    //     loop_time = std::stof(argv[3]);
+    //     loop_time_override = true;
+    //     if (loop_time <= 0.0f) {
+    //         std::cerr << "[ERROR] Invalid loop_time specified. Must be > 0." << std::endl;
+    //         return 1;
+    //     }
+    //     std::cout << "[INFO] User override loop_time = " << loop_time << " seconds (" << 1.0f / loop_time << " Hz)" << std::endl;
+    // }
+
+
     // Compute the configuration filename and parse the TOML file.
     std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";
     try {
@@ -760,6 +825,7 @@ int main(int argc, char* argv[]) {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
         std::cout << "after read in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
         rtc_config.initDerivedParameters();
+        std::cout << "finished init of run_time parameters" << std::endl;
         std::cout << "after initDerived parameters in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
 
         std::cout << "Initialized configuration for beam " << beam_id << std::endl;
@@ -767,6 +833,14 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
         return 1;
     }
+
+    // if user input for loop time then  - we should 
+    // if (!loop_time_override) {
+    //     loop_time = 1000000.0f / rtc_config.fps; // us seconds
+    //     std::cout << "[INFO] Default loop_time set from RTC config FPS: loop_time = " 
+    //               << loop_time << " seconds (" << rtc_config.fps << " Hz)" << std::endl;
+    // }
+
 
     // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
     // where N is the beam number.
@@ -840,7 +914,7 @@ int main(int argc, char* argv[]) {
 }
 
 
-//// gain and fps as inputs! 
+// gain and fps as inputs! 
 // int main(int argc, char* argv[]) {
 //     // Usage check
 //     if (argc < 3) {
@@ -853,21 +927,21 @@ int main(int argc, char* argv[]) {
 //     phasemask = argv[2];
 
 //     // Parse optional arguments
-// for (int i = 3; i < argc; ++i) {
-//     std::string arg = argv[i];
-//     if (arg == "--gain" && i + 1 < argc) {
-//         gain_override = std::stof(argv[++i]);
-//         override_gain_fps = true;
-//         std::cout << "Setting gain = " << gain_override << std::endl;
-//     } else if (arg == "--fps" && i + 1 < argc) {
-//         fps_override = std::stof(argv[++i]);
-//         override_gain_fps = true;
-//         std::cout << "Setting fps = " << fps_override << std::endl;
-//     } else {
-//         std::cerr << "[ERROR] Unknown or incomplete argument: " << arg << std::endl;
-//         return 1;
+//     for (int i = 3; i < argc; ++i) {
+//         std::string arg = argv[i];
+//         if (arg == "--gain" && i + 1 < argc) {
+//             gain_override = std::stof(argv[++i]);
+//             override_gain_fps = true;
+//             std::cout << "Setting gain = " << gain_override << std::endl;
+//         } else if (arg == "--fps" && i + 1 < argc) {
+//             fps_override = std::stof(argv[++i]);
+//             override_gain_fps = true;
+//             std::cout << "Setting fps = " << fps_override << std::endl;
+//         } else {
+//             std::cerr << "[ERROR] Unknown or incomplete argument: " << arg << std::endl;
+//             return 1;
+//         }
 //     }
-// }
 
 //     // Construct config filename and parse
 //     std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";

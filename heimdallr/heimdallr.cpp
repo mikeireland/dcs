@@ -20,10 +20,11 @@ PIDSettings pid_settings;
 ControlU control_u;
 ControlA control_a;
 Baseline baselines[N_BL];
-Bispectrum bispectra[N_CP];
+Bispectrum bispectra_K1[N_CP];
+Bispectrum bispectra_K2[N_CP];
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
-std::mutex baseline_mutex, beam_mutex;
+std::mutex baseline_mutex, beam_mutex, status_mutex;
 
 //The forward Fourier transforms
 ForwardFt *K1ft, *K2ft;
@@ -202,6 +203,31 @@ EncodedImage get_ps(std::string filter) {
     return ei; //encoded_ps;  
 }
 
+void save_dark() {
+    // Save the dark frames for K1 and K2
+    K1ft->save_dark_frames = true;
+    K2ft->save_dark_frames = true;
+}
+
+Status get_status() {
+    // Get the status of the system. This is a simple struct with the
+    // values we want to send back to the commander.
+    Status status;
+    status.gd_bl = std::vector<double>(N_BL);
+    status.pd_bl = std::vector<double>(N_BL);
+    status.gd_tel = std::vector<double>(N_TEL);
+    status.pd_tel = std::vector<double>(N_TEL);
+    status.gd_snr = std::vector<double>(N_BL);
+    status.pd_snr = std::vector<double>(N_BL);
+    status.pd_offset = std::vector<double>(N_TEL);
+    status.closure_phase_K1 = std::vector<double>(N_CP);
+    status.closure_phase_K2 = std::vector<double>(N_CP);
+    status.v2_K1 = std::vector<double>(N_CP);
+    status.v2_K2 = std::vector<double>(N_CP);
+
+    return status;
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -216,6 +242,9 @@ COMMANDER_REGISTER(m)
     m.def("offload_time", set_offload_time, "Set the offload time in ms", "time"_arg=1000);
     m.def("set_search_offset", set_search_offset, "Set the search offset in microns", 
         "offset"_arg=std::vector<double>(N_TEL, 0.0));
+    m.def("dark", save_dark, "Save the dark frames");
+    m.def("delay_line", set_delay_line, "Set a delay line value in microns", 
+        "beam"_arg, "value"_arg=0.0);
  }
 
 int main(int argc, char* argv[]) {

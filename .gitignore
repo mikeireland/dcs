@@ -41,3 +41,4 @@ build/
 calibration_frames/products/
 
 baldr/figs/
+baldr/latency_test_results/

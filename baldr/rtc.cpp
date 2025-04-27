@@ -475,10 +475,10 @@ void rtc(){
     int semid = 1 ; //ImageStreamIO_getsemwaitindex(&subarray, /*preferred*/ 0);
     //int semid_dm = ImageStreamIO_getsemwaitindex(&dm_rtc0, /*preferred*/ 1);
 
-    // LOOP SPEED (us)
+    // LOOP SPEED (us) - with camera sem this isn not necessary but can be used for testing ! 
     //std::chrono::microseconds loop_time( 1000 ); //static_cast<long long>(1.0/fps * 1e6) ); // microseconds - set speed of loop 
-    constexpr auto loop_time = std::chrono::microseconds(1400); //(5000); //  200Hz #1 kHz
-    auto next_tick = std::chrono::steady_clock::now();
+    //constexpr auto loop_time = std::chrono::microseconds( loop_time ); //1400); //(5000); //  200Hz #1 kHz
+    //auto next_tick = std::chrono::steady_clock::now();
 
     // ------------------- to try
     // //to try 
@@ -867,26 +867,42 @@ void rtc(){
             //std::cout << ", c_HO size: " << c_HO.size() << std::endl;
             rtc_config.telem.c_HO.push_back(c_HO);          // 'c_HO' is Eigen::VectorXd
 
+
+            rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
+
+            // --- Calculate SNR ---
+            double sum = sig.sum();
+            double sumsq = sig.squaredNorm();
+            double mean = sum / sig.size();
+            double variance = (sumsq / sig.size()) - (mean * mean);
+            double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
+            double snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+
+            // Add to telemetry
+            rtc_config.telem.snr.push_back(snr_value);
+                        
+
+
             // Increment the counter.
             rtc_config.telem.counter++;
         }
 
         // -------------------- DEAD TIME BEGINS HERE 
         // schedule next wakeup
-        next_tick += loop_time;
-        std::this_thread::sleep_until(next_tick);
+        // next_tick += loop_time;
+        // std::this_thread::sleep_until(next_tick);
 
         // detect overrun
-        auto now = std::chrono::steady_clock::now();
-        if (now > next_tick) {
-            auto over = now - next_tick;
-            //std::cerr<<"Loop overran by "
-            //       << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
-            //       <<" μs\n";
-        }
+        // auto now = std::chrono::steady_clock::now();
+        // if (now > next_tick) {
+        //     auto over = now - next_tick;
+        //     //std::cerr<<"Loop overran by "
+        //     //       << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
+        //     //       <<" μs\n";
+        // }
         
-        end = std::chrono::steady_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        // end = std::chrono::steady_clock::now();
+        // duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
         //std::cout << "duration microsec:  " << duration.count() << std::endl;

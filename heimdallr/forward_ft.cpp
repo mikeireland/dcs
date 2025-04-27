@@ -2,6 +2,7 @@
 //#define PRINT_TIMING
 
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
+    save_dark_frames=false;
      subarray = subarray_in;
     // Sanity check that we actually have a 2D , square image
     if (subarray->md->naxis != 2) {
@@ -14,7 +15,31 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
     // Allocate memory for the Fourier transform and plan it.
     ft = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * subim_sz * (subim_sz / 2 + 1));
     subim = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
- 
+    
+    // Also allocate memory for the subimage average and the boxcar frames.
+    dark = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
+    subim_av = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
+    for (int ii=0; ii<N_DARK_BOXCAR; ii++) {
+        subim_boxcar[ii] = (double*) fftw_malloc(sizeof(double) * subim_sz * subim_sz);
+    }
+    // Initialise the subimage average and saved dark to zero
+    // !!! Once we're really set up, the dark should be set to a previously
+    // saved dark calibration frame for our mode !!!
+    for (unsigned int ii=0; ii<subim_sz; ii++) {
+        for (unsigned int jj=0; jj<subim_sz; jj++) {
+            subim_av[ii*subim_sz + jj] = 0.0;
+            dark[ii*subim_sz + jj] = 0.0;
+        }
+    }
+    // Initialise the boxcar frames to zero
+    for (unsigned int ii=0; ii<subim_sz; ii++) {
+        for (unsigned int jj=0; jj<subim_sz; jj++) {
+            for (int kk=0; kk<N_DARK_BOXCAR; kk++) {
+                subim_boxcar[kk][ii*subim_sz + jj] = 0.0;
+            }
+        }
+    }
+
     // Create the plan
     plan = fftw_plan_dft_r2c_2d(subim_sz, subim_sz, subim, ft, FFTW_MEASURE);
 
@@ -26,11 +51,18 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
         power_spectra[ii] = (double*) fftw_malloc(sizeof(double) * subim_sz * (subim_sz / 2 + 1));
         //power_spectra[ii-1] + subim_sz * (subim_sz / 2 + 1);
     }
-    // Initialise the window to 1.0 everywhere
-    for (unsigned int ii=0; ii<subim_sz; ii++) {
-        for (unsigned int jj=0; jj<subim_sz; jj++) {
-            window[ii*subim_sz + jj] = 1.0;
+    // Initialise the window to a super-Gaussian with a 1/e^2 width equal to the image size.
+    // !!! Probably the window should be centered on a half pixel.
+    int ssz = (int)subim_sz;
+    for (int ii=0; ii<ssz; ii++) {
+        for (int jj=0; jj<(int)ssz; jj++) {
+            double temp = ((double)(ii - (int)ssz / 2) * (double)(ii - ssz / 2) +
+            (double)(jj - ssz / 2) * (double)(jj - ssz / 2)) /
+            (double)(ssz / 2) / (double)(ssz / 2);
+            window[ii*subim_sz + jj] = std::exp(-temp*temp);
         }
+    }
+    for (unsigned int ii=0; ii<subim_sz; ii++) {
         // Also initialise the power spectrum array
         for (unsigned int jj=0; jj<subim_sz / 2 + 1; jj++) {
             for (int kk=0; kk<MAX_N_PS_BOXCAR; kk++) {
@@ -75,12 +107,8 @@ void ForwardFt::loop() {
                     ii_shift = (ii + subim_sz/2) % subim_sz;
                     jj_shift = (jj + subim_sz/2) % subim_sz;
                     subim[ii_shift*subim_sz + jj_shift] = 
-                        (double)(subarray->array.UI16[ii*subim_sz + jj])
-                            * window[ii*subim_sz + jj] - 100;
-                    // K2 bad pixel
-                    if ((jj==18) && (ii==1)) subim[ii_shift*subim_sz + jj_shift] = 0.0;
-                    // K1 bad pixel
-                    if ((jj==29) && (ii==9)) subim[ii_shift*subim_sz + jj_shift] = 0.0;
+                        ((double)(subarray->array.UI16[ii*subim_sz + jj]) - dark[ii*subim_sz + jj_shift]) 
+                            * window[ii*subim_sz + jj];
                 }
             }
             // Do the FFT, and then indicate that the frame has been processed
@@ -129,11 +157,31 @@ void ForwardFt::loop() {
                 std::cout << "PS time: " << now.tv_nsec-then.tv_nsec << std::endl;
             then = now;
 #endif
-
             // As long as this is the same type as cnt0, it should wrap around correctly
             // The reason it is here and not before power spectrum computation is because we need at
             // lease 1 power spectrum in order for the group delay.
             cnt++;
+
+            // Now we need to boxcar average the dark frames. 
+            int ix = cnt % N_DARK_BOXCAR;
+            for (unsigned int ii=0; ii<subim_sz; ii++) {
+                for (unsigned int jj=0; jj<subim_sz; jj++) {
+                    subim_av[ii*subim_sz + jj] -= 
+                        subim_boxcar[ix][ii*subim_sz + jj];
+                    subim_boxcar[ix][ii*subim_sz + jj] = 
+                        (double)(subarray->array.UI16[ii*subim_sz + jj])/N_DARK_BOXCAR;
+                    subim_av[ii*subim_sz + jj] +=
+                        subim_boxcar[ix][ii*subim_sz + jj];
+                }
+            }
+            if (save_dark_frames) {
+                for (unsigned int ii=0; ii<subim_sz; ii++) {
+                    for (unsigned int jj=0; jj<subim_sz; jj++) {
+                        dark[ii*subim_sz + jj] = subim_av[ii*subim_sz + jj];
+                    }
+                }
+                save_dark_frames = false;
+            }
 
             //std::cout << subarray->name << ": " << cnt << std::endl;
         } else usleep(100); //!!! Need a semaphore here if "nearly" ready for the FT
