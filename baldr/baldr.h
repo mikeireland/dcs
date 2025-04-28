@@ -184,10 +184,20 @@ struct bdr_refence_pupils {
     Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels (ADU)
     Eigen::VectorXd I0_dm;      // Interpolated to DM pixels (ADU)
     
-
+    // update all dm reference pupils
     void project_to_dm( Eigen::MatrixXd I2A ){
         norm_pupil_dm = I2A * norm_pupil; 
         I0_dm = I2A * I0; 
+    }
+
+    // to do them seperately if we want to update 
+    void project_I0_to_dm( Eigen::MatrixXd I2A ){
+        I0_dm = I2A * I0; 
+    }
+
+    // to do them seperately if we want to update 
+    void project_N0norm_to_dm( Eigen::MatrixXd I2A ){
+        norm_pupil_dm = I2A * norm_pupil; 
     }
 
 

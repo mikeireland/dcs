@@ -1,6 +1,6 @@
 // latency_test.cpp
 
-#include "baldr.h"             // for IMAGE, updateDMSharedMemory
+#include "../baldr.h"             // for IMAGE, updateDMSharedMemory
 #include <ImageStreamIO.h>
 #include <Eigen/Dense>
 #include <nlohmann/json.hpp>
@@ -195,9 +195,12 @@ int main(int argc, char** argv) {
     j["poke_values"]   = poke_vals;
     j["images"]        = images;
 
-    std::ofstream ofs("/home/asg/Music/latency_telem.json");
+    std::ostringstream oss;
+    oss << "/home/asg/Music/latency_telem_beam" << beam_id << ".json";
+
+    std::ofstream ofs(oss.str());
     ofs << j.dump(2) << std::endl;
-    std::cout << "Wrote telemetry to /home/asg/Music/latency_telem.json\n";
+    std::cout << "Wrote telemetry to /home/asg/Music/latency_telem_beam#.json\n";
 
     return 0;
 }

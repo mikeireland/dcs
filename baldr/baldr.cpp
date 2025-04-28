@@ -365,7 +365,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 
             try{
                 // method in reference_pupils to project them onto registered DM pixels and fill rtc.reference_pupils.norm_pupil_dm, rtc.reference_pupils.I0_dm
-                rtc.reference_pupils.project_to_dm( rtc.matrices.I2A ); 
+                rtc.reference_pupils.project_to_dm( rtc.matrices.I2A );  // does both I0 and N0
                 // same for darks and bias (put on DM)
                 rtc.reduction.project_to_dm( rtc.matrices.I2A );
                 // project all the filters to get a weighted filter in dm space
@@ -475,6 +475,104 @@ void open_baldr_HO() {
     servo_mode_HO = SERVO_OPEN;
     std::cout << "servo_mode_HO updated to  " << servo_mode_HO << ". Opening Baldr HO modes" << std::endl;
 }
+
+
+
+void I0_update() {
+    if (rtc_config.telem.img_dm.empty()) {
+        std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
+        return;
+    }
+
+    // Initialize a sum vector with zeros, same size as first vector in img_dm
+    Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
+
+    size_t count = 0;
+    for (const auto& v : rtc_config.telem.img_dm) {
+        if (v.size() != sum.size()) {
+            std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
+            continue; // Skip badly-sized vector
+        }
+        sum += v;
+        ++count;
+    }
+
+    if (count == 0) {
+        std::cerr << "[I0_update] Error: no valid vectors found for averaging." << std::endl;
+        return;
+    }
+
+    // Compute average
+    rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
+
+    std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
+}
+
+
+void N0_update() {
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+    // Check if telemetry buffer is non-empty
+    if (rtc_config.telem.img.empty()) {
+        std::cerr << "[N0_update] Error: telemetry img buffer is empty." << std::endl;
+        return;
+    }
+
+    const auto& telemetry_frames = rtc_config.telem.img;
+    Eigen::Index P = telemetry_frames[0].size();  // Now signed type
+
+    // Compute average image across time
+    Eigen::VectorXd avg = Eigen::VectorXd::Zero(P);
+    for (const auto& frame : telemetry_frames) {
+        if (frame.size() != P) {
+            std::cerr << "[N0_update] Warning: frame size mismatch in telemetry img buffer." << std::endl;
+            continue;
+        }
+        avg += frame;
+    }
+    avg /= static_cast<double>(telemetry_frames.size());
+
+    // Check that inner pupil filter matches image size
+    if (rtc_config.filters.inner_pupil_filt.size() != P) {
+        std::cerr << "[N0_update] Error: inner pupil filter size does not match image size." << std::endl;
+        return;
+    }
+
+    // Compute the mean inside the pupil
+    double sum = 0.0;
+    int count = 0;
+    for (Eigen::Index i = 0; i < P; ++i) {
+        if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
+            sum += avg(i);
+            ++count;
+        }
+    }
+
+    if (count == 0) {
+        std::cerr << "[N0_update] Error: no valid pixels inside pupil mask." << std::endl;
+        return;
+    }
+
+    double inner_mean = sum / static_cast<double>(count);
+
+    // Set pixels outside the pupil to the inner mean
+    for (Eigen::Index i = 0; i < P; ++i) {
+        if (rtc_config.filters.inner_pupil_filt(i) <= 0.5) {
+            avg(i) = inner_mean;
+        }
+    }
+
+    // Save result into rtc_config reference pupils
+    rtc_config.reference_pupils.norm_pupil = avg;
+
+    // Project into DM space
+    rtc_config.reference_pupils.project_N0norm_to_dm(rtc_config.matrices.I2A);
+
+    // finally update the run-time version of it
+    rtc_config.N0_dm_runtime = rtc_config.reference_pupils.norm_pupil_dm; // we dont need gain / fps scaling since we are in the use mode
+    std::cout << "[N0_update] Successfully updated norm_pupil and norm_pupil_dm." << std::endl;
+}
+
 
 
 // Function to update the capacity of the telemetry image ring buffer.
@@ -769,6 +867,12 @@ COMMANDER_REGISTER(m)
           "Set the capacity for all telemetry ring buffers (how many samples we hold). e.g: set_telem_capacity [200]",
           "args"_arg);
 
+    m.def("I0_update", I0_update,
+            "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
+            
+    m.def("N0_update", N0_update,
+            "Update N0 reference: averages img telemetry, corrects exterior pixels, and projects to DM space");
+            
     m.def("set_telem_save_format", set_telem_save_format,
           "Update the telemetry output format. Acceptable values: \"json\", \"fits\".\n"
           "Usage: set_telem_format [\"json\"] or set_telem_format [\"fits\"]",
