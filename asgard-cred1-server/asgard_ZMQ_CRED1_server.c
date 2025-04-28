@@ -64,8 +64,11 @@ typedef struct {
  * full image reference frame!
  * ========================================================================= */
 typedef struct {
-  char name[6];
-  int x0, y0, xsz, ysz;
+  char name[6];          // name of the live image
+  int x0, y0, xsz, ysz;  // corner coordinate and size of ROIs
+  int nrs;               // number of readouts in a sequence
+  char _name[8];         // name of the multiple reads data cube
+  // int *sign;          // time signature (ex: [-1, -1, 2])
 } subarray;
 
 /* =========================================================================
@@ -74,7 +77,7 @@ typedef struct {
 
 // threads
 void *fetch_imgs(void *arg);
-void *split_imgs(void *arg);
+// void *split_imgs(void *arg);
 void *save_cube_to_fits(void *_cube);
 
 // camera serial interaction commands
@@ -120,7 +123,8 @@ PdvDev pdv_p = NULL; // handle for data camera link
 int unit = 0;
 
 IMAGE *shm_img = NULL;    // shared memory img pointer
-IMAGE *shm_ROI = NULL;    // pointer to the different shared memory ROI
+IMAGE *shm_ROI_live = NULL;    // pointer to the different shared memory ROI
+IMAGE *shm_ROI_ndmr = NULL;    // pointer to the SHM to temporarily store NDMR ROIs
 unsigned short *tosave = NULL; // holder for the cube to be saved to FITS
 
 int keepgoing = 0;        // flag to control the image fetching loop
@@ -190,11 +194,14 @@ void refresh_image_splitting_configuration() {
     cJSON *item = NULL;
     cJSON_ArrayForEach(item, json_root) {
       const char *name = item->string;
+      printf("Name = %s\n", name);
       sprintf(ROI[ii].name, "%s", name);
+      sprintf(ROI[ii]._name, "_%s", name);
       ROI[ii].x0  = cJSON_GetObjectItem(item, "x0")->valueint;
       ROI[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
       ROI[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
       ROI[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
+      ROI[ii].nrs = 3; // for now, 3 reads only!
       ii++;
     }
     // update y0 coordinates of the Baldr ROI if cropmode is on
@@ -213,7 +220,7 @@ void refresh_image_splitting_configuration() {
 }
 
 /* =========================================================================
- *      figure out the most aggressive possible cropping parameters
+ *       figure out the most aggressive possible cropping parameters
  * ========================================================================= */
 void optimize_cropping_parameters() {
   camconf->bal_min_row = 255;  // reset values to initial
@@ -337,6 +344,7 @@ void shm_setup(int roi_too) {
   char shmname[20];
   uint32_t imsize[3] = {camconf->width, camconf->height, camconf->nbreads};
   uint32_t roisize[2];
+  uint32_t nd_roisize[3];  // for NDMR camera mode
 
   // =========================== primary SHM ===============================
   if (shm_img != NULL) {
@@ -361,20 +369,39 @@ void shm_setup(int roi_too) {
 
   // =========================== create ROIs ===============================
   if (roi_too == 1) {
-    if (shm_ROI != NULL) {
-      ImageStreamIO_destroyIm(shm_ROI);
-      free(shm_ROI);
-      shm_ROI = NULL;
+    // ================== the case of the "live" ROI =======================
+    if (shm_ROI_live != NULL) {
+      ImageStreamIO_destroyIm(shm_ROI_live);
+      free(shm_ROI_live);
+      shm_ROI_live = NULL;
     }
 
     naxis = 2;
-    shm_ROI = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
+    shm_ROI_live = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
   
     for (int ii = 0; ii < nroi; ii++) {
       roisize[0] = ROI[ii].xsz;
       roisize[1] = ROI[ii].ysz;
-      ImageStreamIO_createIm_gpu(&shm_ROI[ii], ROI[ii].name, naxis,
+      ImageStreamIO_createIm_gpu(&shm_ROI_live[ii], ROI[ii].name, naxis,
 				 roisize, atype, -1, shared,
+				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
+    }
+    // ======================== the case of NDMR ROI =======================
+    if (shm_ROI_ndmr != NULL) {
+      ImageStreamIO_destroyIm(shm_ROI_ndmr);
+      free(shm_ROI_ndmr);
+      shm_ROI_ndmr = NULL;
+    }
+
+    naxis = 3;
+    shm_ROI_ndmr = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
+  
+    for (int ii = 0; ii < nroi; ii++) {
+      nd_roisize[0] = ROI[ii].xsz;
+      nd_roisize[1] = ROI[ii].ysz;
+      nd_roisize[2] = ROI[ii].nrs;
+      ImageStreamIO_createIm_gpu(&shm_ROI_ndmr[ii], ROI[ii]._name, naxis,
+				 nd_roisize, atype, -1, shared,
 				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
     }
   }
@@ -395,12 +422,19 @@ void free_shm(int roi_too) {
   free(tosave);  // the holder for the data to save to disk
 
   if (roi_too == 1) {
-    if (shm_ROI != NULL) {
+    if (shm_ROI_live != NULL) {
       for (ii= 0; ii < nroi; ii++) {
-	ImageStreamIO_destroyIm(&shm_ROI[ii]);
+	ImageStreamIO_destroyIm(&shm_ROI_live[ii]);
       }
-      free(shm_ROI);
-      shm_ROI = NULL;
+      free(shm_ROI_live);
+      shm_ROI_live = NULL;
+    }
+    if (shm_ROI_ndmr != NULL) {
+      for (ii= 0; ii < nroi; ii++) {
+	ImageStreamIO_destroyIm(&shm_ROI_ndmr[ii]);
+      }
+      free(shm_ROI_ndmr);
+      shm_ROI_ndmr = NULL;
     }
   }
 }
@@ -579,22 +613,22 @@ void* fetch_imgs(void *arg) {
       // =============================
       if (splitmode == 1) {
 	for (ri = 0; ri < nroi; ri++) {
-	  liveroi = shm_ROI[ri].array.UI16; // live ROI data pointer
-	  xsz = shm_ROI[ri].md->size[0];
-	  ysz = shm_ROI[ri].md->size[1];
+	  liveroi = shm_ROI_live[ri].array.UI16; // live ROI data pointer
+	  xsz = shm_ROI_live[ri].md->size[0];
+	  ysz = shm_ROI_live[ri].md->size[1];
 	  x0 = ROI[ri].x0;
 	  y0 = ROI[ri].y0;
 
-	  shm_ROI[ri].md->write = 1;
+	  shm_ROI_live[ri].md->write = 1;
 	  for (jj = 0; jj < ysz; jj++) {
 	    for (ii = 0; ii < xsz; ii++) {
 	      liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
 	    }
 	  }
-	  shm_ROI[ri].md->write = 0;
-	  ImageStreamIO_sempost(&shm_ROI[ri], -1);
-	  shm_ROI[ri].md->cnt0++;
-	  shm_ROI[ri].md->cnt1++;
+	  shm_ROI_live[ri].md->write = 0;
+	  ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
+	  shm_ROI_live[ri].md->cnt0++;
+	  shm_ROI_live[ri].md->cnt1++;
 	}
       }
 
@@ -633,37 +667,37 @@ void* fetch_imgs(void *arg) {
 /* =========================================================================
  *                    Image splitting into ROIs thread
  * ========================================================================= */
-void* split_imgs(void* arg) {
-  int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
-  unsigned short *liveroi, *liveimg;
-  int ixsz, xsz, ysz, x0, y0;
+/* void* split_imgs(void* arg) { */
+/*   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index */
+/*   unsigned short *liveroi, *liveimg; */
+/*   int ixsz, xsz, ysz, x0, y0; */
 
-  while (keepgoing > 0) {
-    ImageStreamIO_semwait(shm_img, 1);  // waiting for image update
-    liveimg = shm_img->array.UI16 + shm_img->md->cnt1 * camconf->nbpix_frm;
-    ixsz = shm_img->md->size[0];
+/*   while (keepgoing > 0) { */
+/*     ImageStreamIO_semwait(shm_img, 1);  // waiting for image update */
+/*     liveimg = shm_img->array.UI16 + shm_img->md->cnt1 * camconf->nbpix_frm; */
+/*     ixsz = shm_img->md->size[0]; */
     
-    for (ri = 0; ri < nroi; ri++) {
-      liveroi = shm_ROI[ri].array.UI16; // live ROI data pointer
-      xsz = shm_ROI[ri].md->size[0];
-      ysz = shm_ROI[ri].md->size[1];
-      x0 = ROI[ri].x0;
-      y0 = ROI[ri].y0;
+/*     for (ri = 0; ri < nroi; ri++) { */
+/*       liveroi = shm_ROI_live[ri].array.UI16; // live ROI data pointer */
+/*       xsz = shm_ROI_live[ri].md->size[0]; */
+/*       ysz = shm_ROI_live[ri].md->size[1]; */
+/*       x0 = ROI[ri].x0; */
+/*       y0 = ROI[ri].y0; */
 
-      shm_ROI[ri].md->write = 1;
-      for (jj = 0; jj < ysz; jj++) {
-	for (ii = 0; ii < xsz; ii++) {
-	  liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
-	}
-      }
-      shm_ROI[ri].md->write = 0;
-      ImageStreamIO_sempost(&shm_ROI[ri], -1);
-      shm_ROI[ri].md->cnt0++;
-      shm_ROI[ri].md->cnt1++;
-    }
-  }
-  return NULL;
-}
+/*       shm_ROI_live[ri].md->write = 1; */
+/*       for (jj = 0; jj < ysz; jj++) { */
+/* 	for (ii = 0; ii < xsz; ii++) { */
+/* 	  liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0]; */
+/* 	} */
+/*       } */
+/*       shm_ROI_live[ri].md->write = 0; */
+/*       ImageStreamIO_sempost(&shm_ROI_live[ri], -1); */
+/*       shm_ROI_live[ri].md->cnt0++; */
+/*       shm_ROI_live[ri].md->cnt1++; */
+/*     } */
+/*   } */
+/*   return NULL; */
+/* } */
 
 
 /* =========================================================================
