@@ -172,11 +172,11 @@ def main():
     side = int(np.sqrt(images.shape[1]))
 
     plot_time_series(timestamps, images, selected_idx, poke_vals,
-                     'combined_timeseries.png')
+                     '/home/asg/Music/combined_timeseries.png')
     plot_overlay(mean_on, selected_idx, side,
-                 'combined_overlay.png')
+                 '/home/asg/Music/combined_overlay.png')
     plot_detailed_latency(images, timestamps, poke_vals, selected_idx,
-                          args.max_offset, 'combined_latency_trace.png')
+                          args.max_offset, '/home/asg/Music/combined_latency_trace.png')
 
 if __name__ == "__main__":
     main()

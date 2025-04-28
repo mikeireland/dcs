@@ -50,7 +50,7 @@ def main(json_file, top_fraction=0.05, window_length=50, nfft=512):
     plt.ylabel('Response amplitude')
     plt.title('Average Impulse Response')
     plt.tight_layout()
-    plt.savefig('impulse_response.png')
+    plt.savefig('/home/asg/Music/impulse_response.png')
     plt.close()
     print("Saved impulse response to impulse_response.png")
 
@@ -71,7 +71,7 @@ def main(json_file, top_fraction=0.05, window_length=50, nfft=512):
     ax2.grid(True, ls='--', alpha=0.5)
 
     plt.tight_layout()
-    plt.savefig('frequency_response.png')
+    plt.savefig('/home/asg/Music/frequency_response.png')
     plt.close(fig)
     print("Saved frequency response to frequency_response.png")
 

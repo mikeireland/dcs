@@ -1,6 +1,7 @@
 CC=g++
 
-CFLAGS  = -std=c++17 -Wall -Wextra -g -O3 -ggdb -I/Documents/dcs/libImageStreamIO -I/usr/include/eigen3
+# -ggdb and -g  for debugging
+CFLAGS  = -std=c++17 -Wall -Wextra -O3 -march=native -I/Documents/dcs/libImageStreamIO -I/usr/include/eigen3
 #pthread is only needed for ImageStreamIO
 LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lb64 -lboost_program_options -lfmt -lpthread -lcfitsio
 EXEC    = baldr

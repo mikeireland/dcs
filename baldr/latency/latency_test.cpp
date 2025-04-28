@@ -195,9 +195,9 @@ int main(int argc, char** argv) {
     j["poke_values"]   = poke_vals;
     j["images"]        = images;
 
-    std::ofstream ofs("latency_telem.json");
+    std::ofstream ofs("/home/asg/Music/latency_telem.json");
     ofs << j.dump(2) << std::endl;
-    std::cout << "Wrote telemetry to latency_telem.json\n";
+    std::cout << "Wrote telemetry to /home/asg/Music/latency_telem.json\n";
 
     return 0;
 }

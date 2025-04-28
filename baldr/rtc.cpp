@@ -528,7 +528,8 @@ void rtc(){
         //     std::cout<< "flushed semaphores amd resuming" << std::endl;
         // }
 
-        start = std::chrono::steady_clock::now();
+        // if we want to measure latency including wainting for neew frame 
+        //start = std::chrono::steady_clock::now();
 
 
         //img =  getFrameFromSharedMemory(32*32); //32*32);
@@ -537,6 +538,9 @@ void rtc(){
 
         ImageStreamIO_semwait(&subarray, 1); //semid);
 
+        // to measure calculation time (seems around 110us)
+        //start = std::chrono::steady_clock::now();
+        
         // check skipped frames 
         //std::cout << subarray.md->cnt0 << std::endl;
 
@@ -757,6 +761,10 @@ void rtc(){
         dmCmd = -1 * (c_LO + c_HO);
         /// =========================================
 
+        // remove piston 
+
+
+
         //if (dmCmd.cwiseAbs().maxCoeff() > 0) {
         //    std::cout << "max dmCmd = " << dmCmd.cwiseAbs().maxCoeff() << std::endl;
         //};
@@ -916,8 +924,8 @@ void rtc(){
         //     //       <<" μs\n";
         // }
         
-        // end = std::chrono::steady_clock::now();
-        // duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        //end = std::chrono::steady_clock::now();
+        //duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
         // with telemetry and everything typically 220us loop without sleep (5kHz)
         //std::cout << "duration microsec:  " << duration.count() << std::endl;

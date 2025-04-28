@@ -5,6 +5,7 @@
 #include <zmq.hpp>
 #include <string>
 #include <regex>
+#include <filesystem> //C++ 17
 // Commander struct definitions for json. This is in a separate file to keep the main code clean.
 #include "commander_structs.h"
 #include <atomic>
@@ -36,7 +37,7 @@ std::atomic<int> servo_mode_LO;
 std::atomic<int> servo_mode_HO;
 // int servo_mode_LO;
 // int servo_mode_HO;
-std::string telemFormat = "json";
+std::string telemFormat = "fits";//"json";
 //vector::<int> telescopes;
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
@@ -155,6 +156,39 @@ void PIDController::reset() {
 
 //----------helper functions from here---------------
 
+
+// Function to find the most recent config file for a given beam
+std::string find_latest_config_file(int beam_id) {
+    const std::string base_dir = "/usr/local/etc/baldr/rtc_config/";
+    const std::string filename_prefix = "baldr_config_" + std::to_string(beam_id) + "_";
+    const std::string filename_suffix = ".toml";
+
+    std::vector<std::filesystem::directory_entry> matching_files;
+
+    for (const auto& dir_entry : std::filesystem::recursive_directory_iterator(base_dir)) {
+        if (dir_entry.is_regular_file()) {
+            const std::string filename = dir_entry.path().filename().string();
+            if (filename.size() >= filename_prefix.size() + filename_suffix.size() &&
+                filename.substr(0, filename_prefix.size()) == filename_prefix &&
+                filename.substr(filename.size() - filename_suffix.size()) == filename_suffix) {
+                matching_files.push_back(dir_entry);
+            }
+        }
+    }
+
+    if (matching_files.empty()) {
+        throw std::runtime_error("No config file found for beam " + std::to_string(beam_id));
+    }
+
+    // Sort newest first based on filename (descending)
+    std::sort(matching_files.begin(), matching_files.end(),
+        [](const std::filesystem::directory_entry& a, const std::filesystem::directory_entry& b) {
+            return a.path().filename().string() > b.path().filename().string();
+        }
+    );
+
+    return matching_files.front().path().string();
+}
 
 
 void init_cam_zmq() {
@@ -810,7 +844,17 @@ int main(int argc, char* argv[]) {
 
 
     // Compute the configuration filename and parse the TOML file.
-    std::string filename = "/usr/local/etc/baldr/baldr_config_" + std::to_string(beam_id) + ".toml";
+    //std::string filename = "/usr/local/etc/baldr/baldr_config_" + std::to_string(beam_id) + ".toml";
+
+    std::string filename;
+    try {
+        filename = find_latest_config_file(beam_id);
+        std::cout << "Using latest config: " << filename << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error finding latest config file: " << e.what() << std::endl;
+        exit(1);
+    }
+
     try {
         config = toml::parse_file(filename);
         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;

@@ -13,7 +13,7 @@
 #include "ImageStreamIO.h"
 #include "fitsio.h"
 
-// g++ -O3 -march=native -std=c++17 dm_master_telemetry_recorder.cpp -o dm_master_telemetry_recorder -lImageStreamIO -lcfitsio -lpthread
+// g++ -O3 -march=native -std=c++17 dm_telemetry_recorder.cpp -o dm_telemetry_recorder -lImageStreamIO -lcfitsio -lpthread
 
 volatile std::sig_atomic_t running = 1;
 
@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
     size_t img_size = naxes[0] * naxes[1];
 
     std::vector<std::vector<double>> frames;
-    size_t max_frames = 500; // how many frames to record
+    size_t max_frames = 10000; // how many frames to record
 
     std::cout << "[INFO] Connected to " << master_name << std::endl;
     std::cout << "[INFO] Frame size: " << naxes[0] << "x" << naxes[1] << std::endl;

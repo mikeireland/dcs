@@ -76,7 +76,7 @@ def main():
     tvec = np.arange(len(h))*dt
     plt.figure(); plt.plot(tvec, h, '-o')
     plt.xlabel('ms'); plt.title('Impulse response')
-    plt.savefig('impulse.png'); plt.close()
+    plt.savefig('/home/asg/Music/impulse.png'); plt.close()
 
     # Bandwidth and optimal fs
     fc, fs_opt, freqs, mag = estimate_bandwidth(h, Ts0, args.oversample)
@@ -91,7 +91,7 @@ def main():
     plt.figure()
     plt.semilogy(freqs, mag)
     plt.xlabel('Hz'); plt.ylabel('|H|'); plt.title('Frequency response')
-    plt.savefig('freqresp.png'); plt.close()
+    plt.savefig('/home/asg/Music/freqresp.png'); plt.close()
 
     # Fit FOPDT model at Ts
     L, T, Kss = fit_fopdt(h, Ts)
