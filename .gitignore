@@ -40,5 +40,10 @@ build/
 # 
 calibration_frames/products/
 
+baldr
 baldr/figs/
 baldr/latency_test_results/
+baldr/tests/
+dm_telemetry_recorder
+baldr/latency/latency_test
+calibration_frames/products/

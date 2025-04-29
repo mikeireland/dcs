@@ -114,14 +114,7 @@ Eigen::VectorXd weightedAverage(const Buffer &buf, size_t K) {
 }
 
 
-//------------------------------------------------------------------------------
-// Drain any outstanding semaphore “posts” so that
-// the next semwait() really waits for a fresh frame.
-//------------------------------------------------------------------------------
-static inline void catch_up_with_sem(IMAGE* img, int semid) {
-    // keep grabbing until there are no more pending posts
-    while (ImageStreamIO_semtrywait(img, semid) == 0) { /* nothing just do it*/; }
-}
+
 
 /**
  Reads a frame from shared memory which should match the expected number of pixels expectedPixels.

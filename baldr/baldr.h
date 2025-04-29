@@ -103,6 +103,16 @@ Derived convertTomlArrayToEigenMatrix(const toml::array& arr, const Derived& /*d
 }
 
 
+//------------------------------------------------------------------------------
+// Drain any outstanding semaphore “posts” so that
+// the next semwait() really waits for a fresh frame.
+//------------------------------------------------------------------------------
+static inline void catch_up_with_sem(IMAGE* img, int semid) {
+    // keep grabbing until there are no more pending posts
+    while (ImageStreamIO_semtrywait(img, semid) == 0) { /* nothing just do it*/; }
+}
+
+
 // Declaration of readConfig function
 toml::table readConfig(const std::string &filename);
 
@@ -178,11 +188,11 @@ struct bdr_pixels {
 //-----------------------------------------------------
 // bdr_refence_pupils: Reference intensities.
 struct bdr_refence_pupils {
-    Eigen::VectorXd I0;         // Reduced reference intensity (ADU) [flattened]
-    Eigen::VectorXd N0;         // Reduced reference intensity (ADU)
-    Eigen::VectorXd norm_pupil; // Filtered reference intensity (ADU)
-    Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels (ADU)
-    Eigen::VectorXd I0_dm;      // Interpolated to DM pixels (ADU)
+    Eigen::VectorXd I0;         // Reduced reference intensity (ADU/s/gain) [flattened]
+    Eigen::VectorXd N0;         // Reduced reference intensity (ADU/s/gain)
+    Eigen::VectorXd norm_pupil; // Filtered reference intensity (ADU/s/gain)
+    Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels (ADU/s/gain)
+    Eigen::VectorXd I0_dm;      // Interpolated to DM pixels (ADU/s/gain)
     
     // update all dm reference pupils
     void project_to_dm( Eigen::MatrixXd I2A ){
@@ -522,6 +532,7 @@ struct bdr_rtc_config {
         m_s_runtime = scale * matrices.I2rms_sec(0, 0);
         b_s_runtime = matrices.I2rms_sec(1, 1);
     }
+
 
     // before zmq camera fps and gain read in . 
     // // Function to initialize all derived runtime parameters.

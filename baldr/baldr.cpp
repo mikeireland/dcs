@@ -20,12 +20,10 @@ std::string phasemask;
 toml::table config;
 bdr_rtc_config rtc_config;
 
+std::string observing_mode = "bright"; // bright - 12x12 (default) or faint - 6x6 pixels
+std::string user_config_filename = "";
+bool user_provided_config = false;      // true if user gives a manual toml file
 
-// Initialize global ZMQ variables
-zmq::context_t cam_zmq_context(1);
-zmq::socket_t cam_zmq_socket(cam_zmq_context, zmq::socket_type::req);
-std::string cam_host_str = "tcp://172.16.8.6:6667";
-bool cam_zmq_initialized = false;
 
 // loop time , not nessary when using semaphores for frames - but can be useful for testing 
 //float loop_time = 0.0f; // set later
@@ -60,6 +58,21 @@ IMAGE dm_rtc; // The DM subarray
 IMAGE dm_rtc0; // The DM subarray master to post semaphores to
 
 
+// foprward dec.
+void pauseRTC();
+void resumeRTC();
+
+// Initialize global ZMQ variables
+zmq::context_t cam_zmq_context(1);
+zmq::socket_t cam_zmq_socket(cam_zmq_context, zmq::socket_type::req);
+std::string cam_host_str = "tcp://172.16.8.6:6667";
+bool cam_zmq_initialized = false;
+
+// Initialize global ZMQ variables for MultiDeviceServer
+zmq::context_t mds_zmq_context(1);
+zmq::socket_t mds_zmq_socket(mds_zmq_context, zmq::socket_type::req);
+std::string mds_host_str = "tcp://172.16.8.6:5555";
+bool mds_zmq_initialized = false;
 
 
 // Parameterized constructor.
@@ -156,11 +169,10 @@ void PIDController::reset() {
 
 //----------helper functions from here---------------
 
-
-// Function to find the most recent config file for a given beam
-std::string find_latest_config_file(int beam_id) {
+// Function to find the most recent config file for a given beam and mode (default = "bright")
+std::string find_latest_config_file(int beam_id, const std::string& mode = "bright") {
     const std::string base_dir = "/usr/local/etc/baldr/rtc_config/";
-    const std::string filename_prefix = "baldr_config_" + std::to_string(beam_id) + "_";
+    const std::string filename_prefix = "baldr_config_" + std::to_string(beam_id) + "_" + mode + "_";
     const std::string filename_suffix = ".toml";
 
     std::vector<std::filesystem::directory_entry> matching_files;
@@ -177,7 +189,7 @@ std::string find_latest_config_file(int beam_id) {
     }
 
     if (matching_files.empty()) {
-        throw std::runtime_error("No config file found for beam " + std::to_string(beam_id));
+        throw std::runtime_error("No config file found for beam " + std::to_string(beam_id) + " with mode '" + mode + "'.");
     }
 
     // Sort newest first based on filename (descending)
@@ -190,7 +202,41 @@ std::string find_latest_config_file(int beam_id) {
     return matching_files.front().path().string();
 }
 
+// // Function to find the most recent config file for a given beam
+// std::string find_latest_config_file(int beam_id) {
+//     const std::string base_dir = "/usr/local/etc/baldr/rtc_config/";
+//     const std::string filename_prefix = "baldr_config_" + std::to_string(beam_id) + "_";
+//     const std::string filename_suffix = ".toml";
 
+//     std::vector<std::filesystem::directory_entry> matching_files;
+
+//     for (const auto& dir_entry : std::filesystem::recursive_directory_iterator(base_dir)) {
+//         if (dir_entry.is_regular_file()) {
+//             const std::string filename = dir_entry.path().filename().string();
+//             if (filename.size() >= filename_prefix.size() + filename_suffix.size() &&
+//                 filename.substr(0, filename_prefix.size()) == filename_prefix &&
+//                 filename.substr(filename.size() - filename_suffix.size()) == filename_suffix) {
+//                 matching_files.push_back(dir_entry);
+//             }
+//         }
+//     }
+
+//     if (matching_files.empty()) {
+//         throw std::runtime_error("No config file found for beam " + std::to_string(beam_id));
+//     }
+
+//     // Sort newest first based on filename (descending)
+//     std::sort(matching_files.begin(), matching_files.end(),
+//         [](const std::filesystem::directory_entry& a, const std::filesystem::directory_entry& b) {
+//             return a.path().filename().string() > b.path().filename().string();
+//         }
+//     );
+
+//     return matching_files.front().path().string();
+// }
+
+
+// Asgard Camera Server
 void init_cam_zmq() {
     if (!cam_zmq_initialized) {
         cam_zmq_socket.connect(cam_host_str);
@@ -205,6 +251,21 @@ std::string send_cam_cmd(const std::string& command) {
     zmq::message_t reply;
     cam_zmq_socket.recv(reply, zmq::recv_flags::none);
     return std::string(static_cast<char*>(reply.data()), reply.size());
+}
+
+
+json send_cam_command(json args) {
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"error", "Expected a single string argument [\"command\"]"}};
+    }
+    try {
+        std::string command = args.at(0).get<std::string>();
+
+        std::string response = send_cam_cmd(command);
+        return json{{"command_sent", command}, {"camera_response", response}};
+    } catch (const std::exception& ex) {
+        return json{{"error", ex.what()}};
+    }
 }
 
 std::string extract_value(const std::string& response) {
@@ -227,6 +288,40 @@ float get_float_cam_param(const std::string& command) {
     }
 }
 
+
+// MDS 
+
+void init_mds_zmq() {
+    if (!mds_zmq_initialized) {
+        mds_zmq_socket.connect(mds_host_str);
+        mds_zmq_initialized = true;
+    }
+}
+
+std::string send_mds_cmd(const std::string& message) {
+    init_mds_zmq();
+    mds_zmq_socket.send(zmq::buffer(message), zmq::send_flags::none);
+    zmq::message_t reply;
+    auto result = mds_zmq_socket.recv(reply, zmq::recv_flags::none);
+    if (!result.has_value()) {
+        throw std::runtime_error("Timeout or error receiving reply from MDS.");
+    }
+    return std::string(static_cast<char*>(reply.data()), reply.size());
+}
+
+json send_mds_command(json args) {
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"error", "Expected a single string argument [\"command\"]"}};
+    }
+    try {
+        std::string command = args.at(0).get<std::string>();
+
+        std::string response = send_mds_cmd(command);
+        return json{{"command_sent", command}, {"mds_response", response}};
+    } catch (const std::exception& ex) {
+        return json{{"error", ex.what()}};
+    }
+}
 
 // Helper function to split a comma-separated string into a vector of ints.
 std::vector<int> split_indices(const std::string &indices_str) {
@@ -436,14 +531,113 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     return rtc;
 }
 
+void new_dark_and_bias() {
+    try {
+        std::cout << "[capture_dark_and_bias] Starting new dark/bias capture..." << std::endl;
 
-// int load_configuration(std::string pth){
-//     std::cout << pth << std::endl;
-//     return 1;
-// }
+        // Pause the RTC loop
+        pauseRTC();
+        std::cout << "[capture_dark_and_bias] RTC paused." << std::endl;
+
+        // Turn off the source
+        send_mds_cmd("off SBB");
+        std::cout << "[capture_dark_and_bias] Light source turned off." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        // Record original FPS and gain
+        float original_fps = get_float_cam_param("fps raw");
+        float original_gain = get_float_cam_param("gain raw");
+
+        // Set FPS to maximum (1730 Hz) for bias measurement
+        send_cam_cmd("set fps 1730");
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        const size_t nframes = 1000;
+        size_t totalPixels = static_cast<size_t>(subarray.md->size[0]) * static_cast<size_t>(subarray.md->size[1]);
+
+        Eigen::VectorXd bias_sum = Eigen::VectorXd::Zero(totalPixels);
+
+        // --- Capture bias frames ---
+        for (size_t i = 0; i < nframes; ++i) {
+            catch_up_with_sem(&subarray, 1);
+            ImageStreamIO_semwait(&subarray, 1);
+
+            uint16_t* raw = subarray.array.UI16;
+            Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+
+            bias_sum += rawArr.cast<double>().matrix();
+        }
+
+        Eigen::VectorXd bias = bias_sum / static_cast<double>(nframes);
+
+        std::cout << "[capture_dark_and_bias] Bias frames captured." << std::endl;
+
+        // Restore original FPS
+        send_cam_cmd("set fps " + std::to_string(static_cast<int>(original_fps)));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        // --- Capture dark frames ---
+        Eigen::VectorXd dark_sum = Eigen::VectorXd::Zero(totalPixels);
+
+        for (size_t i = 0; i < nframes; ++i) {
+            catch_up_with_sem(&subarray, 1);
+            ImageStreamIO_semwait(&subarray, 1);
+
+            uint16_t* raw = subarray.array.UI16;
+            Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+
+            dark_sum += rawArr.cast<double>().matrix();
+        }
+
+        Eigen::VectorXd dark = dark_sum / static_cast<double>(nframes);
+
+        std::cout << "[capture_dark_and_bias] Dark frames captured." << std::endl;
+
+        // Turn the source back on
+        send_mds_cmd("on SBB");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        std::cout << "[capture_dark_and_bias] Light source turned back on." << std::endl;
+
+        // Compute raw dark: (dark - bias) (in ADU)
+        Eigen::VectorXd raw_dark = dark - bias;
+
+        // Save to rtc_config
+        rtc_config.reduction.bias = bias;
+        rtc_config.reduction.dark = raw_dark * (original_fps / original_gain); // Units: ADU/s/gain
+
+        rtc_config.reduction.bias_dm = rtc_config.matrices.I2A * rtc_config.reduction.bias;
+        rtc_config.reduction.dark_dm = rtc_config.matrices.I2A * rtc_config.reduction.dark;
+
+        rtc_config.dark_dm_runtime = rtc_config.matrices.I2A * raw_dark;
+
+        std::cout << "[capture_dark_and_bias] Updated reduction parameters successfully." << std::endl;
+
+        // Resume the RTC
+        resumeRTC();
+        std::cout << "[capture_dark_and_bias] RTC resumed." << std::endl;
+
+    } catch (const std::exception& ex) {
+        std::cerr << "[capture_dark_and_bias] Exception occurred: " << ex.what() << std::endl;
+        resumeRTC(); // Ensure we resume RTC even on failure
+    }
+}
 
 
-//----------commander functions from here---------------
+void capture_dark_and_bias() {
+    try {
+        pauseRTC();  // Pause RTC while capturing frames
+        std::cout << "[capture_dark_and_bias] RTC paused for dark and bias acquisition." << std::endl;
+
+        new_dark_and_bias();
+
+        resumeRTC(); // Resume RTC afterwards
+        std::cout << "[capture_dark_and_bias] RTC resumed after dark and bias acquisition." << std::endl;
+    }
+    catch (const std::exception& ex) {
+        std::cerr << "[capture_dark_and_bias] Exception caught: " << ex.what() << std::endl;
+        resumeRTC(); // Try to resume even on error
+    }
+}
 
 
 void stop_baldr() {
@@ -455,6 +649,21 @@ void stop_baldr() {
 void close_baldr_LO() {
     // mode 1 is close
     servo_mode_LO = SERVO_CLOSE;
+    std::cout << "servo_mode_LO updated to " << servo_mode_LO << ". CLosing Baldr LO modes" << std::endl;
+}
+
+void close_all() {
+    // mode 1 is close
+    servo_mode_LO = SERVO_CLOSE;
+    std::cout << "servo_mode_LO updated to " << servo_mode_LO << ". CLosing Baldr LO modes" << std::endl;
+    servo_mode_HO = SERVO_CLOSE;
+    std::cout << "servo_mode_HO updated to " << servo_mode_LO << ". CLosing Baldr HO modes" << std::endl;
+}
+
+void open_all() {
+    // mode 1 is close
+    servo_mode_LO = SERVO_OPEN;
+    servo_mode_HO = SERVO_OPEN;
     std::cout << "servo_mode_LO updated to " << servo_mode_LO << ". CLosing Baldr LO modes" << std::endl;
 }
 
@@ -479,6 +688,9 @@ void open_baldr_HO() {
 
 
 void I0_update() {
+    // !!! only updates rtc_config.I0_dm_runtime !!! 
+    // does not update rtc_config.reference_pupils members 
+    
     if (rtc_config.telem.img_dm.empty()) {
         std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
         return;
@@ -505,74 +717,76 @@ void I0_update() {
     // Compute average
     rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
 
+    // Subtraction of dark and bias is already done in img_dm!!! 
+ 
+
     std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
 }
 
 
 void N0_update() {
+
+    // !!! only updates rtc_config.N0_dm_runtime !!! 
+    // does not update rtc_config.reference_pupils members 
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-    // Check if telemetry buffer is non-empty
-    if (rtc_config.telem.img.empty()) {
-        std::cerr << "[N0_update] Error: telemetry img buffer is empty." << std::endl;
+    if (rtc_config.telem.img_dm.empty()) {
+        std::cerr << "[N0_update] Error: telemetry img_dm buffer is empty." << std::endl;
         return;
     }
 
-    const auto& telemetry_frames = rtc_config.telem.img;
-    Eigen::Index P = telemetry_frames[0].size();  // Now signed type
+    const auto& telemetry_frames = rtc_config.telem.img_dm;
+    Eigen::Index P = telemetry_frames[0].size();  // size of each img_dm vector
 
-    // Compute average image across time
-    Eigen::VectorXd avg = Eigen::VectorXd::Zero(P);
+    if (rtc_config.filters.inner_pupil_filt_dm.size() != P) {
+        std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch." << std::endl;
+        return;
+    }
+
+    // Step 1: Average all img_dm frames
+    Eigen::VectorXd avg_dm = Eigen::VectorXd::Zero(P);
+    size_t count = 0;
     for (const auto& frame : telemetry_frames) {
         if (frame.size() != P) {
-            std::cerr << "[N0_update] Warning: frame size mismatch in telemetry img buffer." << std::endl;
+            std::cerr << "[N0_update] Warning: img_dm frame size mismatch, skipping." << std::endl;
             continue;
         }
-        avg += frame;
+        avg_dm += frame;
+        ++count;
     }
-    avg /= static_cast<double>(telemetry_frames.size());
-
-    // Check that inner pupil filter matches image size
-    if (rtc_config.filters.inner_pupil_filt.size() != P) {
-        std::cerr << "[N0_update] Error: inner pupil filter size does not match image size." << std::endl;
-        return;
-    }
-
-    // Compute the mean inside the pupil
-    double sum = 0.0;
-    int count = 0;
-    for (Eigen::Index i = 0; i < P; ++i) {
-        if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
-            sum += avg(i);
-            ++count;
-        }
-    }
-
     if (count == 0) {
-        std::cerr << "[N0_update] Error: no valid pixels inside pupil mask." << std::endl;
+        std::cerr << "[N0_update] Error: no valid img_dm frames found." << std::endl;
         return;
     }
+    avg_dm /= static_cast<double>(count);
 
-    double inner_mean = sum / static_cast<double>(count);
-
-    // Set pixels outside the pupil to the inner mean
+    // Step 2: Compute the mean inside the good pupil
+    double sum_inside = 0.0;
+    int count_inside = 0;
     for (Eigen::Index i = 0; i < P; ++i) {
-        if (rtc_config.filters.inner_pupil_filt(i) <= 0.5) {
-            avg(i) = inner_mean;
+        if (rtc_config.filters.inner_pupil_filt_dm(i) > 0.7) {
+            sum_inside += avg_dm(i);
+            ++count_inside;
+        }
+    }
+    if (count_inside == 0) {
+        std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask." << std::endl;
+        return;
+    }
+    double inner_mean = sum_inside / static_cast<double>(count_inside);
+
+    // Step 3: Replace exterior pixels
+    for (Eigen::Index i = 0; i < P; ++i) {
+        if (rtc_config.filters.inner_pupil_filt_dm(i) <= 0.7) {
+            avg_dm(i) = inner_mean;
         }
     }
 
-    // Save result into rtc_config reference pupils
-    rtc_config.reference_pupils.norm_pupil = avg;
+    // Step 4: Save into runtime only
+    rtc_config.N0_dm_runtime = avg_dm;
 
-    // Project into DM space
-    rtc_config.reference_pupils.project_N0norm_to_dm(rtc_config.matrices.I2A);
-
-    // finally update the run-time version of it
-    rtc_config.N0_dm_runtime = rtc_config.reference_pupils.norm_pupil_dm; // we dont need gain / fps scaling since we are in the use mode
-    std::cout << "[N0_update] Successfully updated norm_pupil and norm_pupil_dm." << std::endl;
+    std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
 }
-
 
 
 // Function to update the capacity of the telemetry image ring buffer.
@@ -716,6 +930,57 @@ json update_pid_param(json args) {
     }
 }
 
+// relative incrememnt of gains 
+json dg(json args) {
+    // Expect an array with exactly 3 elements: [controller, parameter_type, increment]
+    if (!args.is_array() || args.size() != 3) {
+        return json{{"error", "Expected an array with three elements: [controller, parameter_type, increment]"}};
+    }
+    try {
+        std::string controller_str = args.at(0).get<std::string>();
+        std::string parameter_type = args.at(1).get<std::string>();
+        double increment_value = args.at(2).get<double>();
+
+        // Lock the PID mutex to protect concurrent access
+        std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+        // Select appropriate PID controller
+        PIDController* pid_ctrl = nullptr;
+        if (controller_str == "LO") {
+            pid_ctrl = &rtc_config.ctrl_LO;
+        } else if (controller_str == "HO") {
+            pid_ctrl = &rtc_config.ctrl_HO;
+        } else {
+            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+        }
+
+        // Choose the target parameter vector
+        Eigen::VectorXd* target_vector = nullptr;
+        if (parameter_type == "kp") {
+            target_vector = &pid_ctrl->kp;
+        } else if (parameter_type == "ki") {
+            target_vector = &pid_ctrl->ki;
+        } else if (parameter_type == "kd") {
+            target_vector = &pid_ctrl->kd;
+        } else {
+            return json{{"error", "Invalid parameter type: " + parameter_type +
+                                     ". Must be \"kp\", \"ki\", or \"kd\"."}};
+        }
+
+        // Increment all elements
+        *target_vector += Eigen::VectorXd::Constant(target_vector->size(), increment_value);
+
+        std::cout << "[increment_pid_param] Incremented " << parameter_type
+                  << " in controller " << controller_str
+                  << " by " << increment_value << std::endl;
+
+        return json{{"status", "Increment applied successfully"}};
+    }
+    catch (const std::exception& ex) {
+        return json{{"error", ex.what()}};
+    }
+}
+
 json print_pid_attribute(json args) {
     // Expect exactly two elements: [controller, attribute]
     if (!args.is_array() || args.size() != 2) {
@@ -844,7 +1109,22 @@ COMMANDER_REGISTER(m)
     //     "filename"_arg="def.toml");
 
     
+    //send_cam_command ["set gain 1"]
+    m.def("send_mds_command", send_mds_command,
+        "Send a raw string command to the MultiDeviceServer over ZMQ.\n"
+        "Usage: send_mds_command [\"your command\"] e.g. send_mds_command [\"off SBB\"]",
+        "args"_arg);
 
+    //send_mds_command ["off SBB"]
+    m.def("send_cam_command", send_cam_command,
+        "Send a raw string command to the Camera Server (FLI) over ZMQ.\n"
+        "Usage: send_cam_command [\"your command\"]. e.g. send_cam_command [\"set gain 1\"]",
+        "args"_arg);
+        
+
+    m.def("capture_dark_and_bias", capture_dark_and_bias,
+            "Capture a new bias and dark frame, update reduction products, and update DM-space maps.");
+            
     m.def("stop_baldr", stop_baldr,
           "stop the baldr rtc loop","mode"_arg);
 
@@ -853,6 +1133,12 @@ COMMANDER_REGISTER(m)
 
     m.def("open_baldr_LO", open_baldr_LO,
           "open the LO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
+
+    m.def("close_all", close_all,
+          "close LO and HO servo loop for baldr","mode"_arg);
+
+    m.def("open_all", open_all,
+          "open LO and HO servo loop for baldr - resetting gains and flatten DM","mode"_arg);
 
     m.def("close_baldr_HO", close_baldr_HO,
           "close the HO servo loop for baldr","mode"_arg);
@@ -900,6 +1186,13 @@ COMMANDER_REGISTER(m)
           "e.g. (use double quotation) update_pid_param [''LO'',''kp'',''all'', 0.0] or update_pid_param [''HO'',''kp'',''1,3,5,42'',0.1] or ",
           "args"_arg);
 
+    //e.g: dg ["LO","ki",0.1] 
+    m.def("dg", dg,
+        "Increment all elements of kp, ki, or kd of the specified controller by a given increment.\n"
+        "Usage: increment_pid_param [\"LO\" or \"HO\", \"kp\" or \"ki\" or \"kd\", increment]",
+        "args"_arg);
+
+
     //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
     m.def("print_pid_attribute", print_pid_attribute,
           "Print the specified attribute of a PID controller.\n"
@@ -916,49 +1209,53 @@ COMMANDER_REGISTER(m)
           "Usage: reload_config [\"new_filename.toml\", \"new_mask\"]",
           "args"_arg);
 
+
  }
 
 
 
-// configure like ./baldr 1 H3 
+
+
 int main(int argc, char* argv[]) {
-    // We expect arguments: <beam_id> <phaseMask>
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1>" << std::endl;
+    if (argc < 3 || argc > 5) {
+        std::cerr << "Usage: " << argv[0] << " <beam_id> <phaseMask> [mode (bright|faint)] [optional config_filename.toml]" << std::endl;
         return 1;
     }
-    // if (argc != 3 && argc != 4) {
-    //     std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1> [optional loop_time (us)]" << std::endl;
-    //     return 1;
-    // }
 
+    // Mandatory inputs
     beam_id = std::stoi(argv[1]);
     phasemask = argv[2];
 
-
-    // if (argc == 4) {
-    //     loop_time = std::stof(argv[3]);
-    //     loop_time_override = true;
-    //     if (loop_time <= 0.0f) {
-    //         std::cerr << "[ERROR] Invalid loop_time specified. Must be > 0." << std::endl;
-    //         return 1;
-    //     }
-    //     std::cout << "[INFO] User override loop_time = " << loop_time << " seconds (" << 1.0f / loop_time << " Hz)" << std::endl;
-    // }
-
-
-    // Compute the configuration filename and parse the TOML file.
-    //std::string filename = "/usr/local/etc/baldr/baldr_config_" + std::to_string(beam_id) + ".toml";
-
-    std::string filename;
-    try {
-        filename = find_latest_config_file(beam_id);
-        std::cout << "Using latest config: " << filename << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Error finding latest config file: " << e.what() << std::endl;
-        exit(1);
+    // Optional mode
+    if (argc >= 4) {
+        observing_mode = argv[3];
+        if (observing_mode != "bright" && observing_mode != "faint") {
+            std::cerr << "[ERROR] Invalid observing mode. Must be 'bright' or 'faint'." << std::endl;
+            return 1;
+        }
     }
 
+    // Optional user configuration file
+    if (argc == 5) {
+        user_config_filename = argv[4];
+        user_provided_config = true;
+    }
+
+    std::string filename;
+    if (user_provided_config) {
+        filename = user_config_filename;
+        std::cout << "[INFO] Using user-provided config file: " << filename << std::endl;
+    } else {
+        try {
+            filename = find_latest_config_file(beam_id, observing_mode); // <--- updated find_latest_config_file
+            std::cout << "[INFO] Using latest config for mode '" << observing_mode << "': " << filename << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Error finding latest config file: " << e.what() << std::endl;
+            return 1;
+        }
+    }
+
+    // Load and parse TOML config
     try {
         config = toml::parse_file(filename);
         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
@@ -967,132 +1264,99 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    //to create a global list of bdr_rtc_config structs:
+    // Now set up rtc_config
     std::string beamKey = "beam" + std::to_string(beam_id);
     try {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
-        std::cout << "after read in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
         rtc_config.initDerivedParameters();
-        std::cout << "finished init of run_time parameters" << std::endl;
-        std::cout << "after initDerived parameters in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
-
-        std::cout << "Initialized configuration for beam " << beam_id << std::endl;
+        std::cout << "[INFO] RTC configuration initialized for beam " << beam_id << std::endl;
     } catch (const std::exception& e) {
-        std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
+        std::cerr << "Error initializing RTC config: " << e.what() << std::endl;
         return 1;
     }
 
-    // if user input for loop time then  - we should 
-    // if (!loop_time_override) {
-    //     loop_time = 1000000.0f / rtc_config.fps; // us seconds
-    //     std::cout << "[INFO] Default loop_time set from RTC config FPS: loop_time = " 
-    //               << loop_time << " seconds (" << rtc_config.fps << " Hz)" << std::endl;
-    // }
-
-
-    // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
-    // where N is the beam number.
-    // 
-    //     ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id) ).c_str());
-        
-    //     // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
-    //     std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02" ;
-    //     ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
-    // 
+    // Open shared memory
     if (!rtc_config.state.simulation_mode) {
-        std::cout << "SHM configuration not in simulation mode" << std::endl;
-        // Real mode: open real images from the shared memory.
+        std::cout << "[INFO] Opening real SHM (not simulation)..." << std::endl;
+
         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
 
-        // Form the shared-memory name, e.g. "dm2disp02"
         std::string name = "dm" + std::to_string(beam_id) + "disp02";
         std::string name0 = "dm" + std::to_string(beam_id);
-        std::cout << "[INFO] Opening DM SHM \"" << name << "\"\n";
-        
+
         if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM SHM \"" << name << "\"\n";
+            std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
             return 1;
         }
         if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM SHM \"" << name0 << "\"\n";
+            std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
             return 1;
         }
-        // BCB        
-        // // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
-        // std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
-        // ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
-
-        // // master process for DM 
-        // std::string name0 = "dm" + std::to_string(beam_id);
-        // ImageStreamIO_openIm(&dm_rtc0, name0.c_str());
-
-        // //add.
-        // ImageStreamIO_semflush(&dm_rtc0, /*index=*/-1);
 
     } else {
-        // Simulation mode: if not yet implemented, raise an error.
-        std::cerr << "Simulation mode not implemented. Aborting." << std::endl;
+        std::cerr << "[ERROR] Simulation mode not implemented yet." << std::endl;
         throw std::runtime_error("Simulation mode not implemented");
-        
-        // Alternatively, if you prefer to use dummy simulation images,
-        // you might do something like:
-        // ImageStreamIO_openIm(&subarray, "simulated_baldr.im.shm");
-        // ImageStreamIO_openIm(&dm_rtc, "simulated_dm.im.shm");
     }
-    // Start the main RTC and telemetry threads. 
 
-
+    // Start RTC threads
     std::thread rtc_thread(rtc);
     std::thread telemetry_thread(telemetry);
 
-    std::cout << "after rtc thread started in  main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
-    // Initialize the commander server and run it
+    std::cout << "[INFO] RTC and telemetry threads started." << std::endl;
+
+    // Start commander server
     commander::Server s(argc, argv);
     s.run();
 
-    // Join the  thread
+    // Clean shutdown
     servo_mode = SERVO_STOP;
     rtc_thread.join();
     telemetry_thread.join();
 
-    // Continue with your RTC main loop using rtc_config_list...
     std::cout << "DONE" << std::endl;
-    
     return 0;
 }
 
-
-// gain and fps as inputs! 
+// before we introduced faint mode 
+// // configure like ./baldr 1 H3 
 // int main(int argc, char* argv[]) {
-//     // Usage check
-//     if (argc < 3) {
-//         std::cerr << "Usage: " << argv[0] << " <beam_id> <phaseMask> [--gain <float>] [--fps <float>]" << std::endl;
+//     // We expect arguments: <beam_id> <phaseMask>
+//     if (argc != 3) {
+//         std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1>" << std::endl;
 //         return 1;
 //     }
+//     // if (argc != 3 && argc != 4) {
+//     //     std::cerr << "Usage: " << argv[0] << " <beam_id1> <phaseMask1> [optional loop_time (us)]" << std::endl;
+//     //     return 1;
+//     // }
 
-//     // Required positional arguments
 //     beam_id = std::stoi(argv[1]);
 //     phasemask = argv[2];
 
-//     // Parse optional arguments
-//     for (int i = 3; i < argc; ++i) {
-//         std::string arg = argv[i];
-//         if (arg == "--gain" && i + 1 < argc) {
-//             gain_override = std::stof(argv[++i]);
-//             override_gain_fps = true;
-//             std::cout << "Setting gain = " << gain_override << std::endl;
-//         } else if (arg == "--fps" && i + 1 < argc) {
-//             fps_override = std::stof(argv[++i]);
-//             override_gain_fps = true;
-//             std::cout << "Setting fps = " << fps_override << std::endl;
-//         } else {
-//             std::cerr << "[ERROR] Unknown or incomplete argument: " << arg << std::endl;
-//             return 1;
-//         }
+
+//     // if (argc == 4) {
+//     //     loop_time = std::stof(argv[3]);
+//     //     loop_time_override = true;
+//     //     if (loop_time <= 0.0f) {
+//     //         std::cerr << "[ERROR] Invalid loop_time specified. Must be > 0." << std::endl;
+//     //         return 1;
+//     //     }
+//     //     std::cout << "[INFO] User override loop_time = " << loop_time << " seconds (" << 1.0f / loop_time << " Hz)" << std::endl;
+//     // }
+
+
+//     // Compute the configuration filename and parse the TOML file.
+//     //std::string filename = "/usr/local/etc/baldr/baldr_config_" + std::to_string(beam_id) + ".toml";
+
+//     std::string filename;
+//     try {
+//         filename = find_latest_config_file(beam_id);
+//         std::cout << "Using latest config: " << filename << std::endl;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error finding latest config file: " << e.what() << std::endl;
+//         exit(1);
 //     }
 
-//     // Construct config filename and parse
-//     std::string filename = "baldr_config_" + std::to_string(beam_id) + ".toml";
 //     try {
 //         config = toml::parse_file(filename);
 //         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
@@ -1101,28 +1365,48 @@ int main(int argc, char* argv[]) {
 //         return 1;
 //     }
 
-//     // Read beam configuration
+//     //to create a global list of bdr_rtc_config structs:
 //     std::string beamKey = "beam" + std::to_string(beam_id);
 //     try {
 //         rtc_config = readBDRConfig(config, beamKey, phasemask);
 //         std::cout << "after read in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
 //         rtc_config.initDerivedParameters();
+//         std::cout << "finished init of run_time parameters" << std::endl;
 //         std::cout << "after initDerived parameters in baldr main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+
 //         std::cout << "Initialized configuration for beam " << beam_id << std::endl;
 //     } catch (const std::exception& e) {
 //         std::cerr << "Error initializing configuration for beam " << beam_id << ": " << e.what() << std::endl;
 //         return 1;
 //     }
 
+//     // if user input for loop time then  - we should 
+//     // if (!loop_time_override) {
+//     //     loop_time = 1000000.0f / rtc_config.fps; // us seconds
+//     //     std::cout << "[INFO] Default loop_time set from RTC config FPS: loop_time = " 
+//     //               << loop_time << " seconds (" << rtc_config.fps << " Hz)" << std::endl;
+//     // }
+
+
+//     // The C-red image for the baldr subarray is /dev/shm/baldrN.im.shm, 
+//     // where N is the beam number.
+//     // 
+//     //     ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id) ).c_str());
+        
+//     //     // Open the DM image. It is e.g. /dev/shm/dm2disp02.im.shm for beam 2.
+//     //     std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02" ;
+//     //     ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+//     // 
 //     if (!rtc_config.state.simulation_mode) {
 //         std::cout << "SHM configuration not in simulation mode" << std::endl;
-
+//         // Real mode: open real images from the shared memory.
 //         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
 
+//         // Form the shared-memory name, e.g. "dm2disp02"
 //         std::string name = "dm" + std::to_string(beam_id) + "disp02";
 //         std::string name0 = "dm" + std::to_string(beam_id);
 //         std::cout << "[INFO] Opening DM SHM \"" << name << "\"\n";
-
+        
 //         if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
 //             std::cerr << "[ERROR] Failed to open DM SHM \"" << name << "\"\n";
 //             return 1;
@@ -1131,68 +1415,47 @@ int main(int argc, char* argv[]) {
 //             std::cerr << "[ERROR] Failed to open DM SHM \"" << name0 << "\"\n";
 //             return 1;
 //         }
+//         // BCB        
+//         // // Open the DM image. (For beam 2, for example, this may be: "/dev/shm/dm2disp02.im.shm")
+//         // std::string dm_filename = "dm" + std::to_string(beam_id) + "disp02";
+//         // ImageStreamIO_openIm(&dm_rtc, dm_filename.c_str());
+
+//         // // master process for DM 
+//         // std::string name0 = "dm" + std::to_string(beam_id);
+//         // ImageStreamIO_openIm(&dm_rtc0, name0.c_str());
+
+//         // //add.
+//         // ImageStreamIO_semflush(&dm_rtc0, /*index=*/-1);
+
 //     } else {
+//         // Simulation mode: if not yet implemented, raise an error.
 //         std::cerr << "Simulation mode not implemented. Aborting." << std::endl;
 //         throw std::runtime_error("Simulation mode not implemented");
+        
+//         // Alternatively, if you prefer to use dummy simulation images,
+//         // you might do something like:
+//         // ImageStreamIO_openIm(&subarray, "simulated_baldr.im.shm");
+//         // ImageStreamIO_openIm(&dm_rtc, "simulated_dm.im.shm");
 //     }
+//     // Start the main RTC and telemetry threads. 
 
-//     // Start RTC and telemetry threads
+
 //     std::thread rtc_thread(rtc);
 //     std::thread telemetry_thread(telemetry);
 
-//     std::cout << "after rtc thread started in main rtc.ctrl_LO_config.kp.size() = "
-//               << rtc_config.ctrl_LO_config.kp.size() << std::endl;
-
-//     // Start command server
+//     std::cout << "after rtc thread started in  main rtc.ctrl_LO_config.kp.size() = " << rtc_config.ctrl_LO_config.kp.size() << std::endl;
+//     // Initialize the commander server and run it
 //     commander::Server s(argc, argv);
 //     s.run();
 
-//     // Cleanup and join
+//     // Join the  thread
 //     servo_mode = SERVO_STOP;
 //     rtc_thread.join();
 //     telemetry_thread.join();
 
+//     // Continue with your RTC main loop using rtc_config_list...
 //     std::cout << "DONE" << std::endl;
-//     return 0;
-// }
-
-
-/// TO TEST ZMQ COMMUNICATION TO CAMERA WITHIN RTC (FOR CHECKING STATE - PARAMETERS ARE NORMALIZED ADU/s SO NEED TO CONVERT TO ADU)
-// req_client.cpp
-// #include <zmq.hpp>
-// #include <string>
-// #include <iostream>
-
-// int main() {
-//     // Create a ZeroMQ context with one I/O thread.
-//     zmq::context_t context(1);
-    
-//     // Create a REQ (request) socket.
-//     zmq::socket_t socket(context, zmq::socket_type::req);
-    
-//     // Connect to the server (adjust hostname and port as needed).
-//     std::string endpoint = "tcp://localhost:5555";
-//     socket.connect(endpoint);
-//     std::cout << "Client: Connected to " << endpoint << std::endl;
-    
-//     // Create a request message.
-//     std::string request_str = "Hello from C++ REQ";
-//     zmq::message_t request(request_str.data(), request_str.size());
-    
-//     // Send the request (this puts the socket in a send-wait state).
-//     std::cout << "Client: Sending request..." << std::endl;
-//     socket.send(request, zmq::send_flags::none);
-    
-//     // Now wait for and receive the reply.
-//     zmq::message_t reply;
-//     // Note: The socket must be in the receive state now.
-//     auto res = socket.recv(reply, zmq::recv_flags::none);
-//     if (res) {
-//         std::string reply_str(static_cast<char*>(reply.data()), reply.size());
-//         std::cout << "Client: Received reply: " << reply_str << std::endl;
-//     } else {
-//         std::cerr << "Client: No reply received!" << std::endl;
-//     }
     
 //     return 0;
 // }
+
