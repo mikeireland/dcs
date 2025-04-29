@@ -209,6 +209,17 @@ void save_dark() {
     K2ft->save_dark_frames = true;
 }
 
+void set_gain(double gain) {
+    pid_settings.mutex.lock();
+    pid_settings.kp = gain;
+    pid_settings.mutex.unlock();
+}
+
+void set_offset_gain(double gain) {
+    pid_settings.mutex.lock();
+    pid_settings.pd_offset_gain = gain;
+    pid_settings.mutex.unlock();
+}
 
 Status get_status() {
     Status status;
@@ -270,6 +281,8 @@ COMMANDER_REGISTER(m)
     m.def("delay_line", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
     m.def("status", get_status, "Get the status of the system");
+    m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
+    m.def("offset_gain", set_offset_gain, "Set the phase delay offset gain", "gain"_arg=0.0);
  }
 
 int main(int argc, char* argv[]) {

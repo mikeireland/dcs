@@ -18,5 +18,5 @@ if __name__ == '__main__':
 			gd = status['gd_tel']
 			f.write(f"{time.time():.4f}, {piston[0]:.3f}, {piston[1]:.3f}, {piston[2]:.3f}, {piston[3]:.3f}, {pd[0]:.3f}, {pd[1]:.3f}, {pd[2]:.3f}, {pd[3]:.3f}, {gd[0]:.3f}, {gd[1]:.3f}, {gd[2]:.3f}, {gd[3]:.3f}\n")
 			# sleep for a very short time.
-			time.sleep(0.001)
+			time.sleep(0.0015)
 			

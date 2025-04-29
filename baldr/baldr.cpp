@@ -3,6 +3,7 @@
 #include <commander/commander.h>
 #include <math.h> // For old-style C mathematics if needed.
 #include <zmq.hpp>
+#include <fitsio.h>
 #include <string>
 #include <regex>
 #include <filesystem> //C++ 17
@@ -1037,6 +1038,164 @@ json print_pid_attribute(json args) {
     }
 }
 
+Eigen::VectorXd expand_to_144(const Eigen::VectorXd& input140) {
+    if (input140.size() != 140) {
+        throw std::runtime_error("Input vector must be of size 140");
+    }
+
+    Eigen::VectorXd output144(144);
+    int j = 0;
+    for (int i = 0; i < 144; ++i) {
+        // Skip corners: top-left (0), top-right (11), bottom-left (132), bottom-right (143)
+        if (i == 0 || i == 11 || i == 132 || i == 143) {
+            output144(i) = 0.0;
+        } else {
+            output144(i) = input140(j++);
+        }
+    }
+    return output144;
+}
+
+void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, double sleep_seconds = 0.01, const std::string& signal_space = "dm", const std::string& output_filename = "") {
+    std::cout << "[IM] Starting interaction matrix capture with 140 modes..." << std::endl;
+
+    // Take new dark and bias
+    new_dark_and_bias();
+
+    // Get gain and fps
+    float gain = get_float_cam_param("gain");
+    float fps = get_float_cam_param("fps");
+    double darkscale = fps / gain;
+
+    int nx = subarray.md->size[0];
+    int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
+    int totalPixels = nx * ny;
+    int N_modes = 140;
+
+    Eigen::MatrixXd IM(totalPixels, N_modes);
+
+    for (int k = 0; k < N_modes; ++k) {
+        std::cout << "[IM] Poking actuator " << k << "/" << N_modes << std::endl;
+
+        Eigen::VectorXd cmd = Eigen::VectorXd::Zero(N_modes);
+        cmd(k) = poke_amp / 2.0;
+
+        Eigen::VectorXd padded_cmd(144);
+        padded_cmd.setZero();
+        int idx = 0;
+        for (int i = 0; i < 144; ++i) {
+            if (!(i == 0 || i == 11 || i == 132 || i == 143)) {
+                padded_cmd(i) = cmd(idx++);
+            }
+        }
+
+        std::vector<Eigen::VectorXd> Iplus_list, Iminus_list;
+
+        for (int iter = 0; iter < num_iterations; ++iter) {
+            // Positive poke
+            updateDMSharedMemory(dm_rtc, padded_cmd);
+            ImageStreamIO_sempost(&dm_rtc0, 1);
+            std::this_thread::sleep_for(std::chrono::duration<double>(sleep_seconds));
+
+            Eigen::VectorXd Iplus = Eigen::VectorXd::Zero(totalPixels);
+            for (int i = 0; i < 200; ++i) {
+                catch_up_with_sem(&subarray, 1);
+                ImageStreamIO_semwait(&subarray, 1);
+                uint16_t *raw = subarray.array.UI16;
+                Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                Eigen::VectorXd img = rawArr.cast<double>();
+                img -= (darkscale * rtc_config.reduction.dark + rtc_config.reduction.bias);
+                Iplus += img;
+            }
+            Iplus /= 200.0;
+            Iplus_list.push_back(Iplus);
+
+            // Negative poke
+            updateDMSharedMemory(dm_rtc, -padded_cmd);
+            ImageStreamIO_sempost(&dm_rtc0, 1);
+            std::this_thread::sleep_for(std::chrono::duration<double>(sleep_seconds));
+
+            Eigen::VectorXd Iminus = Eigen::VectorXd::Zero(totalPixels);
+            for (int i = 0; i < 200; ++i) {
+                catch_up_with_sem(&subarray, 1);
+                ImageStreamIO_semwait(&subarray, 1);
+                uint16_t *raw = subarray.array.UI16;
+                Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                Eigen::VectorXd img = rawArr.cast<double>();
+                img -= (darkscale * rtc_config.reduction.dark + rtc_config.reduction.bias);
+                Iminus += img;
+            }
+            Iminus /= 200.0;
+            Iminus_list.push_back(Iminus);
+        }
+
+        Eigen::VectorXd Iplus_mean = Eigen::VectorXd::Zero(totalPixels);
+        Eigen::VectorXd Iminus_mean = Eigen::VectorXd::Zero(totalPixels);
+        for (int i = 0; i < num_iterations; ++i) {
+            Iplus_mean += Iplus_list[i];
+            Iminus_mean += Iminus_list[i];
+        }
+        Iplus_mean /= static_cast<double>(num_iterations);
+        Iminus_mean /= static_cast<double>(num_iterations);
+
+        Eigen::VectorXd errsig = (Iplus_mean - Iminus_mean) * darkscale / poke_amp;
+        IM.col(k) = errsig;
+    }
+
+    std::string filename = output_filename.empty() ? "/home/asg/Music/IM_test.fits" : output_filename;
+    write_eigen_matrix_to_fits(IM, filename, "IM");
+    std::cout << "[IM] Saved interaction matrix to " << filename << std::endl;
+}
+
+// void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, double sleep_seconds = 0.01, const std::string& signal_space = "dm", const std::string& output_filename = "") {
+//     std::cout << "[IM] Starting interaction matrix capture with 140 modes..." << std::endl;
+
+//     // Precompute totalPixels correctly using both dimensions
+//     int nx = subarray.md->size[0];
+//     int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
+//     int totalPixels = nx * ny;
+
+//     int N_modes = 140;
+//     Eigen::MatrixXd IM(totalPixels, N_modes);
+
+//     for (int k = 0; k < N_modes; ++k) {
+//         std::cout << "[IM] Poking actuator " << k << "/" << N_modes << std::endl;
+
+//         Eigen::VectorXd cmd = Eigen::VectorXd::Zero(N_modes);
+//         cmd(k) = poke_amp;
+
+//         Eigen::VectorXd padded_cmd(144);
+//         padded_cmd.setZero();
+//         int idx = 0;
+//         for (int i = 0; i < 144; ++i) {
+//             if (!(i == 0 || i == 11 || i == 132 || i == 143)) {
+//                 padded_cmd(i) = cmd(idx++);
+//             }
+//         }
+
+//         updateDMSharedMemory(dm_rtc, padded_cmd);
+//         ImageStreamIO_sempost(&dm_rtc0, 1);
+//         std::this_thread::sleep_for(std::chrono::duration<double>(sleep_seconds));
+
+//         Eigen::VectorXd avg = Eigen::VectorXd::Zero(totalPixels);
+//         for (int n = 0; n < num_iterations; ++n) {
+//             catch_up_with_sem(&subarray, 1);
+//             ImageStreamIO_semwait(&subarray, 1);
+
+//             uint16_t *raw = subarray.array.UI16;
+//             Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+//             avg += rawArr.cast<double>().matrix(); 
+//             //avg = avg + rawArr.cast<double>();
+//         }
+//         avg /= num_iterations;
+//         IM.col(k) = avg;
+//     }
+
+//     std::string filename = output_filename.empty() ? "/home/asg/Music/IM_test.fits" : output_filename;
+//     write_eigen_matrix_to_fits(IM, filename, "IM");
+//     std::cout << "[IM] Saved interaction matrix to " << filename << std::endl;
+// }
+
 
 
 json reload_config(json args) {
@@ -1201,6 +1360,27 @@ COMMANDER_REGISTER(m)
           "  - attribute: one of \"kp\", \"ki\", \"kd\", \"lower_limits\", \"upper_limits\", \"set_point\", "
           "\"output\", \"integrals\", or \"prev_errors\"",
           "args"_arg);
+
+    //build_interaction_matrix [0.05, 10, 0.01, "dm", "/home/asg/Music/IM_test.fits"]
+    m.def("build_interaction_matrix",
+        [](json args) {
+            if (!args.is_array() || args.size() > 5) {
+                return json{{"error", "Usage: build_interaction_matrix [poke_amp, num_iterations, sleep_seconds, signal_space, output_filename]"}};
+            }
+
+            double poke_amp = args.size() > 0 ? args[0].get<double>() : 0.05;
+            int num_iterations = args.size() > 1 ? args[1].get<int>() : 10;
+            double sleep_seconds = args.size() > 2 ? args[2].get<double>() : 0.01;
+            std::string signal_space = args.size() > 3 ? args[3].get<std::string>() : "dm";
+            std::string output_filename = args.size() > 4 ? args[4].get<std::string>() : "";
+
+            build_interaction_matrix(poke_amp, num_iterations, sleep_seconds, signal_space, output_filename);
+
+            return json{{"status", "interaction matrix construction complete"}};
+            },
+            "Builds interaction matrix: build_interaction_matrix [poke_amp, num_iter, sleep_s, signal_space, output_filename]",
+            "args"_arg
+    );
 
     //e.g. reload_config ["new_config.toml", "H5"]
     m.def("reload_config", reload_config,

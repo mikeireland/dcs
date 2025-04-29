@@ -3,7 +3,7 @@
 //#define PRINT_TIMING_ALL
 //#define DEBUG
 #define GD_THRESHOLD 2.5
-#define PD_THRESHOLD 3.0
+#define PD_THRESHOLD 3.5
 #define MAX_DM_PISTON 0.3
 
 long unsigned int ft_cnt=0, cnt_since_init=0;
@@ -15,7 +15,7 @@ double x_px_K1[N_BL], y_px_K1[N_BL], x_px_K2[N_BL], y_px_K2[N_BL], sign[N_BL];
 dcomp K1_phasor[N_BL], K2_phasor[N_BL];
 
 // A 6x6 matrix for the weights of phase and group delay
-Eigen::Matrix<double, N_BL, N_BL> Wpd, Wgd;
+Eigen::Matrix<double, N_BL, N_BL> Wpd, Wgd, cov_pd, cov_gd;
 Eigen::Matrix<double, N_BL, 1> pd_filtered, gd_filtered;
 
 // Convenience matrices and vectors.
@@ -80,10 +80,13 @@ void initialise_baselines(){
     cnt_since_init = 0;
     Wpd = Eigen::Matrix<double, N_BL, N_BL>::Zero();
     Wgd = Eigen::Matrix<double, N_BL, N_BL>::Zero();
+    cov_gd.setZero();
+    cov_pd.setZero();
     pd_filtered = Eigen::Matrix<double, N_BL, 1>::Zero();
     gd_filtered = Eigen::Matrix<double, N_BL, 1>::Zero();
     baselines.gd = Eigen::Matrix<double, N_BL, 1>::Zero();
     baselines.pd = Eigen::Matrix<double, N_BL, 1>::Zero();
+    baselines.jump_needed.setZero();
     baselines.gd_snr = Eigen::Matrix<double, N_BL, 1>::Zero();
     baselines.pd_snr = Eigen::Matrix<double, N_BL, 1>::Zero();
     baselines.n_gd_boxcar=MAX_N_GD_BOXCAR;
@@ -155,6 +158,15 @@ void reset_search(){
     control_u.search_Nsteps = 0;
     control_u.steps_to_turnaround = 1000;
     beam_mutex.unlock();
+
+    pid_settings.mutex.lock();
+    pid_settings.kp = 0.5;
+    pid_settings.ki = 0.0;
+    pid_settings.kd = 0.0;
+    pid_settings.integral = 0.0;
+    pid_settings.dl_feedback_gain = 0.0;
+    pid_settings.pd_offset_gain = 0.0;
+    pid_settings.mutex.unlock();
 }
 
 // The main fringe tracking function
@@ -165,6 +177,8 @@ void fringe_tracker(){
     using namespace std::complex_literals;
     Eigen::Matrix<double, N_BL, N_BL> I6gd, I6pd;
     Eigen::Matrix4d I4_search_projection;
+    Eigen::Matrix<double, N_TEL, N_TEL> cov_gd_tel;
+    Eigen::Matrix<double, N_TEL, N_TEL> cov_pd_tel;
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
@@ -221,7 +235,7 @@ void fringe_tracker(){
             baselines.gd_phasor(bl) -= baselines.gd_phasor_boxcar[gd_ix](bl);
             baselines.gd_phasor_boxcar[gd_ix](bl) = 
                 K1_phasor[bl] * std::conj(K2_phasor[bl]);
-            baselines.gd_phasor(bl) = baselines.gd_phasor_boxcar[gd_ix](bl); 
+            baselines.gd_phasor(bl) += baselines.gd_phasor_boxcar[gd_ix](bl);  
             //fmt::print("Adding : {:.1e} {:.1e}\n", 
             //    std::real(baselines[bl].gd_phasors[gd_ix]), std::imag(baselines[bl].gd_phasors[gd_ix]));
             baselines.gd(bl) = std::arg(baselines.gd_phasor(bl)) * gd_to_K1;
@@ -235,10 +249,7 @@ void fringe_tracker(){
             // !!! The 7.5 is a John Monnnier hack, due to fmod's treatment of negative numbers.
             double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - pd_filtered(bl) + 7.5), 1.0) - 0.5;
             baselines.pd(bl) = pd_filtered(bl) + pdiff;
-            if (std::fabs(pdiff) > 0.5){
-                //std::cout << "*** This isn't possible!!! ***" << std::endl;
-            }
-            //baselines[bl].pd = std::arg(K1_phasor[bl])/2/M_PI; // Temporarily overwrite this. !!!
+           //baselines[bl].pd = std::arg(K1_phasor[bl])/2/M_PI; // Temporarily overwrite this. !!!
 
             // Now we need the gd_snr and pd_snr for this baseline. 
             baselines.pd_snr(bl) = std::fabs(K1_phasor[bl])/std::sqrt(K1ft->power_spectrum_inst_bias);
@@ -251,14 +262,22 @@ void fringe_tracker(){
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
-            if (baselines.gd_snr(bl) > GD_THRESHOLD)
+            if (baselines.gd_snr(bl) > GD_THRESHOLD){
                 Wgd(bl, bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
-            else 
+                cov_gd(bl, bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
+            }
+            else {
                 Wgd(bl, bl) = 0;
-            if (baselines.pd_snr(bl) > PD_THRESHOLD)
+                cov_gd(bl, bl) = 1e6; //!!!
+            }
+            if (baselines.pd_snr(bl) > PD_THRESHOLD){
                 Wpd(bl, bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
-            else
+                cov_pd(bl, bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
+            }
+            else{
                 Wpd(bl, bl) = 0;
+                cov_pd(bl, bl) = 1e6; //!!!
+            }
         }
         baselines.ix_gd_boxcar = (gd_ix + 1) % baselines.n_gd_boxcar;
 
@@ -272,20 +291,37 @@ void fringe_tracker(){
         gd_filtered = I6gd * baselines.gd;
         pd_filtered = I6pd * baselines.pd;
 
+        // The covariance matrix of baselines_gd and baselines_pd is given by a diagonal
+        // matrix with the inverse of the SNR squared on the diagonal. We need to find the 
+        // covariance of the telescope group and phase delays. 
+        cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
+        cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
+        
+
         // Here we have a conservative phase jump.
         // !!! We actually need to use the smaller uncertainties that come
-        // after fitting.
+        // after fitting, and use telescope rather than baseline delays. It can also only
+        // occur if the condition remains true for a while, e.g. N_TO_JUMP frames of low
+        // enough delay error.
+        Eigen::Matrix<double, N_BL, 1> bl_pd_offset = M_lacour * control_a.pd_offset;
         if (cnt_since_init > MAX_N_PS_BOXCAR) for (int bl=0; bl<N_BL; bl++){
             double delay_error = std::sqrt(1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI +
                 gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl));
             //fmt::print("B{} pd_snr: {:.1e} gd_snr: {:.1e} delay_error: {:.3f}\n", bl,
             //    baselines[bl].pd_snr, baselines[bl].gd_snr, delay_error);
-            if ( (delay_error < 0.4) && (std::fabs(gd_filtered(bl)-pd_filtered(bl)) > 0.8) &&
-                (std::fabs(gd_filtered(bl)-pd_filtered(bl))/delay_error > 3.0)){
-                    //fmt::print("Phase jump: B{} pd: {:.3f} pdf: {:.3f} gd: {:.3f} delay_error: {:.3f}\n", bl,
-                    //    pd_bl(bl), pd_filtered(bl), gd_filtered(bl), delay_error);
-                    pd_filtered(bl) += std::round(gd_filtered(bl)-pd_filtered(bl));
-                }
+            if (delay_error < 0.4) 
+            {
+                if ((std::fabs(gd_filtered(bl)-pd_filtered(bl)+bl_pd_offset(bl)) > 0.8) &&
+                (std::fabs(gd_filtered(bl)-pd_filtered(bl)+bl_pd_offset(bl))/delay_error > 3.0)){
+                    baselines.jump_needed(bl) += 1;
+                    if (baselines.jump_needed(bl) > N_TO_JUMP){
+                        fmt::print("Phase jump: B{} pd: {:.3f} pdf: {:.3f} gd: {:.3f} delay_error: {:.3f} offset: {:3f}\n", bl,
+                            baselines.pd(bl), pd_filtered(bl), gd_filtered(bl), delay_error, bl_pd_offset(bl));
+                        pd_filtered(bl) += std::round(gd_filtered(bl)-pd_filtered(bl));
+                        baselines.jump_needed(bl) = 0;
+                    }
+                } else  baselines.jump_needed(bl) = 0;
+            }
         }
 
         control_a.gd = M_lacour_dag * gd_filtered;
@@ -307,7 +343,8 @@ void fringe_tracker(){
         // Just use a proportional servo on group delay with fixed gain of 0.5.
         if (servo_mode==SERVO_SIMPLE){
             // Compute the piezo control signal. T
-            control_u.dm_piston += 0.5*config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT * control_a.pd;
+            control_u.dm_piston += pid_settings.kp*config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT * 
+             (control_a.pd - control_a.pd_offset);
             // Limit it to no more than +/- MAX_DM_PISTON.
             control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
             control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
@@ -348,6 +385,10 @@ void fringe_tracker(){
                 add_to_delay_lines(-control_a.gd * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
+
+        // Servo over! Compute the phase delay offsets, by servoing to the difference betwee
+        // pd and gd.
+        control_a.pd_offset += (control_a.gd - control_a.pd) * pid_settings.pd_offset_gain;
     
         // Now we sanity check by computing the bispectrum and closure phases.
         // K1 and K2, in case of tracking on resolved objects... 

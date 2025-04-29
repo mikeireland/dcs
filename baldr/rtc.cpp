@@ -158,59 +158,6 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
 
 
 
-void updateDMSharedMemory(IMAGE &dmImg, const Eigen::VectorXd &dmCmd) {
-    auto *md = dmImg.md;
-    int N = md->nelement;
-
-    // 1) Entry log
-    //std::cout << "[DBG] updateDMSharedMemory() called with dmCmd.size() = "
-    //          << dmCmd.size() << " (expecting " << N << ")\n";
-
-    // 2) Check size
-    if ((int)dmCmd.size() != N) {
-        std::cerr << "[ERROR] size mismatch: got " << dmCmd.size()
-                  << " vs " << N << "\n";
-        return;
-    }
-
-    // 3) Log a few sample values from the command
-    //std::cout << "[DBG] dmCmd first 5 vals: ";
-    //for (int i = 0; i < std::min(5, N); ++i) std::cout << dmCmd[i] << " ";
-    //std::cout << "\n";
-
-    // 4) Print metadata before write
-    //std::cout << "[DBG] Before write: cnt0=" << md->cnt0
-    //          << "  cnt1=" << md->cnt1
-    //          << "  write=" << md->write << "\n";
-
-    // 5) Mark write
-    md->write = 1;
-    std::atomic_thread_fence(std::memory_order_release);
-
-    // 6) Copy the data
-    std::memcpy(dmImg.array.D, dmCmd.data(), N * sizeof(double));
-
-    // 7) Bump counters
-    md->cnt0++;
-    md->cnt1++; //!!! MJI, not sure why this was set to 0.
-
-    // 8) Post semaphore
-    int ret = ImageStreamIO_sempost(&dmImg, -1);
-    //std::cout << "[DBG] ImageStreamIO_sempost returned " << ret << "\n";
-
-    // 9) Clear write flag
-    md->write = 0;
-
-    // 10) Print metadata after write
-    //std::cout << "[DBG] After write: cnt0=" << md->cnt0
-    //          << "  cnt1=" << md->cnt1
-    //          << "  write=" << md->write << "\n";
-
-    // 11) Peek at shared memory contents
-    //std::cout << "[DBG] dmImg.array.D first 10 vals: ";
-    //for (int i = 0; i < std::min(10, N); ++i) std::cout << dmImg.array.D[i] << " ";
-    //std::cout << "\n";
-}
 
 //BCB
 // void updateDMSharedMemory(const Eigen::VectorXd &dmCmd) {

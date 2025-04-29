@@ -1,5 +1,6 @@
 #include <ImageStreamIO.h>
 #include <stdlib.h>
+#include <fitsio.h>
 #include <iostream>
 #define TOML_HEADER_ONLY 0
 #include <toml.hpp>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <stdexcept>
 
+//#include <ImageStreamIO/ImageStreamIO.h>
 
 //----------Defines-----------
 
@@ -102,6 +104,78 @@ Derived convertTomlArrayToEigenMatrix(const toml::array& arr, const Derived& /*d
     return result;
 }
 
+
+inline void write_eigen_matrix_to_fits(const Eigen::MatrixXd& mat, const std::string& filename, const std::string& extname) {
+    fitsfile* fptr;
+    int status = 0;
+
+    long naxes[2] = { static_cast<long>(mat.cols()), static_cast<long>(mat.rows()) };
+
+    // Create a new FITS file (overwrite if exists)
+    fits_create_file(&fptr, ("!" + filename).c_str(), &status);
+    if (status) throw std::runtime_error("FITS: Could not create file");
+
+    // Create primary image HDU
+    fits_create_img(fptr, DOUBLE_IMG, 2, naxes, &status);
+    if (status) throw std::runtime_error("FITS: Could not create primary image");
+
+    // Write data: Eigen is row-major but FITS expects column-major
+    Eigen::MatrixXd col_major = mat.transpose(); // transpose to column-major
+    fits_write_img(fptr, TDOUBLE, 1, naxes[0]*naxes[1], col_major.data(), &status);
+    if (status) throw std::runtime_error("FITS: Could not write image data");
+
+    // Rename primary HDU
+    fits_update_key(fptr, TSTRING, "EXTNAME", const_cast<char*>(extname.c_str()), nullptr, &status);
+
+    fits_close_file(fptr, &status);
+    if (status) throw std::runtime_error("FITS: Error closing file");
+}
+
+inline void updateDMSharedMemory(IMAGE &dmImg, const Eigen::VectorXd &dmCmd) {
+    auto *md = dmImg.md;
+    int N = md->nelement;
+
+    // Entry log
+    //std::cout << "[DBG] updateDMSharedMemory() called with dmCmd.size() = "
+    //          << dmCmd.size() << " (expecting " << N << ")\n";
+
+    // Check size
+    if ((int)dmCmd.size() != N) {
+        std::cerr << "[ERROR] size mismatch: got " << dmCmd.size()
+                  << " vs " << N << "\n";
+        return;
+    }
+
+    // Log a few sample values from the command
+    //std::cout << "[DBG] dmCmd first 5 vals: ";
+    //for (int i = 0; i < std::min(5, N); ++i) std::cout << dmCmd[i] << " ";
+    //std::cout << "\n";
+
+    // Print metadata before write
+    //std::cout << "[DBG] Before write: cnt0=" << md->cnt0
+    //          << "  cnt1=" << md->cnt1
+    //          << "  write=" << md->write << "\n";
+
+    // Mark write
+    md->write = 1;
+    std::atomic_thread_fence(std::memory_order_release);
+
+    // Copy the data
+    std::memcpy(dmImg.array.D, dmCmd.data(), N * sizeof(double));
+
+    // Bump counters
+    md->cnt0++;
+    md->cnt1++; //!!! MJI, not sure why this was set to 0.
+
+    // Post semaphore
+    int ret = ImageStreamIO_sempost(&dmImg, -1);
+    //std::cout << "[DBG] ImageStreamIO_sempost returned " << ret << "\n";
+
+    // Clear write flag
+    md->write = 0;
+
+
+}
 
 //------------------------------------------------------------------------------
 // Drain any outstanding semaphore “posts” so that

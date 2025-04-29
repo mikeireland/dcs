@@ -40,7 +40,7 @@
 // ... this means we need 12.5^2 = ~150 times more frames to average for group delay than for
 // phase delay.
 #define MAX_N_GD_BOXCAR 64
-
+#define N_TO_JUMP 10 // Number of frames to wait before checking for a phase jump
 #define MAX_N_BS_BOXCAR 64   // Maximum number of frames to average for bispectrum
 #define MAX_N_PS_BOXCAR 64   // Maximum number of frames to average for power spectrum
 
@@ -141,6 +141,7 @@ struct Baselines{
     Eigen::Matrix<double, N_BL, 1> gd, pd, gd_snr, pd_snr, v2_K1, v2_K2;
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor, pd_phasor;
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
+    Eigen::Matrix<uint, N_BL, 1> jump_needed;
     int n_gd_boxcar, ix_gd_boxcar;
 };
 
@@ -158,6 +159,7 @@ struct PIDSettings{
     double kd;
     double integral;
     double dl_feedback_gain;
+    double pd_offset_gain;
 };
 
 //-------Commander structs-------------

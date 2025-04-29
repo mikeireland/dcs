@@ -64,10 +64,10 @@ typedef struct {
  * full image reference frame!
  * ========================================================================= */
 typedef struct {
-  char name[6];          // name of the live image
+  char name[6] = "";     // name of the live image
   int x0, y0, xsz, ysz;  // corner coordinate and size of ROIs
   int nrs;               // number of readouts in a sequence
-  char _name[8];         // name of the multiple reads data cube
+  char _name[8] = "";    // name of the multiple reads data cube
   // int *sign;          // time signature (ex: [-1, -1, 2])
 } subarray;
 
@@ -573,6 +573,7 @@ void* fetch_imgs(void *arg) {
   bool timeoutrecovery = false;
   int timeouts;
   unsigned int liveindex = 0;
+  unsigned int live_ROI_index[nroi] = {0};  // to track NDMR state
   long nbpix_frm = camconf->nbpix_frm;
   long nbpix_cub = camconf->nbpix_cub;
 
@@ -611,6 +612,8 @@ void* fetch_imgs(void *arg) {
       shm_img->md->cnt1 = liveindex;       // idem
 
       // =============================
+      //   split into multiple ROIs
+      // =============================      
       if (splitmode == 1) {
 	for (ri = 0; ri < nroi; ri++) {
 	  liveroi = shm_ROI_live[ri].array.UI16; // live ROI data pointer
@@ -632,6 +635,8 @@ void* fetch_imgs(void *arg) {
 	}
       }
 
+      // =============================
+      //    save the data to disk
       // =============================
       // another approach here would be to have a thread running in // when savemode=1
       // this thread would use an internal semaphore to know when to save a FITS file
@@ -917,6 +922,7 @@ void set_ndmr_mode(int _mode) {
   }
 
   if (_mode <= 2) {  // ------ engineering mode -----
+    camconf->ndmr_mode = 0;
     sprintf(cmd_cli, "set mode globalresetcds");
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
@@ -927,16 +933,19 @@ void set_ndmr_mode(int _mode) {
 
   }
   else {  // ------------------- science mode ------------------
+    camconf->ndmr_mode = 1;
+    sprintf(cmd_cli, "set rawimages on");
+    camera_command(ed, cmd_cli);
+    read_pdv_cli(ed, out_cli);
+    sleep(0.1);
+
     sprintf(cmd_cli, "set mode globalresetbursts");
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
-
+    sleep(0.1);
+    
     // camconf->nbreads = _mode;
     sprintf(cmd_cli, "set nbreadworeset %d", _mode);
-    camera_command(ed, cmd_cli);
-    read_pdv_cli(ed, out_cli);
-
-    sprintf(cmd_cli, "set rawimages on");
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
   }
