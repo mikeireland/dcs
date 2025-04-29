@@ -1147,54 +1147,6 @@ void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, d
     std::cout << "[IM] Saved interaction matrix to " << filename << std::endl;
 }
 
-// void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, double sleep_seconds = 0.01, const std::string& signal_space = "dm", const std::string& output_filename = "") {
-//     std::cout << "[IM] Starting interaction matrix capture with 140 modes..." << std::endl;
-
-//     // Precompute totalPixels correctly using both dimensions
-//     int nx = subarray.md->size[0];
-//     int ny = (subarray.md->naxis > 1) ? subarray.md->size[1] : 1;
-//     int totalPixels = nx * ny;
-
-//     int N_modes = 140;
-//     Eigen::MatrixXd IM(totalPixels, N_modes);
-
-//     for (int k = 0; k < N_modes; ++k) {
-//         std::cout << "[IM] Poking actuator " << k << "/" << N_modes << std::endl;
-
-//         Eigen::VectorXd cmd = Eigen::VectorXd::Zero(N_modes);
-//         cmd(k) = poke_amp;
-
-//         Eigen::VectorXd padded_cmd(144);
-//         padded_cmd.setZero();
-//         int idx = 0;
-//         for (int i = 0; i < 144; ++i) {
-//             if (!(i == 0 || i == 11 || i == 132 || i == 143)) {
-//                 padded_cmd(i) = cmd(idx++);
-//             }
-//         }
-
-//         updateDMSharedMemory(dm_rtc, padded_cmd);
-//         ImageStreamIO_sempost(&dm_rtc0, 1);
-//         std::this_thread::sleep_for(std::chrono::duration<double>(sleep_seconds));
-
-//         Eigen::VectorXd avg = Eigen::VectorXd::Zero(totalPixels);
-//         for (int n = 0; n < num_iterations; ++n) {
-//             catch_up_with_sem(&subarray, 1);
-//             ImageStreamIO_semwait(&subarray, 1);
-
-//             uint16_t *raw = subarray.array.UI16;
-//             Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-//             avg += rawArr.cast<double>().matrix(); 
-//             //avg = avg + rawArr.cast<double>();
-//         }
-//         avg /= num_iterations;
-//         IM.col(k) = avg;
-//     }
-
-//     std::string filename = output_filename.empty() ? "/home/asg/Music/IM_test.fits" : output_filename;
-//     write_eigen_matrix_to_fits(IM, filename, "IM");
-//     std::cout << "[IM] Saved interaction matrix to " << filename << std::endl;
-// }
 
 
 
@@ -1256,6 +1208,95 @@ json reload_config(json args) {
         return json{{"error", ex.what()}};
     }
 }
+
+/// NEed to test: poking in control space so we can build IM in closed loop 
+// void closed_loop_modal_id(const std::string& space = "dm", int num_frames = 20, double delta = 0.1, const std::string& output_filename = "/home/asg/Music/modal_response.fits") {
+//     std::cout << "[Modal ID] Starting closed-loop identification for modes..." << std::endl;
+
+//     // Determine which telemetry buffer to use
+//     const bool use_dm_space = (space == "dm");
+//     const auto& telemetry_buffer = use_dm_space ? rtc_config.telem.img_dm : rtc_config.telem.imgs;
+
+//     if (telemetry_buffer.empty()) {
+//         std::cerr << "[Modal ID] Error: telemetry buffer is empty." << std::endl;
+//         return;
+//     }
+
+//     const int N_modes_LO = rtc_config.ctrl_LO.set_point.size();
+//     const int N_modes_HO = rtc_config.ctrl_HO.set_point.size();
+//     const int N_total_modes = N_modes_LO + N_modes_HO;
+//     const int frame_size = telemetry_buffer.front().size();
+
+//     std::vector<Eigen::MatrixXd> response_data;
+
+//     // Lock to modify setpoints
+//     std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+//     for (int k = 0; k < N_total_modes; ++k) {
+//         std::cout << "[Modal ID] Probing mode " << k << "/" << N_total_modes << std::endl;
+
+//         PIDController& ctrl = (k < N_modes_LO) ? rtc_config.ctrl_LO : rtc_config.ctrl_HO;
+//         int local_k = (k < N_modes_LO) ? k : k - N_modes_LO;
+
+//         // Helper lambda to collect telemetry after a setpoint change
+//         auto collect = [&](double sign) -> Eigen::MatrixXd {
+//             ctrl.set_point(local_k) = sign * delta;
+//             std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+//             std::vector<Eigen::VectorXd> collected;
+//             for (int i = 0; i < num_frames; ++i) {
+//                 if (telemetry_buffer.size() < 1) {
+//                     std::cerr << "[Modal ID] Warning: no telemetry available during read." << std::endl;
+//                     continue;
+//                 }
+//                 collected.push_back(telemetry_buffer.back());
+//                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
+//             }
+
+//             Eigen::MatrixXd result(frame_size, collected.size());
+//             for (int i = 0; i < collected.size(); ++i)
+//                 result.col(i) = collected[i];
+//             return result;
+//         };
+
+//         // Positive response
+//         Eigen::MatrixXd pos_resp = collect(+1);
+//         response_data.push_back(pos_resp);
+
+//         // Negative response
+//         Eigen::MatrixXd neg_resp = collect(-1);
+//         response_data.push_back(neg_resp);
+
+//         // Reset setpoint
+//         ctrl.set_point(local_k) = 0.0;
+//     }
+
+//     // Write to FITS file (one HDU per entry)
+//     fitsfile* fptr;
+//     int status = 0;
+//     fits_create_file(&fptr, output_filename.c_str(), &status);
+//     if (status) {
+//         fits_report_error(stderr, status);
+//         return;
+//     }
+
+//     for (int i = 0; i < response_data.size(); ++i) {
+//         const auto& mat = response_data[i];
+//         long naxes[2] = {mat.rows(), mat.cols()};
+//         long fpixel[2] = {1, 1};
+
+//         if (i == 0) {
+//             fits_create_img(fptr, DOUBLE_IMG, 2, naxes, &status);
+//         } else {
+//             fits_create_img(fptr, DOUBLE_IMG, 2, naxes, &status);
+//         }
+
+//         fits_write_pix(fptr, TDOUBLE, fpixel, naxes[0]*naxes[1], (void*)mat.data(), &status);
+//     }
+
+//     fits_close_file(fptr, &status);
+//     std::cout << "[Modal ID] Saved closed-loop response data to " << output_filename << std::endl;
+// }
 
 
 COMMANDER_REGISTER(m)
@@ -1361,7 +1402,7 @@ COMMANDER_REGISTER(m)
           "\"output\", \"integrals\", or \"prev_errors\"",
           "args"_arg);
 
-    //build_interaction_matrix [0.05, 10, 0.01, "dm", "/home/asg/Music/IM_test.fits"]
+    //build_interaction_matrix [0.05, 10, 0.1, "dm", "/home/asg/Music/IM_test.fits"]
     m.def("build_interaction_matrix",
         [](json args) {
             if (!args.is_array() || args.size() > 5) {
