@@ -341,10 +341,12 @@ void shm_setup(int roi_too) {
   int NBkw = 10;
   long naxis = 3;
   uint8_t atype = _DATATYPE_UINT16;
+  uint8_t atype2 = _DATATYPE_INT32;  // for the NDMR ROI case
   char shmname[20];
   uint32_t imsize[3] = {camconf->width, camconf->height, camconf->nbreads};
   uint32_t roisize[2];
   uint32_t nd_roisize[3];  // for NDMR camera mode
+  int size;
 
   // =========================== primary SHM ===============================
   if (shm_img != NULL) {
@@ -383,7 +385,7 @@ void shm_setup(int roi_too) {
       roisize[0] = ROI[ii].xsz;
       roisize[1] = ROI[ii].ysz;
       ImageStreamIO_createIm_gpu(&shm_ROI_live[ii], ROI[ii].name, naxis,
-				 roisize, atype, -1, shared,
+				 roisize, atype2, -1, shared,
 				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
     }
     // ======================== the case of NDMR ROI =======================
@@ -396,13 +398,19 @@ void shm_setup(int roi_too) {
     naxis = 3;
     shm_ROI_ndmr = (IMAGE*) malloc(sizeof(IMAGE) * nroi);
   
-    for (int ii = 0; ii < nroi; ii++) {
-      nd_roisize[0] = ROI[ii].xsz;
-      nd_roisize[1] = ROI[ii].ysz;
-      nd_roisize[2] = ROI[ii].nrs;
-      ImageStreamIO_createIm_gpu(&shm_ROI_ndmr[ii], ROI[ii]._name, naxis,
+    for (int ri = 0; ri < nroi; ri++) {
+      nd_roisize[0] = ROI[ri].xsz;
+      nd_roisize[1] = ROI[ri].ysz;
+      nd_roisize[2] = ROI[ri].nrs;
+      size = ROI[ri].xsz * ROI[ri].ysz * ROI[ri].nrs;
+
+      ImageStreamIO_createIm_gpu(&shm_ROI_ndmr[ri], ROI[ri]._name, naxis,
 				 nd_roisize, atype, -1, shared,
 				 IMAGE_NB_SEMAPHORE, NBkw, MATH_DATA);
+      // init all values in this shm
+      for (int ii = 0; ii < size; ii++) {
+	shm_ROI_ndmr[ri].array.SI32[ii] = 0;
+      }
     }
   }
 }
@@ -569,6 +577,9 @@ void* save_cube_to_fits(void *_cube) {
 void* fetch_imgs(void *arg) {
   uint8_t *image_p = NULL;
   unsigned short *liveimg;
+  unsigned short *ndmr_live_ptr;
+  unsigned short *ndmr_live_ptr2; // this is getting ugly, I know
+
   int numbufs = 256;
   bool timeoutrecovery = false;
   int timeouts;
@@ -576,11 +587,13 @@ void* fetch_imgs(void *arg) {
   unsigned int live_ROI_index[nroi] = {0};  // to track NDMR state
   long nbpix_frm = camconf->nbpix_frm;
   long nbpix_cub = camconf->nbpix_cub;
-
+  long nbpix_roi = 0;
   pthread_t tid_save; // thread ID for the saving of a data-cube
 
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
-  unsigned short *liveroi;
+  int fii0, fii1, fii2; // frame index for NDMR mode
+  // unsigned short *liveroi;
+  int *liveroi;
   int ixsz, xsz, ysz, x0, y0;
   
   // ----- image fetching loop starts here -----
@@ -616,25 +629,70 @@ void* fetch_imgs(void *arg) {
       // =============================      
       if (splitmode == 1) {
 	for (ri = 0; ri < nroi; ri++) {
-	  liveroi = shm_ROI_live[ri].array.UI16; // live ROI data pointer
+	  liveroi = shm_ROI_live[ri].array.SI32; // live ROI data pointer
 	  xsz = shm_ROI_live[ri].md->size[0];
 	  ysz = shm_ROI_live[ri].md->size[1];
 	  x0 = ROI[ri].x0;
 	  y0 = ROI[ri].y0;
+	  nbpix_roi = xsz * ysz;
 
-	  shm_ROI_live[ri].md->write = 1;
-	  for (jj = 0; jj < ysz; jj++) {
-	    for (ii = 0; ii < xsz; ii++) {
-	      liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
+	  // ------------ the "engineering" readout mode -------------
+	  if (camconf->ndmr_mode == 0) {
+	    shm_ROI_live[ri].md->write = 1;
+	    for (jj = 0; jj < ysz; jj++) {
+	      for (ii = 0; ii < xsz; ii++) {
+		liveroi[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
+	      }
 	    }
+	    shm_ROI_live[ri].md->write = 0;
+	    ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
+	    shm_ROI_live[ri].md->cnt0++;
+	    shm_ROI_live[ri].md->cnt1++;
 	  }
-	  shm_ROI_live[ri].md->write = 0;
-	  ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
-	  shm_ROI_live[ri].md->cnt0++;
-	  shm_ROI_live[ri].md->cnt1++;
+	  // ------------- the "science" readout mode ----------------
+	  else {
+	    // (1) insert the latest frame into the NDMR buffer
+	    fii0 = live_ROI_index[ri];
+	    ndmr_live_ptr = shm_ROI_ndmr[ri].array.UI16 + fii0 * nbpix_roi;
+	    liveroi = shm_ROI_live[ri].array.SI32; // live ROI data pointer
+	    
+	    shm_ROI_live[ri].md->write = 1;
+
+	    for (jj = 0; jj < ysz; jj++) {
+	      for (ii = 0; ii < xsz; ii++) {
+		ndmr_live_ptr[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
+		// ---- load the current image in the live ROI
+		liveroi[jj*xsz+ii] = 2 * ndmr_live_ptr[jj*xsz+ii];
+	      }
+	    }
+
+	    // (2) compute the live image
+	    fii1 = (fii0 + ROI[ri].nrs - 1) % ROI[ri].nrs;
+	    fii2 = (fii0 + ROI[ri].nrs - 2) % ROI[ri].nrs;
+
+	    ndmr_live_ptr = shm_ROI_ndmr[ri].array.UI16 + fii1 * nbpix_roi;
+	    ndmr_live_ptr2 = shm_ROI_ndmr[ri].array.UI16 + fii2 * nbpix_roi;
+	    
+	    for (jj = 0; jj < ysz; jj++) {
+	      for (ii = 0; ii < xsz; ii++) {
+		// ---- load the current image in the live ROI
+		liveroi[jj*xsz+ii] -= ndmr_live_ptr[jj*xsz+ii] + \
+		  ndmr_live_ptr2[jj*xsz+ii];
+	      }
+	    }
+	    // (3) push that image to the ROI_live
+	    shm_ROI_live[ri].md->write = 0;
+	    ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
+	    shm_ROI_live[ri].md->cnt0++;
+	    shm_ROI_live[ri].md->cnt1++;
+
+	    // (3) increment all relevant indices
+	    live_ROI_index[ri] = (live_ROI_index[ri] + 1) % ROI[ri].nrs;
+
+	    // fprintf(stderr, "\rri=%2d - fii0 = %2d - fii1 = %2d", ri, fii0, fii1);
+	  }
 	}
       }
-
       // =============================
       //    save the data to disk
       // =============================
@@ -762,6 +820,7 @@ void stop() {
 void quit() {
   if (keepgoing == 1) {
     keepgoing = 0;
+    sleep(0.5);
   }
   free(ROI);
   free_shm(1); // erase everything, including ROI SHMs!
@@ -851,7 +910,7 @@ void set_split_mode(int _mode) {
   if (keepgoing == 1) {
     keepgoing = 0;  // interrupt the acquisition
     wasrunning = 1; // keep that in mind
-    sleep(1);
+    sleep(0.2);
   }
   
   if (_mode <= 0) {
@@ -867,7 +926,7 @@ void set_split_mode(int _mode) {
   }
   // back to prior business
   if (wasrunning == 1) {
-    sleep(1);
+    sleep(0.2);
     fetch();
   }
 }
@@ -918,7 +977,7 @@ void set_ndmr_mode(int _mode) {
   if (keepgoing == 1) {
     keepgoing = 0;  // interrupt the acquisition
     wasrunning = 1; // keep that in mind
-    sleep(1);
+    sleep(0.2);
   }
 
   if (_mode <= 2) {  // ------ engineering mode -----
@@ -952,7 +1011,7 @@ void set_ndmr_mode(int _mode) {
 
   // back to prior business
   if (wasrunning == 1) {
-    sleep(1);
+    sleep(0.2);
     fetch();
   }
 }
@@ -1037,7 +1096,12 @@ int main(int argc, char **argv) {
   
   // ------------------------
   // clean-end of the program
-  // ------------------------ 
+  // ------------------------
+  if (keepgoing == 1) {
+    keepgoing = 0;
+    sleep(0.5);
+  }
+  
   printf("%s\n", status_cstr);
   free(ROI);
   free_shm(1); // erase everything, including ROI SHMs!
