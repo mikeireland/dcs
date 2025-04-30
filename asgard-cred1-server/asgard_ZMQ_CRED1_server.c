@@ -68,7 +68,7 @@ typedef struct {
   int x0, y0, xsz, ysz;  // corner coordinate and size of ROIs
   int nrs;               // number of readouts in a sequence
   char _name[8] = "";    // name of the multiple reads data cube
-  // int *sign;          // time signature (ex: [-1, -1, 2])
+  // int *tsig;          // time signature (ex: [2, -1, -1])
 } subarray;
 
 /* =========================================================================
@@ -201,7 +201,7 @@ void refresh_image_splitting_configuration() {
       ROI[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
       ROI[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
       ROI[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
-      ROI[ii].nrs = 3; // for now, 3 reads only!
+      ROI[ii].nrs = cJSON_GetObjectItem(item, "nrs")->valueint; // assumes 3
       ii++;
     }
     // update y0 coordinates of the Baldr ROI if cropmode is on
@@ -591,6 +591,8 @@ void* fetch_imgs(void *arg) {
   pthread_t tid_save; // thread ID for the saving of a data-cube
 
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
+  int tsig[3] = {2, -1, -1};  // to be dynamically allocated from the JSON config
+
   int fii0, fii1, fii2; // frame index for NDMR mode
   // unsigned short *liveroi;
   int *liveroi;
@@ -662,7 +664,21 @@ void* fetch_imgs(void *arg) {
 	      for (ii = 0; ii < xsz; ii++) {
 		ndmr_live_ptr[jj*xsz+ii] = liveimg[(jj + y0) * ixsz + ii + x0];
 		// ---- load the current image in the live ROI
-		liveroi[jj*xsz+ii] = 2 * ndmr_live_ptr[jj*xsz+ii];
+		switch (liveindex) { // to accommodate for the reset special case
+		case 0:
+		  liveroi[jj*xsz+ii] = 0;
+		  break;
+		case 1:
+		  liveroi[jj*xsz+ii] = ndmr_live_ptr[jj*xsz+ii];
+		  break;
+		default:
+		  liveroi[jj*xsz+ii] = tsig[0] * ndmr_live_ptr[jj*xsz+ii];
+		  break;
+		}
+		/* if (liveindex != 0)  */
+		/*   liveroi[jj*xsz+ii] = tsig[0] * ndmr_live_ptr[jj*xsz+ii]; */
+		/* else */
+		/*   liveroi[jj*xsz+ii] = 0; */
 	      }
 	    }
 
@@ -676,8 +692,22 @@ void* fetch_imgs(void *arg) {
 	    for (jj = 0; jj < ysz; jj++) {
 	      for (ii = 0; ii < xsz; ii++) {
 		// ---- load the current image in the live ROI
-		liveroi[jj*xsz+ii] -= ndmr_live_ptr[jj*xsz+ii] + \
-		  ndmr_live_ptr2[jj*xsz+ii];
+		switch (liveindex) {
+		case 0:
+		  break; // empty frame
+
+		case 1:
+		  liveroi[jj*xsz+ii] -= ndmr_live_ptr[jj*xsz+ii];
+		  break;
+
+		default:
+		  liveroi[jj*xsz+ii] += tsig[1] * ndmr_live_ptr[jj*xsz+ii] + \
+		    tsig[2] * ndmr_live_ptr2[jj*xsz+ii];
+		  break;
+		}
+		/* if (liveindex != 0)  */
+		/*   liveroi[jj*xsz+ii] += tsig[1] * ndmr_live_ptr[jj*xsz+ii] + \ */
+		/*     tsig[2] * ndmr_live_ptr2[jj*xsz+ii]; */
 	      }
 	    }
 	    // (3) push that image to the ROI_live
@@ -717,7 +747,7 @@ void* fetch_imgs(void *arg) {
       if (timeouts > previous_timeouts){
 	previous_timeouts = timeouts;
 	timeoutrecovery = true;
-	printf("AArgh - timeout. %d\n", timeouts);
+	printf("Registering a camera timeout (current tally: %d)\n", timeouts);
       }
 
       if (keepgoing == 0)
