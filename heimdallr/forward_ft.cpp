@@ -107,7 +107,7 @@ void ForwardFt::loop() {
                     ii_shift = (ii + subim_sz/2) % subim_sz;
                     jj_shift = (jj + subim_sz/2) % subim_sz;
                     subim[ii_shift*subim_sz + jj_shift] = 
-                        ((double)(subarray->array.UI16[ii*subim_sz + jj]) - dark[ii*subim_sz + jj_shift]) 
+                        ((double)(subarray->array.SI32[ii*subim_sz + jj]) - dark[ii*subim_sz + jj_shift]) 
                             * window[ii*subim_sz + jj];
                 }
             }

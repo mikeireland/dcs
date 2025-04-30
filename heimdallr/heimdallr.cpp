@@ -215,10 +215,28 @@ void set_gain(double gain) {
     pid_settings.mutex.unlock();
 }
 
+void set_ggain(double gain) {
+    pid_settings.mutex.lock();
+    pid_settings.gd_gain = gain / MAX_N_GD_BOXCAR;
+    pid_settings.mutex.unlock();
+}
+
 void set_offset_gain(double gain) {
     pid_settings.mutex.lock();
     pid_settings.pd_offset_gain = gain;
     pid_settings.mutex.unlock();
+}
+
+void set_delay_line_type(std::string type) {
+    if (type == "piezo") {
+        delay_line_type = "piezo";
+    } else if (type == "hfo") {
+        delay_line_type = "hfo";
+    } else {
+        std::cout << "Delay line type not recognised" << std::endl;
+        return;
+    }
+    std::cout << "Delay line type updated to " << delay_line_type << std::endl;
 }
 
 Status get_status() {
@@ -239,6 +257,8 @@ Status get_status() {
     status.pd_offset = std::vector<double>(N_TEL);
     status.dl_offload = std::vector<double>(N_TEL);
     status.dm_piston = std::vector<double>(N_TEL);
+    status.pd_av = std::vector<double>(N_BL);
+    status.pd_av_filtered = std::vector<double>(N_BL);
 
     // Now fill these in with the values from the control structures.
     for (int i = 0; i < N_BL; i++) {
@@ -248,6 +268,8 @@ Status get_status() {
         status.pd_snr[i] = baselines.pd_snr(i);
         status.v2_K1[i] = baselines.v2_K1(i);
         status.v2_K2[i] = baselines.v2_K2(i);
+        status.pd_av[i] = baselines.pd_av(i);
+        status.pd_av_filtered[i] = baselines.pd_av_filtered(i);
     }
     for (int i = 0; i < N_TEL; i++) {
         status.gd_tel[i] = control_a.gd(i);
@@ -282,6 +304,8 @@ COMMANDER_REGISTER(m)
         "beam"_arg, "value"_arg=0.0);
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
+    m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
+    m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
     m.def("offset_gain", set_offset_gain, "Set the phase delay offset gain", "gain"_arg=0.0);
  }
 
@@ -323,7 +347,6 @@ int main(int argc, char* argv[]) {
     
     keep_offloading=false;
     offloading_thread.join();
-    
 
     // Join the fringe-tracking thread
     servo_mode = SERVO_STOP;

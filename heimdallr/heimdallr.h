@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <zmq.hpp>
 
 //----------Defines-----------
 #define OPD_PER_DM_UNIT 6.0 
@@ -39,10 +40,11 @@
 // Group delay has naturally an SNR that is 2.5 times lower, so the SNR ratio is 0.2/0.04*2.5 = 12.5
 // ... this means we need 12.5^2 = ~150 times more frames to average for group delay than for
 // phase delay.
-#define MAX_N_GD_BOXCAR 64
+#define MAX_N_GD_BOXCAR 32
 #define N_TO_JUMP 10 // Number of frames to wait before checking for a phase jump
 #define MAX_N_BS_BOXCAR 64   // Maximum number of frames to average for bispectrum
 #define MAX_N_PS_BOXCAR 64   // Maximum number of frames to average for power spectrum
+#define MAX_N_PD_BOXCAR 256 // Maximum number of frames to keep for phae delay history (phasor and phase)
 
 #define N_DARK_BOXCAR 256 // Number of frames for the running average of the dark.
 
@@ -132,17 +134,18 @@ struct ControlU{
 
 // This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
 struct ControlA{
-    Eigen::Vector4d gd;
-    Eigen::Vector4d pd;
+    Eigen::Vector4d gd, pd, pd_phasor_boxcar_avg;
     Eigen::Vector4d pd_offset;
 };
 
 struct Baselines{
-    Eigen::Matrix<double, N_BL, 1> gd, pd, gd_snr, pd_snr, v2_K1, v2_K2;
+    Eigen::Matrix<double, N_BL, 1> gd, pd, gd_snr, pd_snr, v2_K1, v2_K2, pd_av_filtered, pd_av;
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor, pd_phasor;
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
+    Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
+    Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];
     Eigen::Matrix<uint, N_BL, 1> jump_needed;
-    int n_gd_boxcar, ix_gd_boxcar;
+    int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
 };
 
 struct Bispectrum{
@@ -159,7 +162,8 @@ struct PIDSettings{
     double kd;
     double integral;
     double dl_feedback_gain;
-    double pd_offset_gain;
+    double pd_offset_gain; //!!! Unused
+    double gd_gain;
 };
 
 //-------Commander structs-------------
@@ -182,6 +186,7 @@ struct Status
     std::vector<double> closure_phase_K1, closure_phase_K2;
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
+    std::vector<double> pd_av, pd_av_filtered;
 };
 //-------End of Commander structs------
 
