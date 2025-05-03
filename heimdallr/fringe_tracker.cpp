@@ -167,6 +167,10 @@ void reset_search(){
     control_u.dit = 0.002;
     control_u.search_Nsteps = 0;
     control_u.steps_to_turnaround = 1000;
+    control_u.test_beam=0;
+    control_u.test_n=0;
+    control_u.test_ix=0;
+    control_u.test_value=0.1;
     beam_mutex.unlock();
 
     pid_settings.mutex.lock();
@@ -364,10 +368,21 @@ void fringe_tracker(){
             // Compute the piezo control signal. T
             control_u.dm_piston += (pid_settings.kp * control_a.pd + 
                 pid_settings.gd_gain * control_a.gd) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+            // Center the DM piston.
+            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
             // Limit it to no more than +/- MAX_DM_PISTON.
             control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
             control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
 
+        }
+        // Make the test pattern.
+        if (control_u.test_n > 0){
+            if (control_u.test_ix < control_u.test_n){
+                control_u.dm_piston(control_u.test_beam) = control_u.test_value;
+            } else  {
+                control_u.dm_piston(control_u.test_beam) = -control_u.test_value;
+            } 
+            control_u.test_ix = (control_u.test_ix + 1) % (2*control_u.test_n);
         }
         // Apply the signal to the DM!
         set_dm_piston(control_u.dm_piston);

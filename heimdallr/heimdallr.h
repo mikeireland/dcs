@@ -130,6 +130,8 @@ struct ControlU{
     Eigen::Vector4d dl_offload;
     double search_delta, omega_dl, dit;
     unsigned int search_Nsteps, steps_to_turnaround;
+    int test_beam, test_n, test_ix;
+    double test_value;
 };
 
 // This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
@@ -187,6 +189,7 @@ struct Status
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
+    int test_ix, test_n;
 };
 //-------End of Commander structs------
 

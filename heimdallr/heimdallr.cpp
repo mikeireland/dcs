@@ -259,6 +259,8 @@ Status get_status() {
     status.dm_piston = std::vector<double>(N_TEL);
     status.pd_av = std::vector<double>(N_BL);
     status.pd_av_filtered = std::vector<double>(N_BL);
+    status.test_ix = control_u.test_ix;
+    status.test_n = control_u.test_n;
 
     // Now fill these in with the values from the control structures.
     for (int i = 0; i < N_BL; i++) {
@@ -285,6 +287,21 @@ Status get_status() {
     return status;
 }
 
+void test(uint beam, double value, uint n) {
+    // This is a test function that sets the DM piston to a value
+    // and then waits for n seconds.
+    if (beam > N_TEL) {
+        std::cout << "Beam number (arg 0) out of range" << std::endl;
+        return;
+    }
+    beam_mutex.lock();
+    control_u.test_beam = beam;
+    control_u.test_value = value;
+    control_u.test_n = n;
+    control_u.test_ix = 0;
+    beam_mutex.unlock();   
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -307,6 +324,7 @@ COMMANDER_REGISTER(m)
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
     m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
     m.def("offset_gain", set_offset_gain, "Set the phase delay offset gain", "gain"_arg=0.0);
+    m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
  }
 
 int main(int argc, char* argv[]) {
