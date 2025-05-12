@@ -560,11 +560,10 @@ void* fetch_imgs(void *arg) {
   int numbufs = 256;
   bool timeoutrecovery = false;
   int timeouts;
-  unsigned int liveindex = 0;
+  long int liveindex = 0;
 
   long nbpix_frm = camconf->nbpix_frm;
   long nbpix_cub = camconf->nbpix_cub;
-  pthread_t tid_save; // thread ID for the saving of a data-cube
 
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
   int tsig[3] = {2, -1, -1};  // to be dynamically allocated from the JSON config
@@ -623,7 +622,7 @@ void* fetch_imgs(void *arg) {
 	  else {
 	    // update the frame indices from current sequence
 	    for (int kk = 0; kk < ROI[ri].nrs; kk++) {
-	      seq_indices[kk] = (dhm_img->md->size[2] + liveindex - kk) % dhm_img->md->size[2];
+	      seq_indices[kk] = (shm_img->md->size[2] + liveindex - kk) % shm_img->md->size[2];
 	    }
 	    // affected by RESET effect: sending zeros (for now)
 	    if (liveindex <= camconf->nfr_reset) {
@@ -665,7 +664,7 @@ void* fetch_imgs(void *arg) {
 	  memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
 		 nbpix_cub * sizeof(unsigned short));
 
-	sem_post(&sync_save); // pthread_create(&tid_save, NULL, save_cube_to_fits, tosave);
+	sem_post(&sync_save);
       }
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > previous_timeouts){
