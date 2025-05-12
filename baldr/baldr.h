@@ -767,6 +767,7 @@ extern std::condition_variable rtc_pause_cv; // Notifies RTC to resume.
 
 //
 extern std::string telemFormat;
+extern std::string telem_save_path;
 
 // The C-Red Image subarray and DM
 extern IMAGE subarray;

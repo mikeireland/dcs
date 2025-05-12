@@ -138,17 +138,25 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
     
     // Assume the image data is stored as 16-bit unsigned ints.
     ImageStreamIO_semwait( &subarray, 1);  // waiting for image update
-    uint16_t* data = subarray.array.UI16;
+
+    int32_t* data = subarray.array.SI32;
     if (!data) {
-        //ImageStreamIO_destroyIm(&subarray);
         throw std::runtime_error("Data pointer in shared memory is null.");
     }
+    Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(data, totalPixels);
+    Eigen::VectorXd frame = rawArr.cast<double>();
+
+    // uint16_t* data = subarray.array.UI16;
+    // if (!data) {
+    //     //ImageStreamIO_destroyIm(&subarray);
+    //     throw std::runtime_error("Data pointer in shared memory is null.");
+    // }
     
-    // Convert the pixel data to an Eigen vector.
-    Eigen::VectorXd frame(totalPixels);
-    for (int i = 0; i < totalPixels; ++i) {
-        frame(i) = static_cast<double>(data[i]);
-    }
+    // // Convert the pixel data to an Eigen vector.
+    // Eigen::VectorXd frame(totalPixels);
+    // for (int i = 0; i < totalPixels; ++i) {
+    //     frame(i) = static_cast<double>(data[i]);
+    // }
     
     // Clean up the mapping.
     // ImageStreamIO_destroyIm(&subarray);
@@ -486,17 +494,23 @@ void rtc(){
 
         //  MAP & COPY into an Eigen vector
         //    (we know data is stored U16 so we cast to uint16_t*)
-        uint16_t *raw = subarray.array.UI16;
-        // Eigen::VectorXd img(totalPixels);
-        // for (int i = 0; i < totalPixels; ++i) {
-        //     img(i) = static_cast<double>(raw[i]);
-        // }
-        // a better way 
-        // 1) Map the raw uint16_t buffer as an Eigen array:
-        Eigen::Map<const Eigen::Array<uint16_t,Eigen::Dynamic,1>> rawArr(raw, totalPixels);
+        // uint16_t *raw = subarray.array.UI16;
+        // // Eigen::VectorXd img(totalPixels);
+        // // for (int i = 0; i < totalPixels; ++i) {
+        // //     img(i) = static_cast<double>(raw[i]);
+        // // }
+        // // a better way 
+        // // Map the raw uint16_t buffer as an Eigen array:
+        // Eigen::Map<const Eigen::Array<uint16_t,Eigen::Dynamic,1>> rawArr(raw, totalPixels);
 
-        // 2) Cast it to double—and store into a VectorXd:
+        // // Cast it to double—and store into a VectorXd:
+        // Eigen::VectorXd img = rawArr.cast<double>();
+        
+        int32_t *raw = subarray.array.SI32;
+        Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
         Eigen::VectorXd img = rawArr.cast<double>();
+
+
 
         //std::cout  << img.size() << std::endl;
         //uint64_t totalFramesWritten = subarray.md->cnt0;

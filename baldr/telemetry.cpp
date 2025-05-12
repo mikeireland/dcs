@@ -11,7 +11,7 @@
 #include <iomanip>
 #include "baldr.h"   // Contains rtc_config and bdr_telem definition
 #include <mutex>
-
+#include <filesystem> //C++ 17
 
 // long unsigned int telemetry_cnt=0;
 // // Add local (to telemetry) variables here
@@ -277,15 +277,27 @@ void telemetry(){
             auto now = std::chrono::system_clock::now();                
             std::time_t t = std::chrono::system_clock::to_time_t(now);
             std::tm tm = *std::localtime(&t);
+
+            std::filesystem::create_directories(telem_save_path);
+
             std::ostringstream oss;
+            oss << telem_save_path << "telemetry_" << std::put_time(&tm, "%Y%m%d_%H%M%S");
+
             if (telemFormat == "fits") {
-                oss << "/home/asg/Music/telemetry_" 
-                    << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".fits";
-            } else { // default to "json"
-                oss << "/home/asg/Music/telemetry_" 
-                    << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".json";
+                oss << ".fits";
+            } else {
+                oss << ".json";
             }
             std::string filename = oss.str();
+
+            // if (telemFormat == "fits") {
+            //     oss << "/home/asg/Music/telemetry_" 
+            //         << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".fits";
+            // } else { // default to "json"
+            //     oss << "/home/asg/Music/telemetry_" 
+            //         << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".json";
+            // }
+            // std::string filename = oss.str();
 
             bdr_telem currentTelem;
             {   // Lock telemetry mutex and copy current telemetry.

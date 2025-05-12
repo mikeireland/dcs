@@ -34,10 +34,11 @@ bool user_provided_config = false;      // true if user gives a manual toml file
 std::atomic<int> servo_mode; 
 std::atomic<int> servo_mode_LO;
 std::atomic<int> servo_mode_HO;
-// int servo_mode_LO;
-// int servo_mode_HO;
+
+
 std::string telemFormat = "fits";//"json";
-//vector::<int> telescopes;
+std::string telem_save_path = "/home/asg/Music/";
+
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 
@@ -563,9 +564,10 @@ void new_dark_and_bias() {
             catch_up_with_sem(&subarray, 1);
             ImageStreamIO_semwait(&subarray, 1);
 
-            uint16_t* raw = subarray.array.UI16;
-            Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-
+            //uint16_t* raw = subarray.array.UI16;
+            int32_t* raw = subarray.array.SI32;
+            //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+            Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
             bias_sum += rawArr.cast<double>().matrix();
         }
 
@@ -584,9 +586,10 @@ void new_dark_and_bias() {
             catch_up_with_sem(&subarray, 1);
             ImageStreamIO_semwait(&subarray, 1);
 
-            uint16_t* raw = subarray.array.UI16;
-            Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-
+            //uint16_t* raw = subarray.array.UI16;
+            //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+            int32_t* raw = subarray.array.SI32;
+            Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
             dark_sum += rawArr.cast<double>().matrix();
         }
 
@@ -814,6 +817,42 @@ json set_telem_capacity(json args) {
 
 void save_telemetry(){
     rtc_config.state.take_telemetry = 1;
+}
+
+json set_telem_save_path(json args) {
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"error", "Expected an array with one element: [\"/desired/save/path/\"]"}};
+    }
+    try {
+        std::string new_path = args.at(0).get<std::string>();
+        if (new_path.empty()) {
+            return json{{"error", "Provided path is empty."}};
+        }
+
+        // Ensure path ends with a slash '/'
+        if (new_path.back() != '/') {
+            new_path += '/';
+        }
+
+        telem_save_path = new_path;
+        // {
+        //     std::lock_guard<std::mutex> lock(telemetry_mutex);
+        //     telem_save_path = new_path;
+        // }
+
+        // Optionally create the directory now if it doesn't exist
+        try {
+            std::filesystem::create_directories(new_path);
+        } catch (const std::exception& ex) {
+            return json{{"error", "Failed to create directory: " + std::string(ex.what())}};
+        }
+
+        std::cout << "[set_telem_save_path] Updated telemetry save path to: " << new_path << std::endl;
+        return json{{"status", "Telemetry save path updated", "new_path", new_path}};
+    }
+    catch (const std::exception& ex) {
+        return json{{"error", ex.what()}};
+    }
 }
 
 
@@ -1101,8 +1140,10 @@ void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, d
             for (int i = 0; i < 200; ++i) {
                 catch_up_with_sem(&subarray, 1);
                 ImageStreamIO_semwait(&subarray, 1);
-                uint16_t *raw = subarray.array.UI16;
-                Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                //uint16_t *raw = subarray.array.UI16;
+                //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                int32_t* raw = subarray.array.SI32;
+                Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
                 Eigen::VectorXd img = rawArr.cast<double>();
                 img -= (darkscale * rtc_config.reduction.dark + rtc_config.reduction.bias);
                 Iplus += img;
@@ -1119,8 +1160,10 @@ void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, d
             for (int i = 0; i < 200; ++i) {
                 catch_up_with_sem(&subarray, 1);
                 ImageStreamIO_semwait(&subarray, 1);
-                uint16_t *raw = subarray.array.UI16;
-                Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                //uint16_t *raw = subarray.array.UI16;
+                //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+                int32_t* raw = subarray.array.SI32;
+                Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
                 Eigen::VectorXd img = rawArr.cast<double>();
                 img -= (darkscale * rtc_config.reduction.dark + rtc_config.reduction.bias);
                 Iminus += img;
@@ -1349,9 +1392,14 @@ COMMANDER_REGISTER(m)
     m.def("save_telemetry", save_telemetry,
           "dump telemetry in the circular buffer to file","mode"_arg);
 
+    m.def("set_telem_save_path", set_telem_save_path,
+        "Set the directory to save telemetry files. Usage: set_telem_save_path [\"/your/save/path/\"]",
+        "args"_arg);
+        
     m.def("set_telem_capacity", set_telem_capacity,
           "Set the capacity for all telemetry ring buffers (how many samples we hold). e.g: set_telem_capacity [200]",
           "args"_arg);
+
 
     m.def("I0_update", I0_update,
             "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
