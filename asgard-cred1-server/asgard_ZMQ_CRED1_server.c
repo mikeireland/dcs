@@ -16,6 +16,8 @@
 #  endif
 #endif
 
+//#define DEBUG_TIMING
+
 #include <commander/commander.h> // commander header
 #include <ImageStreamIO.h>       // libImageStreamIO header
 #include <edtinc.h>              // EDT-PCI board API
@@ -89,7 +91,7 @@ int camera_command(EdtDev ed, const char *cmd);
 
 // configuration functions
 void refresh_image_splitting_configuration();
-int init_cam_configuration(int crop_mode);
+int init_cam_configuration();
 void optimize_cropping_parameters();
 void shm_setup(int roi_too);
 void free_shm(int roi_too);
@@ -297,7 +299,8 @@ int init_cam_configuration() {
   camconf->nbr_hlf = 100;
   camconf->nfr_reset = 3;
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
-  camconf->height = (uint32_t) pdv_get_height(pdv_p) - camconf->nrows_cropped;
+  camconf->height = (uint32_t) pdv_get_cam_height(pdv_p) - camconf->nrows_cropped;
+  pdv_set_height(pdv_p, camconf->height);
   camconf->depth = pdv_get_depth(pdv_p);
   camconf->timeout = pdv_serial_get_timeout(ed);
   sprintf(camconf->cameratype, "%s", pdv_get_camera_type(pdv_p));
@@ -552,6 +555,10 @@ void* save_cube_to_fits(void *arg) {
  *                     Camera image fetching thread
  * ========================================================================= */
 void* fetch_imgs(void *arg) {
+#ifdef DEBUG_TIMING
+  struct timespec tstart, tend;
+  double dtim, dtother;
+#endif
   uint8_t *image_p = NULL;
   unsigned short *liveimg_ptr; // pointer to latest image in circular buffer
   unsigned short *seq_img_ptr; // pointer used to build the "live" ROI
@@ -584,8 +591,15 @@ void* fetch_imgs(void *arg) {
     while (!timeoutrecovery) {
 
       liveimg_ptr = shm_img->array.UI16 + liveindex * nbpix_frm;  // live pointer
-
+#ifdef DEBUG_TIMING
+      clock_gettime(CLOCK_REALTIME, &tstart);  // start time
+#endif
       image_p = pdv_wait_images(pdv_p, 1);
+#ifdef DEBUG_TIMING
+      clock_gettime(CLOCK_REALTIME, &tend);  // end time
+      dtim = (tend.tv_sec - tstart.tv_sec) + (tend.tv_nsec - tstart.tv_nsec) / 1e9;
+      tstart = tend;
+#endif
       pdv_start_images(pdv_p, numbufs);
 
       shm_img->md->write = 1;              // signaling about to write
@@ -603,78 +617,83 @@ void* fetch_imgs(void *arg) {
       //   split into multiple ROIs
       // =============================      
       if (splitmode == 1) {
-	for (ri = 0; ri < nroi; ri++) {
-	  liveroi_ptr = shm_ROI_live[ri].array.SI32; // live ROI data pointer
-	  roi_xsz = ROI[ri].xsz;
-	  x0 = ROI[ri].x0;
-	  y0 = ROI[ri].y0;
+	      for (ri = 0; ri < nroi; ri++) {
+	        liveroi_ptr = shm_ROI_live[ri].array.SI32; // live ROI data pointer
+	        roi_xsz = ROI[ri].xsz;
+	        x0 = ROI[ri].x0;
+	        y0 = ROI[ri].y0;
 
-	  shm_ROI_live[ri].md->write = 1;
-	  // ------------ the "engineering" readout mode -------------
-	  if (camconf->ndmr_mode == 0) {
-	    for (jj = 0; jj < ROI[ri].ysz; jj++) {
-	      for (ii = 0; ii < ROI[ri].xsz; ii++) {
-		liveroi_ptr[jj*roi_xsz+ii] = liveimg_ptr[(jj+y0) * cam_xsz + ii+x0];
-	      }
-	    }
-	  }
-	  // ------------- the "science" readout mode ----------------
-	  else {
-	    // update the frame indices from current sequence
-	    for (int kk = 0; kk < ROI[ri].nrs; kk++) {
-	      seq_indices[kk] = (shm_img->md->size[2] + liveindex - kk) % shm_img->md->size[2];
-	    }
-	    // affected by RESET effect: sending zeros (for now)
-	    if (liveindex <= camconf->nfr_reset) {
-	      for (jj = 0; jj < ROI[ri].ysz; jj++) {
-		for (ii = 0; ii < ROI[ri].xsz; ii++) {
-		  liveroi_ptr[jj*roi_xsz+ii] = 0;
-		}
-	      }
-	    }
-	    else { // we're clear of RESET effect !!
-	      for (jj = 0; jj < ROI[ri].ysz; jj++) {
-		for (ii = 0; ii < ROI[ri].xsz; ii++) {
-		  liveroi_ptr[jj*roi_xsz+ii] = 0;
-		  for (int kk = 0; kk < ROI[ri].nrs; kk++) {
-		    seq_img_ptr = shm_img->array.UI16 + seq_indices[kk] * nbpix_frm;  // live pointer
-		    liveroi_ptr[jj*roi_xsz+ii] += tsig[kk] * seq_img_ptr[(jj+y0) * cam_xsz + ii+x0];
-		  }
-		}
-	      }
-	    }     
-	  }
-	  // ---------------- SHM house keeping ------------------
-	  shm_ROI_live[ri].md->write = 0;
-	  ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
-	  shm_ROI_live[ri].md->cnt0++;
-	  shm_ROI_live[ri].md->cnt1++;
-	}
+	        shm_ROI_live[ri].md->write = 1;
+	        // ------------ the "engineering" readout mode -------------
+	        if (camconf->ndmr_mode == 0) {
+	          for (jj = 0; jj < ROI[ri].ysz; jj++) {
+	            for (ii = 0; ii < ROI[ri].xsz; ii++) {
+		            liveroi_ptr[jj*roi_xsz+ii] = liveimg_ptr[(jj+y0) * cam_xsz + ii+x0];
+	            }
+	          }
+	        }
+          // ------------- the "science" readout mode ----------------
+          else {
+          // update the frame indices from current sequence
+            for (int kk = 0; kk < ROI[ri].nrs; kk++) {
+              seq_indices[kk] = (shm_img->md->size[2] + liveindex - kk) % shm_img->md->size[2];
+            }
+            // affected by RESET effect: sending zeros (for now)
+            if (liveindex <= camconf->nfr_reset) {
+              for (jj = 0; jj < ROI[ri].ysz; jj++) {
+                for (ii = 0; ii < ROI[ri].xsz; ii++) {
+                  liveroi_ptr[jj*roi_xsz+ii] = 0;
+                }
+              }
+            }
+            else { // we're clear of RESET effect !!
+              for (jj = 0; jj < ROI[ri].ysz; jj++) {
+                for (ii = 0; ii < ROI[ri].xsz; ii++) {
+                  liveroi_ptr[jj*roi_xsz+ii] = 0;
+                  for (int kk = 0; kk < ROI[ri].nrs; kk++) {
+                    seq_img_ptr = shm_img->array.UI16 + seq_indices[kk] * nbpix_frm;  // live pointer
+                    liveroi_ptr[jj*roi_xsz+ii] += tsig[kk] * seq_img_ptr[(jj+y0) * cam_xsz + ii+x0];
+                  }
+                }
+              }
+            }
+	        }
+          // ---------------- SHM house keeping ------------------
+          shm_ROI_live[ri].md->write = 0;
+          ImageStreamIO_sempost(&shm_ROI_live[ri], -1);
+          shm_ROI_live[ri].md->cnt0++;
+          shm_ROI_live[ri].md->cnt1++;
+        }
       }
-      
+#ifdef DEBUG_TIMING
+      clock_gettime(CLOCK_REALTIME, &tend);  // end time
+      dtother = (tend.tv_sec - tstart.tv_sec) + (tend.tv_nsec - tstart.tv_nsec) / 1e9;
+      printf("Image %d: dtim = %.3f us, dtother = %.3f us\n",
+       liveindex, dtim * 1e6, dtother * 1e6);
+#endif
       // =============================
       //    save the data to disk
       // =============================
       if (camconf->save_mode == 1) {
-	if (liveindex == camconf->nbr_hlf) // save the first half of the live data-cube
-	  memcpy(tosave, (unsigned short *) shm_img->array.UI16,
-		 nbpix_cub * sizeof(unsigned short));
-	
-	if (liveindex == 0) // save the second half of the live data-cube
-	  memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
-		 nbpix_cub * sizeof(unsigned short));
+        if (liveindex == camconf->nbr_hlf) // save the first half of the live data-cube
+          memcpy(tosave, (unsigned short *) shm_img->array.UI16,
+          nbpix_cub * sizeof(unsigned short));
+        
+        if (liveindex == 0) // save the second half of the live data-cube
+          memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
+          nbpix_cub * sizeof(unsigned short));
 
-	sem_post(&sync_save);
+        sem_post(&sync_save);
       }
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > previous_timeouts){
-	previous_timeouts = timeouts;
-	timeoutrecovery = true;
-	printf("Registering a camera timeout (current tally: %d)\n", timeouts);
+        previous_timeouts = timeouts;
+        timeoutrecovery = true;
+        printf("Registering a camera timeout (current tally: %d)\n", timeouts);
       }
       
       if (keepgoing == 0)
-	break;
+	      break;
     }
   }
   return NULL;
