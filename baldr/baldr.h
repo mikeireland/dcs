@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "burst_window.h"
+
 //#include <ImageStreamIO/ImageStreamIO.h>
 
 //----------Defines-----------
@@ -556,6 +558,9 @@ struct bdr_rtc_config {
     double gain ;
     double scale ; // ratio of fps and gain
 
+    //burst update here
+    BurstWindow burst; // set window to hold rolling intensities in a single burst (slope estimation etc)
+
     // ALL I2M and reference intensities stored in config are in ADU/second/gain !!
     Eigen::MatrixXd I2M_LO_runtime ; // LO intensity to mode calibrated for fps and gain 
     Eigen::MatrixXd I2M_HO_runtime ; // HO intensity to mode calibrated for fps and gain 
@@ -592,6 +597,20 @@ struct bdr_rtc_config {
         fps = get_float_cam_param("fps raw");
 
         std::cout << "[ZMQ] Using runtime gain = " << gain << ", fps = " << fps << std::endl;
+
+        try {
+            float nbread_val = get_float_cam_param("nbreadworeset raw");
+
+            int nbread_int = static_cast<int>(nbread_val);
+            if (nbread_int > 0 && fps > 0.0) {
+                burst.configure(nbread_int, fps);
+                std::cout << "[initDerivedParameters] Burst window configured: nbread=" << nbread_int << ", fps=" << fps << std::endl;
+            } else {
+                std::cerr << "[initDerivedParameters] Warning: invalid fps or nbread from camera (fps=" << fps << ", nbread=" << nbread_int << ")" << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[initDerivedParameters] Failed to configure burst window: " << e.what() << std::endl;
+        }
 
         scale = gain / fps;
 

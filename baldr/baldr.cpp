@@ -1,5 +1,6 @@
 #define TOML_IMPLEMENTATION
 #include "baldr.h"
+#include "burst_window.h"
 #include <commander/commander.h>
 #include <math.h> // For old-style C mathematics if needed.
 #include <zmq.hpp>
@@ -342,6 +343,49 @@ std::vector<int> split_indices(const std::string &indices_str) {
     }
     return indices;
 }
+
+
+// Configure burst window (used for intensity slope estime) from current camera settings
+//burst update here
+void configure_burstWindow_from_camera(double phase = 0.0) {
+    std::lock_guard<std::mutex> lock(rtc_mutex);
+
+    try {
+        // Query number of reads per reset and convert to integer
+        std::string nbread_str = extract_value(send_cam_cmd("nbreadworeset"));
+        int nbread = std::stoi(nbread_str);
+
+        // Query current FPS
+        float fps = get_float_cam_param("fps raw");
+
+        // Sanity check
+        if (nbread <= 0 || fps <= 0.0) {
+            throw std::runtime_error("Invalid nbread or fps from camera");
+        }
+
+        // Configure the burst window
+        rtc_config.burst.configure(nbread, fps, phase);
+
+
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Failed to configure burst window from camera: " << e.what() << std::endl;
+    }
+}
+//commander compatible wrapper 
+void cmd_configure_burst(json args) {
+    double phase = 0.0;
+    if (args.is_array() && !args.empty()) {
+        phase = args.at(0).get<double>();
+    }
+
+    try {
+        configure_burstWindow_from_camera(phase);
+;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] failed to configure burst window " << e.what() << std::endl;
+    }
+}
+
 
 
 toml::table readConfig(const std::string &filename) {
@@ -1400,6 +1444,8 @@ COMMANDER_REGISTER(m)
           "Set the capacity for all telemetry ring buffers (how many samples we hold). e.g: set_telem_capacity [200]",
           "args"_arg);
 
+
+    m.def("configure_burst", cmd_configure_burst,  "Update the rolling burst window (size and dt) for non-destructive read mode slope estimates", "args"_arg);
 
     m.def("I0_update", I0_update,
             "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
