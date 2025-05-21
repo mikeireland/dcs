@@ -564,7 +564,7 @@ void* fetch_imgs(void *arg) {
   unsigned short *seq_img_ptr; // pointer used to build the "live" ROI
   int *liveroi_ptr;            // pointer to the "live" ROI
 
-  int numbufs = 256;
+  int numbufs = 4; // was reduced from initial 256. To be further tested
   bool timeoutrecovery = false;
   int timeouts;
   long int liveindex = 0;
