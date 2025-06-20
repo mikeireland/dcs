@@ -591,10 +591,12 @@ struct bdr_rtc_config {
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
 
         // Use ZMQ to query runtime camera settings
+        
         float cal_gain = std::stof(cam.gain); // used in calibration of interaction matrix 
         float cal_fps = std::stof(cam.fps);
         gain = get_float_cam_param("gain raw");
         fps = get_float_cam_param("fps raw");
+
 
         std::cout << "[ZMQ] Using runtime gain = " << gain << ", fps = " << fps << std::endl;
 

@@ -69,6 +69,10 @@ void resumeRTC();
 zmq::context_t cam_zmq_context(1);
 zmq::socket_t cam_zmq_socket(cam_zmq_context, zmq::socket_type::req);
 std::string cam_host_str = "tcp://172.16.8.6:6667";
+// for the fake camera server for simulation mode 
+//std::string cam_ip = simulation_mode ? "127.0.0.1" : "172.16.8.6";
+//std::string cam_host_str = "tcp://" + cam_ip + ":6667";
+
 bool cam_zmq_initialized = false;
 
 // Initialize global ZMQ variables for MultiDeviceServer
@@ -248,15 +252,20 @@ void init_cam_zmq() {
 }
 
 std::string send_cam_cmd(const std::string& command) {
+    std::cout << "here1" << std::endl;
     init_cam_zmq();
+    std::cout << "here2" << std::endl;
     std::string full_cmd = "cli \"" + command + "\"";
     cam_zmq_socket.send(zmq::buffer(full_cmd), zmq::send_flags::none);
+    std::cout << "here3" << std::endl;
     zmq::message_t reply;
     cam_zmq_socket.recv(reply, zmq::recv_flags::none);
+    std::cout << "here4 :" << reply.data() << std::endl;
+
     return std::string(static_cast<char*>(reply.data()), reply.size());
 }
 
-
+//commander style wrapper for send_cam_cmd (json input)
 json send_cam_command(json args) {
     if (!args.is_array() || args.size() != 1) {
         return json{{"error", "Expected a single string argument [\"command\"]"}};
@@ -438,7 +447,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
             rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
             rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
             rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
-            rtc.state.simulation_mode = 0 ; 
+            rtc.state.simulation_mode = 1 ; 
             
             // reduction products 
             try{ 
@@ -1570,6 +1579,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+
+
     // Load and parse TOML config
     try {
         config = toml::parse_file(filename);
@@ -1583,6 +1594,44 @@ int main(int argc, char* argv[]) {
     std::string beamKey = "beam" + std::to_string(beam_id);
     try {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
+        
+
+        std::cout << "[INFO] RTC read in configuration for beam " << beam_id << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error Reading RTC config: " << e.what() << std::endl;
+        return 1;
+    }
+
+    // (this part - particularly the host string must be before init : 
+    //  rtc_config.initDerivedParameters();)
+    
+    // Open shared memory
+    std::cout << rtc_config.state.simulation_mode << std::endl;
+    if (!rtc_config.state.simulation_mode) {
+        std::cout << "[INFO] Opening real SHM (not simulation)..." << std::endl;
+
+        std::cout << "here in NOT simulation mode" << std::endl;
+
+        // real hardware servers
+        cam_host_str = "tcp://172.16.8.6:6667";
+        mds_host_str = "tcp://172.16.8.6:5555";
+
+
+    } else {
+        //std::cerr << "[ERROR] Simulation mode not implemented yet." << std::endl;
+        //throw std::runtime_error("Simulation mode not implemented");
+
+        std::cout << "here in simulation mode" << std::endl;
+
+        // Use the Fake servers!
+        cam_host_str = "tcp://127.0.0.1:6667";
+        mds_host_str = "tcp://127.0.0.1:5555";
+
+    }
+    
+    // after we set the corrrect host addresses based on simulation mode (need to read in toml first)
+    // then we init derived parameters (this requires zmq communication to camera server  - hence why we do it last)
+    try {
         rtc_config.initDerivedParameters();
         std::cout << "[INFO] RTC configuration initialized for beam " << beam_id << std::endl;
     } catch (const std::exception& e) {
@@ -1590,27 +1639,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Open shared memory
-    if (!rtc_config.state.simulation_mode) {
-        std::cout << "[INFO] Opening real SHM (not simulation)..." << std::endl;
 
-        ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
+    // we open shared memory the same - so this should be removed from conditional block to 
+    // avoid duplication
+    ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
 
-        std::string name = "dm" + std::to_string(beam_id) + "disp02";
-        std::string name0 = "dm" + std::to_string(beam_id);
+    std::string name = "dm" + std::to_string(beam_id) + "disp02";
+    std::string name0 = "dm" + std::to_string(beam_id);
 
-        if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
-            return 1;
-        }
-        if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
-            return 1;
-        }
-
-    } else {
-        std::cerr << "[ERROR] Simulation mode not implemented yet." << std::endl;
-        throw std::runtime_error("Simulation mode not implemented");
+    if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
+        std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
+        return 1;
+    }
+    if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+        std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
+        return 1;
     }
 
     // Start RTC threads

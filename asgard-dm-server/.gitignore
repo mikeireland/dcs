@@ -54,3 +54,6 @@ dkms.conf
 
 # Log files
 *.log
+
+# simulation virtual environment.
+simulation/venv
