@@ -23,6 +23,8 @@ LDFLAGS += -L /opt/EDTpdv -lpdv
 
 all: $(EXEC)
 
+debug: debug_kaya.o
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 asgard_cam_server: $(OBJECTS)
 	$(CC) -o $@ $^ $(LDFLAGS)
