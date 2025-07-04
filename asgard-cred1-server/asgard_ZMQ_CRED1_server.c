@@ -693,11 +693,12 @@ void* fetch_imgs(void *arg) {
   // ----- image fetching loop starts here -----
   cam_xsz = shm_img->md->size[0];  // camera frame size along the x-axis
 
+  pdv_timeout_restart(pdv_p, true);
+  pdv_flush_fifo(pdv_p);
+  pdv_multibuf(pdv_p, numbufs);
+  pdv_start_images(pdv_p, 0); // numbufs);
+
   while (keepgoing > 0) {
-    pdv_timeout_restart(pdv_p, true);
-    pdv_flush_fifo(pdv_p);
-    pdv_multibuf(pdv_p, numbufs);
-    pdv_start_images(pdv_p, numbufs);
     timeoutrecovery = false;
 
     while (!timeoutrecovery) {
@@ -718,6 +719,7 @@ void* fetch_imgs(void *arg) {
       clock_gettime(CLOCK_REALTIME, &tstart);  // start time
 #endif
       image_p = pdv_wait_images(pdv_p, 1);
+      // image_p = pdv_wait_last_image(pdv_p, NULL);
 #ifdef DEBUG_TIMING
       clock_gettime(CLOCK_REALTIME, &tend);  // end time
       dtim = (tend.tv_sec - tstart.tv_sec) + (tend.tv_nsec - tstart.tv_nsec) / 1e9;
