@@ -11,6 +11,7 @@ plt.ion()  # interactive mode on
 status = Z.send('status')
 v2_K1 = np.zeros((100, 6))  # create an array of zeros
 pd_tel = np.zeros((100, 4))  # create an array of zeros
+gd_tel = np.zeros((100, 4))  # create an array of zeros
 dm = np.zeros((100, 4))  
 offload = np.zeros((100, 4))
 
@@ -31,6 +32,15 @@ def updatepd():
     plt.plot(pd_tel)
     plt.xlabel('samples')
     plt.ylabel('Phase Delay (wavelengths)')
+
+def updategd():
+    gd_tel[:-1] = gd_tel[1:]  
+    gd_tel[-1] = status['gd_tel']
+    plt.figure(5)
+    plt.clf()  # clear the current figure
+    plt.plot(gd_tel)
+    plt.xlabel('samples')
+    plt.ylabel('Group Delay (wavelengths)')
     
 def updatepiston():
     dm[:-1] = dm[1:]  
@@ -55,6 +65,7 @@ def updateoffload():
 def update():
     #updatev2()
     updatepd()
+    updategd()
     updatepiston()
     #updateoffload()
 

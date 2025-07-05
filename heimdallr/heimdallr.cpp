@@ -80,7 +80,7 @@ std::string encode(const char* input, unsigned int size)
 }
 
 //----------commander functions from here---------------
-void linear_search(uint beam, double start, double stop, double rate, std::string actuator) {
+void linear_search(uint beam, double start, double stop, double rate) {
     if (beam >= N_TEL) {
         std::cout << "Beam number (arg 0) out of range" << std::endl;
         return;
@@ -309,7 +309,7 @@ COMMANDER_REGISTER(m)
     // You can register a function or any other callable object as
     // long as the signature is deductible from the type.
     m.def("linear_search", linear_search, "Execute a linear fringe search on a single beam.", 
-        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=1.0, "actuator"_arg="HFO");
+        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=1.0);
     m.def("get_ps", get_ps, "Get the power spectrum in 2D", "filter"_arg="K1");
     m.def("servo", set_servo_mode, "Set the servo mode", "mode"_arg="off");
     m.def("offload", set_offload_mode, "Set the offload (slow servo) mode", "mode"_arg="off");
