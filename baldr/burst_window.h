@@ -98,6 +98,90 @@ public:
 };
 
 
+
+enum class WindowMode {
+    RAMP,   // full y = m t + b
+    MEAN    // constant y = b only
+};
+
+
+
+struct IntensityEstimator {
+    virtual void reset() = 0;
+    virtual void process(double t, double y) = 0;
+    virtual double predict(double t_eval) const = 0;
+    virtual ~IntensityEstimator() = default;
+};
+
+
+
+struct KalmanFilterSlope : public IntensityEstimator {
+    WindowMode mode = WindowMode::RAMP;
+    Eigen::Vector2d x;
+    Eigen::Matrix2d P;
+    Eigen::Matrix2d Q;
+    double R;
+
+    KalmanFilterSlope(WindowMode mode_ = WindowMode::RAMP)
+        : mode(mode_) {
+        x.setZero(); P.setIdentity(); Q.setIdentity(); R = 1.0;
+    }
+
+    void reset() override {
+        x.setZero(); P.setIdentity();
+    }
+
+    void process(double t, double y) override {
+        Eigen::RowVector2d H = (mode == WindowMode::RAMP) ? Eigen::RowVector2d(t, 1.0) : Eigen::RowVector2d(0.0, 1.0);
+        P += Q;
+        double S = H * P * H.transpose() + R;
+        Eigen::Vector2d K = P * H.transpose() / S;
+        x += K * (y - H * x);
+        P -= K * H * P;
+    }
+
+    double predict(double t_eval) const override {
+        return (mode == WindowMode::RAMP) ? x[0] * t_eval + x[1] : x[1];
+    }
+};
+
+
+
+struct BoxcarFilter : public IntensityEstimator {
+    int N = 10;
+    std::vector<double> buffer;
+    int write_idx = 0;
+    int count = 0;
+    double sum = 0.0;
+
+    BoxcarFilter(int window_size = 10) : N(window_size), buffer(window_size, 0.0) {}
+
+    void reset() override {
+        std::fill(buffer.begin(), buffer.end(), 0.0);
+        write_idx = 0;
+        sum = 0.0;
+        count = 0;
+    }
+
+    void process(double /*t*/, double y) override {
+        double old = buffer[write_idx];
+        buffer[write_idx] = y;
+        sum += y - old;
+        write_idx = (write_idx + 1) % N;
+        if (count < N) count++;
+    }
+
+    double predict(double /*t_eval*/) const override {
+        return (count == 0) ? 0.0 : sum / count;
+    }
+};
+
+
+
+
+
+
+
 // class BurstWindow {
 // public:
 //     int nbread = 0;             // Number of samples in a burst
