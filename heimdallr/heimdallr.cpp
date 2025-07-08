@@ -102,8 +102,8 @@ void linear_search(uint beam, double start, double stop, double rate) {
 
     // Start the search.
     start_search(beam, start,  stop, rate);
-    fmt::print("Starting search for beam {} from {} to {} at rate {} with actuator {}\n", 
-        beam, start, stop, rate, actuator);
+    fmt::print("Starting search for beam {} from {} to {} at rate {}\n", 
+        beam, start, stop, rate);
     return;
 }
 

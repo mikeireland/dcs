@@ -17,7 +17,7 @@ double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
 // Initialize global ZMQ variables for MultiDeviceServer
 zmq::context_t mds_zmq_context(1);
 zmq::socket_t mds_zmq_socket(mds_zmq_context, zmq::socket_type::req);
-std::string mds_host_str = "tcp://172.16.8.6:5555";
+std::string mds_host_str = "tcp://192.168.200.1:5555";
 bool mds_zmq_initialized = false;
 
 void init_mds_zmq() {
@@ -112,7 +112,7 @@ void dl_offload(){
     for (int i = 0; i < N_TEL; i++) {
         std::string message = "read HFO" + std::to_string(i+1);
         std::string reply = send_mds_cmd(message);
-        //fmt::print(reply);
+        fmt::print(reply);
         hfo_offsets[i] = std::stod(reply);
         fmt::print("HFO{} offset: {}\n", i, hfo_offsets[i]);
     }
