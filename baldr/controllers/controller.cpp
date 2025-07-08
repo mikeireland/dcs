@@ -2,14 +2,15 @@
 #include <iostream>
 
 // PIDController Implementation
-PIDController::PIDController(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt)
+// called it PIDController_1 due to conflicting name in baldr.cpp - this should eventually be overwritten by this abstract class version once stable!
+PIDController_1::PIDController(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt)
     : Kp(Kp), Ki(Ki), Kd(Kd), dt(dt) {
     output = Eigen::VectorXd::Zero(Kp.size());
     prev_errors = Eigen::VectorXd::Zero(Kp.size());
     integrals = Eigen::VectorXd::Zero(Kp.size());
 }
 
-Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
+Eigen::VectorXd PIDController_1::process(const Eigen::VectorXd& measured) {
     Eigen::VectorXd error = setpoint - measured;
 
     // Proportional term
@@ -31,39 +32,39 @@ Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
     return output;
 }
 
-void PIDController::reset() {
+void PIDController_1::reset() {
     prev_errors.setZero();
     integrals.setZero();
     output.setZero();
 }
 
-void PIDController::set_all_gains_to_zero() {
+void PIDController_1::set_all_gains_to_zero() {
     Kp.setZero();
     Ki.setZero();
     Kd.setZero();
 }
 
-Eigen::VectorXd PIDController::get_state() const {
+Eigen::VectorXd PIDController_1::get_state() const {
     return integrals;  // Example: return integral as the state (could be extended)
 }
 
-Eigen::VectorXd PIDController::get_output() const {
+Eigen::VectorXd PIDController_1::get_output() const {
     return output;
 }
 
-std::string PIDController::get_type() const {
+std::string PIDController_1::get_type() const {
     return "PID";
 }
 
-void PIDController::set_setpoint(const Eigen::VectorXd& new_setpoint) {
+void PIDController_1::set_setpoint(const Eigen::VectorXd& new_setpoint) {
     setpoint = new_setpoint;
 }
 
-Eigen::VectorXd PIDController::get_setpoint() const {
+Eigen::VectorXd PIDController_1::get_setpoint() const {
     return setpoint;
 }
 
-void PIDController::set_parameter(const std::string& param_name, const std::variant<Eigen::VectorXd, Eigen::MatrixXd>& value) {
+void PIDController_1::set_parameter(const std::string& param_name, const std::variant<Eigen::VectorXd, Eigen::MatrixXd>& value) {
     if (param_name == "Kp") {
         Kp = std::get<Eigen::VectorXd>(value);
     } else if (param_name == "Ki") {
@@ -75,7 +76,7 @@ void PIDController::set_parameter(const std::string& param_name, const std::vari
     }
 }
 
-std::variant<Eigen::VectorXd, Eigen::MatrixXd> PIDController::get_parameter(const std::string& param_name) const {
+std::variant<Eigen::VectorXd, Eigen::MatrixXd> PIDController_1::get_parameter(const std::string& param_name) const {
     if (param_name == "Kp") {
         return Kp;
     } else if (param_name == "Ki") {
@@ -87,7 +88,7 @@ std::variant<Eigen::VectorXd, Eigen::MatrixXd> PIDController::get_parameter(cons
     }
 }
 
-std::vector<std::pair<std::string, std::string>> PIDController::list_parameters() const {
+std::vector<std::pair<std::string, std::string>> PIDController_1::list_parameters() const {
     return {
         {"Kp", "Proportional gain vector"},
         {"Ki", "Integral gain vector"},

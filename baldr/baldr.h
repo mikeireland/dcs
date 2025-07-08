@@ -593,11 +593,14 @@ struct bdr_rtc_config {
         // Use ZMQ to query runtime camera settings
         float cal_gain = std::stof(cam.gain); // used in calibration of interaction matrix 
         float cal_fps = std::stof(cam.fps);
+
+	std::cout << "reading camera fps and gain via camera server with zmq" << std::endl;
         gain = get_float_cam_param("gain raw");
         fps = get_float_cam_param("fps raw");
 
         std::cout << "[ZMQ] Using runtime gain = " << gain << ", fps = " << fps << std::endl;
 
+	std::cout << "reading nbreadworeset to configure burst window" << std::endl;
         try {
             float nbread_val = get_float_cam_param("nbreadworeset raw");
 
@@ -719,7 +722,7 @@ struct bdr_rtc_config {
         cam.validate();
         //telem.validate();
         filters.validate();
-
+	std::cout << "done validating rtc.." << std::endl;
         
     }
 };

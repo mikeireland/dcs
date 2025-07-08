@@ -68,13 +68,13 @@ void resumeRTC();
 // Initialize global ZMQ variables
 zmq::context_t cam_zmq_context(1);
 zmq::socket_t cam_zmq_socket(cam_zmq_context, zmq::socket_type::req);
-std::string cam_host_str = "tcp://172.16.8.6:6667";
+std::string cam_host_str = "tcp://192.168.100.2:6667";
 bool cam_zmq_initialized = false;
 
 // Initialize global ZMQ variables for MultiDeviceServer
 zmq::context_t mds_zmq_context(1);
 zmq::socket_t mds_zmq_socket(mds_zmq_context, zmq::socket_type::req);
-std::string mds_host_str = "tcp://172.16.8.6:5555";
+std::string mds_host_str = "tcp://192.168.100.2:5555";
 bool mds_zmq_initialized = false;
 
 
