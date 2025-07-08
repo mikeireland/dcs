@@ -2,8 +2,9 @@
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
 //#define DEBUG
-#define GD_THRESHOLD 2.5
-#define PD_THRESHOLD 3.5
+#define GD_THRESHOLD 3
+#define PD_THRESHOLD 4
+#define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.3
 
 long unsigned int ft_cnt=0, cnt_since_init=0;
@@ -147,8 +148,8 @@ void initialise_baselines(){
             y_px_K1[bl] += K1ft->subim_sz;
             y_px_K2[bl] += K2ft->subim_sz;
         }
-        std::cout << "Baseline: " << bl << " x_px_K1: " << x_px_K1[bl] << " y_px_K1: " << y_px_K1[bl] << std::endl;
-        std::cout << "Baseline: " << bl << " x_px_K2: " << x_px_K2[bl] << " y_px_K2: " << y_px_K2[bl] << std::endl;
+        //std::cout << "Baseline: " << bl << " x_px_K1: " << x_px_K1[bl] << " y_px_K1: " << y_px_K1[bl] << std::endl;
+        //std::cout << "Baseline: " << bl << " x_px_K2: " << x_px_K2[bl] << " y_px_K2: " << y_px_K2[bl] << std::endl;
     }
 }
 
@@ -322,7 +323,8 @@ void fringe_tracker(){
 
         // The covariance matrix of baselines_gd and baselines_pd is given by a diagonal
         // matrix with the inverse of the SNR squared on the diagonal. We need to find the 
-        // covariance of the telescope group and phase delays. !!! Unused.
+        // covariance of the telescope group and phase delays. !!! Unused in main loop (but copied)
+        // to search logic below.
 
         //cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
         //cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
@@ -394,13 +396,22 @@ void fringe_tracker(){
         then = now;
 #endif
 
-        // Now do the delay line control. This is slower, so occurs after the servo.
-        // Compute the search sign.
-        unsigned int search_level = 0;
-        unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
-        while (index >>= 1) ++search_level;
-        control_u.search += control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
-            * search_vector_scale;
+        cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
+        double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
+        if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
+            control_u.search_Nsteps=0;
+            control_u.search.setZero();
+        } else {
+            // Now do the delay line control. This is slower, so occurs after the servo.
+            // Compute the search sign.
+            unsigned int search_level = 0;
+            unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
+            //This gives a logarithm base 2, so we search twice as far each turnaround. 
+            while (index >>= 1) ++search_level;
+            control_u.search += control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
+                * search_vector_scale;
+            control_u.search_Nsteps++;
+        }
 
         // Compute the delay line offload.
         control_u.dl_offload += (control_u.dit/((double)offload_time_ms*0.001)) * control_u.dm_piston * OPD_PER_DM_UNIT;

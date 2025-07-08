@@ -1,6 +1,6 @@
 
 #include "heimdallr.h"
-
+#define HFO_DEADBAND 1.0 //Deadband of HFO motion in microns of OPD
 // Local globals.
 
 int controllinoSocket;
@@ -16,12 +16,15 @@ double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
 
 // Initialize global ZMQ variables for MultiDeviceServer
 zmq::context_t mds_zmq_context(1);
+int timeout_ms = 1000;
 zmq::socket_t mds_zmq_socket(mds_zmq_context, zmq::socket_type::req);
-std::string mds_host_str = "tcp://192.168.200.1:5555";
+std::string mds_host_str = "tcp://192.168.100.2:5555";
 bool mds_zmq_initialized = false;
 
 void init_mds_zmq() {
     if (!mds_zmq_initialized) {
+        mds_zmq_socket.setsockopt(ZMQ_CONNECT_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+        mds_zmq_socket.setsockopt(ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
         mds_zmq_socket.connect(mds_host_str);
         mds_zmq_initialized = true;
     }
@@ -47,6 +50,13 @@ void set_delay_lines(Eigen::Vector4d dl) {
 void add_to_delay_lines(Eigen::Vector4d dl) {
     // This function adds the delay line values to the current delay line values.
     // The value is in K1 wavelengths.
+
+    // Apply a delay-line type deadband (needed for HFO motors)
+    if (delay_line_type == "hfo"){
+        for (int i = 0; i < N_TEL; i++) 
+            if (std::abs(dl(i)) < HFO_DEADBAND) dl(i)=0;
+        dl = dl - dl.mean()*Eigen::Vector4d::Ones(4,1); //Ensure the resulting values have zero mean.
+    }
     next_offload += dl;
     offloads_to_do++;
 }
@@ -95,13 +105,14 @@ void move_piezos(){
 void move_hfo(){
     // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
-        if ( std::abs(last_offload(i)  - next_offload(i) - search_offset(i)) > 1) {
+        if ( std::abs(last_offload(i)  - next_offload(i) - search_offset(i)) > HFO_DEADBAND) {
             // Set the delay line value for the current telescope (value in mm of physical motion)
             double dl_value = hfo_offsets[i] - (next_offload(i) + search_offset(i)) * 0.0005;
             std::string message = "moveabs HFO" + std::to_string(i+1) + " " + std::to_string(dl_value);
+            fmt::print(message + "\n");
             fmt::print(send_mds_cmd(message));
-        }
-        last_offload(i) = next_offload(i) + search_offset(i);
+            last_offload(i) = next_offload(i) + search_offset(i);
+        } 
     }
     offloads_done++;
 }
@@ -114,7 +125,7 @@ void dl_offload(){
         std::string reply = send_mds_cmd(message);
         fmt::print(reply);
         hfo_offsets[i] = std::stod(reply);
-        fmt::print("HFO{} offset: {}\n", i, hfo_offsets[i]);
+        fmt::print("HFO{} offset: {}\n", i+1, hfo_offsets[i]);
     }
 
     // Connect to the Controllino
@@ -122,7 +133,7 @@ void dl_offload(){
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(23);
-    serverAddress.sin_addr.s_addr = inet_addr("172.16.8.200");
+    serverAddress.sin_addr.s_addr = inet_addr("192.168.100.10");
     connect(controllinoSocket, (struct sockaddr*)&serverAddress,
             sizeof(serverAddress));
 

@@ -93,7 +93,7 @@ void ForwardFt::loop() {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;
             if ((subarray->md->cnt0 > cnt+2)  && (mode == FT_RUNNING)) {
-                std::cout << "Missed cam frames: " << subarray->md->cnt0 << cnt << std::endl;
+                std::cout << "Missed cam frames: " << subarray->md->cnt0 << " " << cnt << std::endl;
                 nerrors++;
             }
             mode = FT_RUNNING;
