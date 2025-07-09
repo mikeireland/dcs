@@ -38,7 +38,7 @@
 build/
 
 # mac garbage
-.DS_Store
+*.DS_Store
 
 # 
 calibration_frames/products/
