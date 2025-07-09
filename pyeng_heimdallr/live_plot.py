@@ -54,7 +54,8 @@ class App(QtWidgets.QMainWindow):
         super().__init__()
         self.title = 'Asgard Lab Fringe Monitor'
         self.left, self.top = 0, 0
-        self.width, self.height = 1200, 700
+        self.width, self.height = 650, 810
+        self.band = "K1"  # default band for fringe search
 
         self.setWindowTitle(self.title) 
         self.setGeometry(self.left, self.top, self.width, self.height)
@@ -117,12 +118,24 @@ class MyMainWidget(QWidget):
         self.pB_reset_dms = QtWidgets.QPushButton(self)
         self.pB_reset_dms.setText("RESET DMs")
 
+        self.pB_test = QtWidgets.QPushButton(self)
+        self.pB_test.setText("TEST")
+
         # ----- scanning for fringes ----
+        self.cmB_select_filter = QtWidgets.QComboBox(self)
+        self.cmB_select_filter.addItem("K1")
+        self.cmB_select_filter.addItem("K2")        
+        
         self.dspB_scan_range = QtWidgets.QDoubleSpinBox(self)
+        self.dspB_scan_range.setDecimals(0)
         self.srange_val = 100.0  # default scan range in microns
+        self.scan_step = 5.0     # default scan step size in microns
         self.dspB_scan_range.setValue(self.srange_val)
-        self.dspB_scan_range.setMinimum(20.0)
+        self.dspB_scan_range.setMinimum(5.0)
         self.dspB_scan_range.setMaximum(2000.0)
+        
+        self.chB_fine_scan = QtWidgets.QCheckBox(self)
+        self.chB_fine_scan.setText("fine")
         
         self.pB_scan_beam1 = QtWidgets.QPushButton(self)
         self.pB_scan_beam1.setText("SCAN HFO1")
@@ -132,6 +145,7 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam3.setText("SCAN HFO3")
         self.pB_scan_beam4 = QtWidgets.QPushButton(self)
         self.pB_scan_beam4.setText("SCAN HFO4")
+
 
         self.data_setup()
         self.apply_layout()
@@ -181,27 +195,39 @@ class MyMainWidget(QWidget):
     # =========================================================================
     def apply_layout(self):
         clh = 28   # control line height
+        plw = 500  # plot width
+        plh = 250  # plot height
+        btx = plw + 20  # buttons x position
+        
+        self.pB_start.setGeometry(QRect(btx, 30, 100, clh))
+        self.pB_cloop.setGeometry(QRect(btx, 60, 100, clh))
+        self.pB_oloop.setGeometry(QRect(btx, 90, 100, clh))
+        self.pB_stop.setGeometry(QRect(btx, 120, 100, clh))
 
-        self.pB_start.setGeometry(QRect(1050, 30, 100, clh))
-        self.pB_cloop.setGeometry(QRect(1050, 60, 100, clh))
-        self.pB_oloop.setGeometry(QRect(1050, 90, 100, clh))
-        self.pB_stop.setGeometry(QRect(1050, 120, 100, clh))
+        self.pB_reset_dms.setGeometry(QRect(btx, 180, 100, clh))
 
-        self.pB_reset_dms.setGeometry(QRect(1050, 200, 100, clh))
+        self.cmB_select_filter.setGeometry(QRect(btx, 230, 50, clh))
+        self.dspB_scan_range.setGeometry(QRect(btx, 260, 60, clh))
+        self.chB_fine_scan.setGeometry(QRect(btx + 70, 260, 50, clh))
 
-        self.dspB_scan_range.setGeometry(QRect(1050, 260, 100, clh))
-        self.pB_scan_beam1.setGeometry(QRect(1050, 290, 100, clh))
-        self.pB_scan_beam2.setGeometry(QRect(1050, 320, 100, clh))
-        self.pB_scan_beam3.setGeometry(QRect(1050, 350, 100, clh))
-        self.pB_scan_beam4.setGeometry(QRect(1050, 380, 100, clh))
+        self.pB_scan_beam1.setGeometry(QRect(btx, 290, 100, clh))
+        self.pB_scan_beam2.setGeometry(QRect(btx, 320, 100, clh))
+        self.pB_scan_beam3.setGeometry(QRect(btx, 350, 100, clh))
+        self.pB_scan_beam4.setGeometry(QRect(btx, 380, 100, clh))
 
+
+        # the TEST button
+        self.pB_test.setGeometry(QRect(btx, 600, 100, clh))
 
         # -------------------
         #  the live displays
         # -------------------
-        self.gView_plot_vis_k1.setGeometry(QRect(30, 30, 1000, 200))
-        self.gView_plot_vis_k2.setGeometry(QRect(30, 235, 1000, 200))
-        self.gView_plot_gdlay.setGeometry(QRect(30, 440, 1000, 200))
+        py = 10 + np.arange(3) * (10 + plh)
+        self.gView_plot_vis_k1.setGeometry(QRect(10, py[0], plw, plh))
+        self.gView_plot_vis_k1.setYRange(0, 0.8)
+        self.gView_plot_vis_k2.setGeometry(QRect(10, py[1], plw, plh))
+        self.gView_plot_vis_k2.setYRange(0, 0.8)
+        self.gView_plot_gdlay.setGeometry(QRect(10, py[2], plw, plh))
         self.logplot_vis_k1 = []
         self.logplot_vis_k2 = []
         self.logplot_gdlay = []
@@ -232,13 +258,41 @@ class MyMainWidget(QWidget):
 
         self.pB_reset_dms.clicked.connect(self.reset_dms)
 
+        self.cmB_select_filter.activated[str].connect(self.select_filter)
+        self.select_filter()
+
         self.dspB_scan_range.valueChanged.connect(self.update_scan_range)
+        self.chB_fine_scan.stateChanged[int].connect(self.update_scan_step)
         self.pB_scan_beam1.clicked.connect(self.scan_beam1)
         self.pB_scan_beam2.clicked.connect(self.scan_beam2)
         self.pB_scan_beam3.clicked.connect(self.scan_beam3)
         self.pB_scan_beam4.clicked.connect(self.scan_beam4)
+
+        self.pB_test.clicked.connect(self.trigger_test)
         # self.pB_dec_pscale.clicked.connect(self.dec_pscale)
-      
+
+    # =========================================================================
+    def select_filter(self):
+        self.band = str(self.cmB_select_filter.currentText())
+        # print(self.band)
+        pass
+
+    # =========================================================================
+    def update_scan_step(self):
+        "Control of the scan step in microns"
+        if self.chB_fine_scan.isChecked():
+            self.scan_step = 0.5
+        else:
+            self.scan_step = 5.0
+        # print(f"step size updated to {self.scan_step} um")
+
+    # =========================================================================
+    def trigger_test(self):
+        print("start")
+        self.modulation_thread = GenericThread(
+            self.wfs.dm_modulation_response)
+        self.modulation_thread.start()
+
     # =========================================================================
     def update_scan_range(self):
         self.srange_val = self.dspB_scan_range.value()
@@ -246,7 +300,9 @@ class MyMainWidget(QWidget):
     # =========================================================================
     def scan_beam(self, beamid=1):
         self.vscan_thread = GenericThread(
-            self.wfs.fringe_search, beamid=beamid, srange=self.srange_val)
+            self.wfs.fringe_search,
+            beamid=beamid, srange=self.srange_val,
+            step=self.scan_step, band=self.band)
         self.vscan_thread.start()
 
     # =========================================================================

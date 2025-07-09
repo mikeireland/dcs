@@ -24,7 +24,7 @@ def main():
     ys, xs = stream.mtdata['y'], stream.mtdata['x']
     dcube = np.zeros((args.nbframes, ys, xs))
 
-    semid = 0
+    semid = 5
     stream.catch_up_with_sem(semid)
 
     if (stream.mtdata['naxis'] == 3):

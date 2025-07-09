@@ -530,7 +530,7 @@ void rtc(){
 
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
-        img_dm = (rtc_config.matrices.I2A *  img)  -  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
+        img_dm = (rtc_config.matrices.I2A *  img); //-  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
 
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         

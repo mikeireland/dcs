@@ -49,6 +49,9 @@ while True:
         ps1 = np.abs(ft1)
         ps2 = np.abs(ft2)
 
+        ps1 /= ps1.max() / 25000
+        ps2 /= ps2.max() / 25000
+
         tmp = np.zeros_like(empty2)
         tmp[:,:xsz] = ps1
         tmp[:, xsz:] = ps2

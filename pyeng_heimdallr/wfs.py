@@ -42,6 +42,8 @@ amask = taper > 0.4  # seems to work well
 pst = np.zeros((dms, dms))
 pst[amask] = 0.3  # optical gain ~ 3µm / ADU
 
+im_offset = 1000.0
+
 class Heimdallr():
     # =========================================================================
     def __init__(self):
@@ -51,7 +53,7 @@ class Heimdallr():
         self.dd = dist(self.xsz, self.xsz, between_pix=True)
         self.apod = np.exp(-(self.dd/8)**4)
 
-        pf.writeto("apodizer.fits", self.apod, overwrite=True)
+        # pf.writeto("apodizer.fits", self.apod, overwrite=True)
         
         self.pscale = 35
         self.Ks_wl = 2.05e-6  # True Heimdallr Ks wavelength (in meters)
@@ -105,8 +107,8 @@ class Heimdallr():
 
     # =========================================================================
     def calc_wfs_data(self):
-        k1d = self.Ks.get_latest_data(self.semid).astype(float) # - dark1
-        k2d = self.Kl.get_latest_data(self.semid).astype(float) # - dark2
+        k1d = self.Ks.get_latest_data(self.semid).astype(float) - im_offset
+        k2d = self.Kl.get_latest_data(self.semid).astype(float) - im_offset
         k1d *= self.apod
         k2d *= self.apod
         # img = recenter(data, verbose=False)
@@ -127,7 +129,10 @@ class Heimdallr():
         self.gdlay = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
         self.gdlay *= self.dl_factor
         self.dms_cmds = self.hdlr1.PINV.dot(self.gdlay)
-        # self.dms_cmds = self.opd_now_k1
+        # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
+        # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
+        # self.dms_cmds -= self.dms_cmds[2] # everything relative to Beam 3
+        # print(f"\r{self.dms_cmds}", end="")
 
     # =========================================================================
     def log_opds(self):
@@ -154,11 +159,21 @@ class Heimdallr():
     def dispatch_opds(self):
         ref_beam = 0.25 * np.sum(self.dms_cmds)
 
-        self.disps[0] = self.dms_cmds[0] # - ref_beam
-        self.disps[1] = self.dms_cmds[2] # - ref_beam
-        self.disps[2] = 0.0 # ref_beam
-        self.disps[3] = self.dms_cmds[1] # - ref_beam
+        # self.disps[0] = self.dms_cmds[0] # - ref_beam
+        # self.disps[1] = self.dms_cmds[2] # - ref_beam
+        # self.disps[2] = 0.0 # ref_beam
+        # self.disps[3] = self.dms_cmds[1] # - ref_beam
 
+        # self.disps[0] = 0.0
+        # self.disps[1] = self.dms_cmds[0]
+        # self.disps[2] = self.dms_cmds[1] #0.0 # ref_beam
+        # self.disps[3] = self.dms_cmds[2]
+
+        self.disps[0] = -self.dms_cmds[1] #0.0 # ref_beam
+        self.disps[1] = self.dms_cmds[0]-self.dms_cmds[1]
+        self.disps[2] = 0.0 # self.dms_cmds[1] #0.0 # ref_beam
+        self.disps[3] = self.dms_cmds[2] - self.dms_cmds[1]
+        
         # print(f"\rdisp = {self.disps[0]:+06.2f}, {self.disps[1]:+06.2f}, ",
         #       end="")
         # print(f"{self.disps[2]:+06.2f}, {self.disps[3]:+06.2f}", end="")
@@ -176,7 +191,7 @@ class Heimdallr():
 
     # =========================================================================
     def move_dl(self, pos, beamid=1):
-        print(f"moveabs HFO{beamid} {pos:.5f}")
+        # print(f"moveabs HFO{beamid} {pos:.5f}")
         self.socket.send_string(f"moveabs HFO{beamid} {1e-3 * pos:.5f}")
         self.socket.recv_string()  # acknowledgement
         # cur_pos = self.get_dl_pos(beamid)
@@ -185,7 +200,7 @@ class Heimdallr():
         #     cur_pos = self.get_dl_pos(beamid)
 
     # =========================================================================
-    def fringe_search(self, beamid=1, srange=100.0):
+    def fringe_search(self, beamid=1, srange=100.0, step=5.0, band="K1"):
         ''' -------------------------------------------------- 
         Fringe search!
 
@@ -194,15 +209,20 @@ class Heimdallr():
 
         - beamid : 1, 2, 3 or 4 (BEAM ID #) (int)
         - srange : the +/- search range in microns (float)
+        - step   : the scan step in microns (float)
         -------------------------------------------------- '''
-        step = 5.0                  # scan step in um
         x0 = self.hfo_pos[beamid-1] # startup position
         steps = np.arange(x0 - srange, x0 + srange, step)
-        BLM = self.hdlr1.kpi.BLM.copy()
+        if band == "K1":
+            sensor = self.hdlr1
+        else:
+            sensor = self.hdlr2
+
+        BLM = sensor.kpi.BLM.copy()
         bl_ii = np.argwhere(BLM[:, beamid-1] != 0)[:, 0]  # concerned BLines
         # the starting point
         best_pos = x0
-        uvis = np.abs(self.hdlr1.cvis[0])[bl_ii]  # "useful" visibilities
+        uvis = np.abs(sensor.cvis[0])[bl_ii]  # "useful" visibilities
         best_vis = np.sqrt(np.sum(uvis**2))
         # init_vis = np.sqrt(np.sum(uvis**2))
         found_one = 0
@@ -211,26 +231,83 @@ class Heimdallr():
             self.cloop_on = False  # interrupting the loop
             print("Opening the loop")
 
+        for ii in range(self.ndm):
+            self.hfo_pos[ii] = self.get_dl_pos(ii+1)
+            # print(f"HFO{ii+1} = {self.hfo_pos[ii]:.2f} um)"
+            
         for ii, pos in enumerate(steps):
             self.move_dl(pos, beamid)
             print(f"\rpos = {pos:8.2f}, ", end="")
-            vis = np.abs(self.hdlr1.cvis[0])
-            uvis = np.round(vis[bl_ii],2)  # the useful visibilities here
-            global_vis = np.round(np.sqrt(np.sum(uvis**2)), 2)
-            print(uvis, global_vis)
+            vis = np.abs(sensor.cvis[0])
+            uvis = np.round(vis[bl_ii], 2)  # the useful visibilities here
+            global_vis = np.round(np.sqrt(np.mean(uvis**2)), 2)
+            print(uvis, global_vis, end="")
             
             if global_vis >= 1.05 * best_vis:
                 best_vis = global_vis
                 best_pos = pos
-                found_one = 1 # (found_one == 1) and
-                print(f" - New best pos: {pos}", end="")
+                found_one += 1 # (found_one == 1) and
+                print(f"    - Current best pos: {pos:.2f}", end="")
 
-            if (global_vis < 0.9 * best_vis) and (pos > best_pos):
+            if (global_vis < 0.9 * best_vis) and \
+               (pos > x0) and (best_vis > 0.15):
+                time.sleep(0.5)
                 break
             time.sleep(0.5)
         print("\ndone!")
-        print(f"Best position is {best_pos:.2f} um for v = {best_vis}")
+        print(f"Best position is {best_pos:.2f} um for v = {best_vis:.2f}")
         self.move_dl(best_pos, beamid)
+
+    # =========================================================================
+    def dm_modulation_response(self):
+        ''' -------------------------------------------------- 
+        Sinusoidal DM modulation
+        -------------------------------------------------- '''
+        nmod = 100
+        nc = [1, 2, 3, 4]
+        a0 = 0.05  # I want \lambda/4
+        
+        self.reset_dms()
+        
+        # prepare sinusoidal modulation commands
+        cmds = np.zeros((self.ndm, nmod))
+        for jj in range(self.ndm):
+            cmds[jj] = a0 * np.sin(np.linspace(0, nc[jj] * 2*np.pi, nmod))
+
+        # cmds[0] *= 0.0
+        # cmds[1] *= 0.0
+        # cmds[3] *= 0.0
+        
+        # to store the data
+        cvis1 = np.zeros((self.hdlr1.kpi.nbuv, nmod), dtype=complex)
+        cvis2 = np.zeros((self.hdlr2.kpi.nbuv, nmod), dtype=complex)
+
+        cube1 = np.zeros((nmod, 32, 32))
+        cube2 = np.zeros((nmod, 32, 32))
+
+        for ii in range(nmod):
+            # modulate the DMs
+            for jj in range(self.ndm):
+                self.dms[jj].set_data(cmds[jj, ii] * pst)
+                self.sems[jj].post_sems(1)
+                time.sleep(0.05)
+
+            # record the data
+            imK1 = self.Ks.get_latest_data() - im_offset
+            imK2 = self.Kl.get_latest_data() - im_offset
+            cube1[ii] = imK1
+            cube2[ii] = imK2
+
+            cvis1[:, ii] = self.hdlr1.extract_cvis_from_img(imK1)
+            cvis2[:, ii] = self.hdlr2.extract_cvis_from_img(imK2)
+
+        self.reset_dms()
+        np.savetxt("modulation_cvis1.txt", cvis1)
+        np.savetxt("modulation_cvis2.txt", cvis2)
+
+        pf.writeto("modulation_cube_k1.fits", cube1, overwrite=True)
+        pf.writeto("modulation_cube_k2.fits", cube2, overwrite=True)
+        print("modulation test done")
 
     # =========================================================================
     def stop(self):
