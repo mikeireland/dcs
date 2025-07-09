@@ -22,7 +22,7 @@ socket = context.socket(zmq.REQ)
 socket.connect(f"tcp://mimir:{server_port}")
 import datetime
 
-print(f"ZMQ shell interface to talk to the DM server on port {server_port}")
+print(f"ZMQ shell interface to talk to the cam server on port {server_port}")
 logfile = "/home/asg/Progs/repos/dcs/asgard-cred1-server/command_log.log"
 
 cmd_sz = 10  # finite size command with blanks filled
