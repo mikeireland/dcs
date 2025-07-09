@@ -738,7 +738,7 @@ void open_baldr_HO() {
 void I0_update() {
     // !!! only updates rtc_config.I0_dm_runtime !!! 
     // does not update rtc_config.reference_pupils members 
-    
+    // assumes we are in a correct state to obtain reference ZWFS pupil - we do not checks 
     if (rtc_config.telem.img_dm.empty()) {
         std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
         return;
@@ -748,6 +748,7 @@ void I0_update() {
     Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
 
     size_t count = 0;
+    // read from the telem ring buffer
     for (const auto& v : rtc_config.telem.img_dm) {
         if (v.size() != sum.size()) {
             std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
@@ -765,8 +766,8 @@ void I0_update() {
     // Compute average
     rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
 
-    // Subtraction of dark and bias is already done in img_dm!!! 
- 
+    // Subtraction of dark and bias was previously done in img_dm calc held in rtc telem ring buffer !!! 
+    // but since Paranal AIV darks are subtracted in camera server so this internal subtraction is no longer used 
 
     std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
 }
@@ -808,7 +809,7 @@ void N0_update() {
     }
     avg_dm /= static_cast<double>(count);
 
-    // Step 2: Compute the mean inside the good pupil
+    // Compute the mean inside the good pupil
     double sum_inside = 0.0;
     int count_inside = 0;
     for (Eigen::Index i = 0; i < P; ++i) {
@@ -823,14 +824,14 @@ void N0_update() {
     }
     double inner_mean = sum_inside / static_cast<double>(count_inside);
 
-    // Step 3: Replace exterior pixels
+    // Replace exterior pixels to the mean of the interior - this is to avoid bad edge and division by zero issues
     for (Eigen::Index i = 0; i < P; ++i) {
         if (rtc_config.filters.inner_pupil_filt_dm(i) <= 0.7) {
             avg_dm(i) = inner_mean;
         }
     }
 
-    // Step 4: Save into runtime only
+    // Save into runtime only
     rtc_config.N0_dm_runtime = avg_dm;
 
     std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
@@ -884,7 +885,7 @@ json set_telem_save_path(json args) {
         //     telem_save_path = new_path;
         // }
 
-        // Optionally create the directory now if it doesn't exist
+        // create the directory now if it doesn't exist
         try {
             std::filesystem::create_directories(new_path);
         } catch (const std::exception& ex) {
