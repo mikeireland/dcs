@@ -146,7 +146,7 @@ void dl_offload(){
 
     while (keep_offloading) {
         // Wait for the next offload
-        usleep(100000);
+        usleep(500000);
 
         if (search_ix < search_length) {
             double max_snr = 0.0;
@@ -154,17 +154,14 @@ void dl_offload(){
             // using beam_baselines[search_dl]
             for (int i = 0; i < N_TEL-1; i++) {
                 // Get the SNR for the current baseline
-                double snr = baselines.pd_snr(i);
+                double snr = baselines.pd_snr(beam_baselines[search_dl][i]);
                 if (snr > max_snr) {
                     max_snr = snr;
                 }
             }
             fmt::print("Search beam max SNR: {}\n", max_snr);
             // Check if the SNR is above the threshold
-            if (max_snr > 5.0) {
-                // Set the delay line value to the current search offset
-                //next_offload(search_dl) = search_start + search_ix * search_delta;
-                
+            if (max_snr > 10.0) {
                 // Set the search value to the current search offset !!! TODO
                 //search_offset(search_dl) = search_start + search_ix * search_delta;
                 // Finish the search by setting search_length to 0

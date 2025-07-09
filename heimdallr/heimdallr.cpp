@@ -96,8 +96,8 @@ void linear_search(uint beam, double start, double stop, double rate) {
     usleep(DELAY_MOVE_USEC); // Wait for the delay line to move
     // Set the SNR values to zero.
     baseline_mutex.lock();
-    baselines.gd_snr = Eigen::VectorXd::Zero(N_TEL);
-    baselines.pd_snr = Eigen::VectorXd::Zero(N_TEL);
+    baselines.gd_snr = Eigen::VectorXd::Zero(N_BL); 
+    baselines.pd_snr = Eigen::VectorXd::Zero(N_BL);
     baseline_mutex.unlock();
 
     // Start the search.
