@@ -55,6 +55,8 @@ std::atomic<bool> pause_rtc(false);           // When true, RTC loop should paus
 std::mutex rtc_pause_mutex;  //protect access to shared state (in this case, the pause flag and any associated state) while waiting and notifying.
 std::condition_variable rtc_pause_cv; //condition variable is used to block (put to sleep) the RTC thread until a particular condition is met
 
+//// uncomment and build July 2025 AIV
+//std::atomic<int> global_boxcar{1};  // for possible weighted averaging of signals in rtc
 
 IMAGE subarray; // The C-red subarray
 IMAGE dm_rtc; // The DM subarray
@@ -576,6 +578,23 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     rtc.validate();
     return rtc;
 }
+
+
+// uncomment and build July 2025 AIV
+// void change_boxcar(std::string cmd) {
+//     try {
+//         int new_val = std::stoi(cmd);
+//         if (new_val > 0 && new_val < 1000) {
+//             global_boxcar.store(new_val); //atomic threadsafe
+//             std::cout << "Boxcar window updated to " << new_val << std::endl;
+//         } else {
+//             std::cerr << "Boxcar value out of allowed range (1–999)" << std::endl;
+//         }
+//     } catch (...) {
+//         std::cerr << "Invalid boxcar input: " << cmd << std::endl;
+//     }
+// }
+
 
 void new_dark_and_bias() {
     try {
@@ -1447,6 +1466,11 @@ COMMANDER_REGISTER(m)
 
 
     m.def("configure_burst", cmd_configure_burst,  "Update the rolling burst window (size and dt) for non-destructive read mode slope estimates", "args"_arg);
+
+
+    //// uncomment and build July 2025 AIV
+    //m.def("change_boxcar", change_boxcar,  "Update the number of signal samples from telem ring buffer to weight an average. Only applied for values > 1", "args"_arg);
+
 
     m.def("I0_update", I0_update,
             "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
