@@ -63,11 +63,11 @@ def updateoffload():
 
 # update all plots
 def update():
-    #updatev2()
+    updatev2()
     updatepd()
     updategd()
     updatepiston()
-    #updateoffload()
+    updateoffload()
 
 
 if __name__ == '__main__':
