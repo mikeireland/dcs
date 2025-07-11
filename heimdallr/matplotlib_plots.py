@@ -28,10 +28,17 @@ def main():
         default=100,
         help="Number of samples to hold (default: 100)",
     )
+    parser.add_argument(
+        "--linewidth",
+        type=float,
+        default=2.0,
+        help="Line width for plot curves (default: 2.0)",
+    )
     args = parser.parse_args()
 
     samples = args.samples
     update_time = args.update_time
+    linewidth = args.linewidth
 
     status = Z.send("status")
     v2_K1 = np.zeros((samples, N_BASELINES))
@@ -59,10 +66,11 @@ def main():
 
     # Define color sets for each column
     TELESCOPE_COLORS = [
-        pg.mkPen(color) for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
+        pg.mkPen(color, width=linewidth)
+        for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
     ]
     BASELINE_COLORS = [
-        pg.mkPen(color)
+        pg.mkPen(color, width=linewidth)
         for color in [
             "#E69F00",
             "#56B4E9",
