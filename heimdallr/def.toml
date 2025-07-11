@@ -14,8 +14,9 @@ beam_y = [0.019,  -0.01484,  0.0 , -0.00015]
 pix = 24.0
 
 [servo]
-gd_phasor_offset = [4.3,-2.0,1.5,4.6,-3.4,3.5]
+#gd_phasor_offset = [4.3,-2.0,1.5,4.6,-3.4,3.5]
 #gd_phasor_offset = [0,0,0,0,0,0]
+gd_phasor_offset = [-1.6,3.5,2.6,4.6,3.6,-0.9]
 
 #All units are in microns
 [wave]
