@@ -7,98 +7,158 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 
+N_TSCOPES = 4
+N_BASELINES = 6
+
 status = Z.send("status")
-v2_K1 = np.zeros((100, 6))
-v2_K2 = np.zeros((100, 6))
-pd_tel = np.zeros((100, 4))
-gd_tel = np.zeros((100, 4))
-dm = np.zeros((100, 4))
-offload = np.zeros((100, 4))
+v2_K1 = np.zeros((100, N_BASELINES))
+v2_K2 = np.zeros((100, N_BASELINES))
+pd_tel = np.zeros((100, N_TSCOPES))
+gd_tel = np.zeros((100, N_TSCOPES))
+dm = np.zeros((100, N_TSCOPES))
+offload = np.zeros((100, N_TSCOPES))
+gd_snr = np.zeros((100, N_BASELINES))  # new: group delay SNR
+pd_snr = np.zeros((100, N_BASELINES))  # new: phase delay SNR
 
 app = QtWidgets.QApplication([])
 win = pg.GraphicsLayoutWidget(show=True, title="Scrolling Plots")
-win.resize(1000, 800)
+win.resize(1200, 900)
 win.setWindowTitle("Heimdallr Real-Time Plots")
 
 plots = []
 curves = []
 
-# V^2 plots
-p1 = win.addPlot(title="V^2 K1")
-p1.setLabel("left", "V^2")
-p1.setLabel("bottom", "samples")
-c1 = [p1.plot(pen=pg.intColor(i, 6)) for i in range(6)]
-plots.append(p1)
-curves.append(c1)
+# --- Left Column: Telescopes ---
+# Subheader
+telescopes_label = pg.LabelItem(justify="center", color="w")
+telescopes_label.setText("<span style='font-size:16pt'><b>Telescopes</b></span>")
+win.addItem(telescopes_label, row=0, col=0)
 
-p6 = win.addPlot(title="V^2 K2")
-p6.setLabel("left", "V^2")
-p6.setLabel("bottom", "samples")
-c6 = [p6.plot(pen=pg.intColor(i, 6)) for i in range(6)]
-plots.append(p6)
-curves.append(c6)
+# Define color sets for each column
+TELESCOPE_COLORS = [
+    pg.mkPen(color) for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
+]
+BASELINE_COLORS = [
+    pg.mkPen(color)
+    for color in [
+        "#E69F00",
+        "#56B4E9",
+        "#009E73",
+        "#F0E442",
+        "#0072B2",
+        "#D55E00",
+    ]
+]
 
-win.nextRow()
-# Phase Delay plot
-p2 = win.addPlot(title="Phase Delay (wavelengths)")
-p2.setLabel("left", "Phase Delay (wavelengths)")
-p2.setLabel("bottom", "samples")
-c2 = [p2.plot(pen=pg.intColor(i, 4)) for i in range(4)]
-plots.append(p2)
-curves.append(c2)
+# gd_tel
+p_gd_tel = win.addPlot(row=1, col=0, title="Group Delay (wavelengths)")
+p_gd_tel.setLabel("left", "GD (wavelengths)")
+p_gd_tel.setLabel("bottom", "samples")
+c_gd_tel = [
+    p_gd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
-# Group Delay plot
-p3 = win.addPlot(title="Group Delay (wavelengths)")
-p3.setLabel("left", "Group Delay (wavelengths)")
-p3.setLabel("bottom", "samples")
-c3 = [p3.plot(pen=pg.intColor(i, 4)) for i in range(4)]
-plots.append(p3)
-curves.append(c3)
+# pd_tel
+p_pd_tel = win.addPlot(row=2, col=0, title="Phase Delay (wavelengths)")
+p_pd_tel.setLabel("left", "PD (wavelengths)")
+p_pd_tel.setLabel("bottom", "samples")
+c_pd_tel = [
+    p_pd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
-win.nextRow()
-# Mirror Piston plot
-p4 = win.addPlot(title="Mirror Piston (fractional stroke)")
-p4.setLabel("left", "Mirror Piston (fractional stroke)")
-p4.setLabel("bottom", "samples")
-c4 = [p4.plot(pen=pg.intColor(i, 4)) for i in range(4)]
-plots.append(p4)
-curves.append(c4)
+# offload
+p_offload = win.addPlot(row=3, col=0, title="Offloaded Piston (microns)")
+p_offload.setLabel("left", "Offloaded Piston (μm)")
+p_offload.setLabel("bottom", "samples")
+c_offload = [
+    p_offload.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
-#'closure_phase_K1', 'closure_phase_K2', 'dl_offload', 'dm_piston', 'gd_bl', 'gd_snr', 'gd_tel', 'pd_av', 'pd_av_filtered', 'pd_bl', 'pd_offset', 'pd_snr', 'pd_tel', 'test_ix', 'test_n', 'v2_K1', 'v2_K2'
-# Offloaded Piston plot
-p5 = win.addPlot(title="Offloaded Piston (microns)")
-p5.setLabel("left", "Offloaded Piston (microns)")
-p5.setLabel("bottom", "samples")
-c5 = [p5.plot(pen=pg.intColor(i, 4)) for i in range(4)]
-plots.append(p5)
-curves.append(c5)
+# dm
+p_dm = win.addPlot(row=4, col=0, title="Mirror Piston (fractional stroke)")
+p_dm.setLabel("left", "Mirror Piston")
+p_dm.setLabel("bottom", "samples")
+c_dm = [p_dm.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)]
+
+# --- Right Column: Baselines ---
+# Subheader
+baselines_label = pg.LabelItem(justify="center", color="w")
+baselines_label.setText("<span style='font-size:16pt'><b>Baselines</b></span>")
+win.addItem(baselines_label, row=0, col=1)
+
+# v2_K1
+p_v2_K1 = win.addPlot(row=1, col=1, title="V² K1")
+p_v2_K1.setLabel("left", "V² K1")
+p_v2_K1.setLabel("bottom", "samples")
+c_v2_K1 = [
+    p_v2_K1.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
+
+# v2_K2
+p_v2_K2 = win.addPlot(row=2, col=1, title="V² K2")
+p_v2_K2.setLabel("left", "V² K2")
+p_v2_K2.setLabel("bottom", "samples")
+c_v2_K2 = [
+    p_v2_K2.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
+
+# gd_snr
+p_gd_snr = win.addPlot(row=3, col=1, title="Group Delay SNR")
+p_gd_snr.setLabel("left", "GD SNR")
+p_gd_snr.setLabel("bottom", "samples")
+c_gd_snr = [
+    p_gd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
+
+# pd_snr
+p_pd_snr = win.addPlot(row=4, col=1, title="Phase Delay SNR")
+p_pd_snr.setLabel("left", "PD SNR")
+p_pd_snr.setLabel("bottom", "samples")
+c_pd_snr = [
+    p_pd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
+
+# --- Store curves for update ---
+curves = [
+    c_gd_tel,  # 0
+    c_pd_tel,  # 1
+    c_offload,  # 2
+    c_dm,  # 3
+    c_v2_K1,  # 4
+    c_v2_K2,  # 5
+    c_gd_snr,  # 6
+    c_pd_snr,  # 7
+]
 
 
 def update():
-    global status, v2_K1, v2_K2, pd_tel, gd_tel, dm, offload
+    global status, v2_K1, v2_K2, pd_tel, gd_tel, dm, offload, gd_snr, pd_snr
     status = Z.send("status")
-    v2_K1[:-1] = v2_K1[1:]
-    v2_K1[-1] = status["v2_K1"]
-    v2_K2[:-1] = v2_K2[1:]
-    v2_K2[-1] = status["v2_K2"]
-    pd_tel[:-1] = pd_tel[1:]
-    pd_tel[-1] = status["pd_tel"]
-    gd_tel[:-1] = gd_tel[1:]
-    gd_tel[-1] = status["gd_tel"]
-    dm[:-1] = dm[1:]
-    dm[-1] = status["dm_piston"]
-    offload[:-1] = offload[1:]
-    offload[-1] = status["dl_offload"]
+    arrays = [
+        (gd_tel, "gd_tel"),
+        (pd_tel, "pd_tel"),
+        (offload, "dl_offload"),
+        (dm, "dm_piston"),
+        (v2_K1, "v2_K1"),
+        (v2_K2, "v2_K2"),
+        (gd_snr, "gd_snr"),
+        (pd_snr, "pd_snr"),
+    ]
+    for arr, key in arrays:
+        arr[:] = np.roll(arr, -1, axis=0)
+        arr[-1] = status[key]
 
     # Update plots
-    for i in range(6):
-        curves[0][i].setData(v2_K1[:, i])
-        curves[1][i].setData(v2_K2[:, i])
-    for i in range(4):
-        curves[2][i].setData(pd_tel[:, i])
-        curves[3][i].setData(gd_tel[:, i])
-        curves[4][i].setData(dm[:, i])
-        curves[5][i].setData(offload[:, i])
+    for i in range(N_TSCOPES):
+        curves[0][i].setData(gd_tel[:, i])
+        curves[1][i].setData(pd_tel[:, i])
+        curves[2][i].setData(offload[:, i])
+        curves[3][i].setData(dm[:, i])
+    for i in range(N_BASELINES):
+        curves[4][i].setData(v2_K1[:, i])
+        curves[5][i].setData(v2_K2[:, i])
+        curves[6][i].setData(gd_snr[:, i])
+        curves[7][i].setData(pd_snr[:, i])
 
 
 timer = QtCore.QTimer()
