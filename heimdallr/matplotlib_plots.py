@@ -40,6 +40,9 @@ def main():
     update_time = args.update_time
     linewidth = args.linewidth
 
+    # Time axis: from -window to 0, in seconds
+    time_axis = np.linspace(-samples * update_time / 1000.0, 0, samples)
+
     status = Z.send("status")
     v2_K1 = np.zeros((samples, N_BASELINES))
     v2_K2 = np.zeros((samples, N_BASELINES))
@@ -84,32 +87,40 @@ def main():
     # gd_tel
     p_gd_tel = win.addPlot(row=1, col=0, title="Group Delay (wavelengths)")
     p_gd_tel.setLabel("left", "GD (wavelengths)")
-    p_gd_tel.setLabel("bottom", "samples")
+    p_gd_tel.setLabel("bottom", "Time (s)")
     c_gd_tel = [
-        p_gd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+        p_gd_tel.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
+        for i in range(N_TSCOPES)
     ]
 
     # pd_tel
     p_pd_tel = win.addPlot(row=2, col=0, title="Phase Delay (wavelengths)")
     p_pd_tel.setLabel("left", "PD (wavelengths)")
-    p_pd_tel.setLabel("bottom", "samples")
+    p_pd_tel.setLabel("bottom", "Time (s)")
     c_pd_tel = [
-        p_pd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+        p_pd_tel.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
+        for i in range(N_TSCOPES)
     ]
 
     # offload
     p_offload = win.addPlot(row=3, col=0, title="Offloaded Piston (microns)")
     p_offload.setLabel("left", "Offloaded Piston (μm)")
-    p_offload.setLabel("bottom", "samples")
+    p_offload.setLabel("bottom", "Time (s)")
     c_offload = [
-        p_offload.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+        p_offload.plot(
+            time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES]
+        )
+        for i in range(N_TSCOPES)
     ]
 
     # dm
     p_dm = win.addPlot(row=4, col=0, title="Mirror Piston (fractional stroke)")
     p_dm.setLabel("left", "Mirror Piston")
-    p_dm.setLabel("bottom", "samples")
-    c_dm = [p_dm.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)]
+    p_dm.setLabel("bottom", "Time (s)")
+    c_dm = [
+        p_dm.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
+        for i in range(N_TSCOPES)
+    ]
 
     # --- Right Column: Baselines ---
     # Subheader
@@ -120,33 +131,41 @@ def main():
     # v2_K1
     p_v2_K1 = win.addPlot(row=1, col=1, title="V² K1")
     p_v2_K1.setLabel("left", "V² K1")
-    p_v2_K1.setLabel("bottom", "samples")
+    p_v2_K1.setLabel("bottom", "Time (s)")
     c_v2_K1 = [
-        p_v2_K1.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+        p_v2_K1.plot(time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES])
+        for i in range(N_BASELINES)
     ]
 
     # v2_K2
     p_v2_K2 = win.addPlot(row=2, col=1, title="V² K2")
     p_v2_K2.setLabel("left", "V² K2")
-    p_v2_K2.setLabel("bottom", "samples")
+    p_v2_K2.setLabel("bottom", "Time (s)")
     c_v2_K2 = [
-        p_v2_K2.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+        p_v2_K2.plot(time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES])
+        for i in range(N_BASELINES)
     ]
 
     # gd_snr
     p_gd_snr = win.addPlot(row=3, col=1, title="Group Delay SNR")
     p_gd_snr.setLabel("left", "GD SNR")
-    p_gd_snr.setLabel("bottom", "samples")
+    p_gd_snr.setLabel("bottom", "Time (s)")
     c_gd_snr = [
-        p_gd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+        p_gd_snr.plot(
+            time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES]
+        )
+        for i in range(N_BASELINES)
     ]
 
     # pd_snr
     p_pd_snr = win.addPlot(row=4, col=1, title="Phase Delay SNR")
     p_pd_snr.setLabel("left", "PD SNR")
-    p_pd_snr.setLabel("bottom", "samples")
+    p_pd_snr.setLabel("bottom", "Time (s)")
     c_pd_snr = [
-        p_pd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+        p_pd_snr.plot(
+            time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES]
+        )
+        for i in range(N_BASELINES)
     ]
 
     # --- Store curves for update ---
@@ -161,7 +180,6 @@ def main():
         c_pd_snr,  # 7
     ]
 
-    # Use local variables for arrays and curves in update
     def update():
         nonlocal status, v2_K1, v2_K2, pd_tel, gd_tel, dm, offload, gd_snr, pd_snr
         status = Z.send("status")
@@ -180,15 +198,15 @@ def main():
             arr[-1] = status[key]
 
         for i in range(N_TSCOPES):
-            curves[0][i].setData(gd_tel[:, i])
-            curves[1][i].setData(pd_tel[:, i])
-            curves[2][i].setData(offload[:, i])
-            curves[3][i].setData(dm[:, i])
+            curves[0][i].setData(time_axis, gd_tel[:, i])
+            curves[1][i].setData(time_axis, pd_tel[:, i])
+            curves[2][i].setData(time_axis, offload[:, i])
+            curves[3][i].setData(time_axis, dm[:, i])
         for i in range(N_BASELINES):
-            curves[4][i].setData(v2_K1[:, i])
-            curves[5][i].setData(v2_K2[:, i])
-            curves[6][i].setData(gd_snr[:, i])
-            curves[7][i].setData(pd_snr[:, i])
+            curves[4][i].setData(time_axis, v2_K1[:, i])
+            curves[5][i].setData(time_axis, v2_K2[:, i])
+            curves[6][i].setData(time_axis, gd_snr[:, i])
+            curves[7][i].setData(time_axis, pd_snr[:, i])
 
     timer = QtCore.QTimer()
     timer.timeout.connect(update)
