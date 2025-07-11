@@ -58,6 +58,49 @@ def main():
     win.resize(1200, 900)
     win.setWindowTitle("Heimdallr Real-Time Plots")
 
+    # --- Color legend window ---
+    legend_win = QtWidgets.QWidget()
+    legend_win.setWindowTitle("Color Legend")
+    legend_win.setFixedSize(350, 350)
+    legend_layout = QtWidgets.QVBoxLayout()
+    legend_win.setLayout(legend_layout)
+
+    # Telescopes legend
+    tel_label = QtWidgets.QLabel("<b>Telescopes</b>")
+    legend_layout.addWidget(tel_label)
+    telescope_names = ["T1", "T2", "T3", "T4"]
+    for i, name in enumerate(telescope_names):
+        color = TELESCOPE_COLORS[i % N_TSCOPES].color()
+        color_hex = color.name() if hasattr(color, "name") else color
+        swatch = QtWidgets.QLabel()
+        swatch.setFixedWidth(30)
+        swatch.setFixedHeight(15)
+        swatch.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #333;")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(swatch)
+        row.addWidget(QtWidgets.QLabel(name))
+        row.addStretch()
+        legend_layout.addLayout(row)
+
+    legend_layout.addSpacing(10)
+    base_label = QtWidgets.QLabel("<b>Baselines</b>")
+    legend_layout.addWidget(base_label)
+    baseline_names = [f"B{i+1}" for i in range(N_BASELINES)]
+    for i, name in enumerate(baseline_names):
+        color = BASELINE_COLORS[i % N_BASELINES].color()
+        color_hex = color.name() if hasattr(color, "name") else color
+        swatch = QtWidgets.QLabel()
+        swatch.setFixedWidth(30)
+        swatch.setFixedHeight(15)
+        swatch.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #333;")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(swatch)
+        row.addWidget(QtWidgets.QLabel(name))
+        row.addStretch()
+        legend_layout.addLayout(row)
+
+    legend_win.show()
+
     plots = []
     curves = []
 
