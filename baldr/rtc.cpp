@@ -80,6 +80,12 @@ Eigen::VectorXd dmCmd;
 
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
+//// getting telemetry in AIV 
+IMAGE shm_sig, shm_eLO, shm_eHO;
+constexpr int shm_telem_samples = 20;  // Number of telemetry samples exported to SHM
+thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
+
+
 // dm rms model
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
@@ -262,6 +268,9 @@ void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
     std::cout << name << " size: " << v.size() << std::endl;
 }
 
+
+
+
 // // The main RTC function
 void rtc(){
     // Temporary variabiles that don't need initialisation
@@ -325,6 +334,19 @@ void rtc(){
     } else {
         std::cerr << "Error: No metadata available in the subarray shared memory image." << std::endl;
     }
+
+    //// getting telemetry in AIV 
+
+    std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
+
+    // Allocate shapes
+    uint32_t size_sig[2] = {140, shm_telem_sample};
+    uint32_t size_eLO[2] = {2, shm_telem_sample};
+    uint32_t size_eHO[2] = {140, shm_telem_sample};
+    // Create SHM images with no semaphores and no keywords
+    ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
+    ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
+    ImageStreamIO_createIm(&shm_eHO, "eHO_telem", 2, size_eHO, _DATATYPE_FLOAT, 1, 0);
 
     ////////////////////////////////////////////////////
     /// parameters below are calculated at run time (derived from rtc_config) so 
@@ -546,13 +568,13 @@ void rtc(){
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
 
-        //// uncomment and build July 2025 AIV
-        // this boxcar weighted average is a first attempt - later evolve to
-        // burst window in full unfiltered non-destructive read mode with slope est. 
-        //int boxcar = global_boxcar.load();
-        // if ((boxcar > 1) && (M > boxcar)) {
-        //     sig = weightedAverage(rtc_config.telem.signal, boxcar);
-        // }
+        // uncomment and build July 2025 AIV
+        //this boxcar weighted average is a first attempt - later evolve to
+        //burst window in full unfiltered non-destructive read mode with slope est. 
+        int boxcar = global_boxcar.load();
+        if ((boxcar > 1) && (M > boxcar)) {
+            sig = weightedAverage(rtc_config.telem.signal, boxcar);
+        }
 
         
         //  Project into LO/HO as before, but now using the smoother sig_avg
@@ -870,6 +892,41 @@ void rtc(){
 
             // Increment the counter.
             rtc_config.telem.counter++;
+        }
+
+        //// getting telemetry in AIV 
+        // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
+        if (true){
+
+            std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+            //int shm_idx = shm_telem_cnt % shm_telem_samples;
+
+            // Get write pointers
+            float* buf_sig = (float*) shm_sig.array.F;
+            float* buf_eLO = (float*) shm_eLO.array.F;
+            float* buf_eHO = (float*) shm_eHO.array.F;
+
+            // Compute offset for this frame
+            size_t offset_sig = 140 * (shm_telem_cnt % shm_telem_samples);
+            size_t offset_eLO = 2 * (shm_telem_cnt % shm_telem_samples);
+            size_t offset_eHO = 140 * (shm_telem_cnt % shm_telem_samples);
+
+            // Write current frame
+            memcpy(&buf_sig[offset_sig], sig.data(), 140 * sizeof(float));
+            memcpy(&buf_eLO[offset_eLO], e_LO.data(), 2 * sizeof(float));
+            memcpy(&buf_eHO[offset_eHO], e_HO.data(), 140 * sizeof(float));
+
+            // Update metadata
+            shm_sig.md->cnt0++;
+            shm_sig.md->cnt1++;
+            shm_eLO.md->cnt0++;
+            shm_eLO.md->cnt1++;
+            shm_eHO.md->cnt0++;
+            shm_eHO.md->cnt1++;
+
+            // Increment index
+            shm_telem_cnt++
         }
 
         // -------------------- DEAD TIME BEGINS HERE 

@@ -40,7 +40,7 @@ taper = np.exp(-(dd/tprad)**20)  # power to be adjusted ?
 amask = taper > 0.4  # seems to work well
 
 pst = np.zeros((dms, dms))
-pst[amask] = 0.3  # optical gain ~ 3µm / ADU
+pst[amask] = 0.02  # 0.2 DM piston on GUI -> 10 ADU units # optical gain ~ 3µm / ADU
 
 im_offset = 1000.0
 
@@ -53,6 +53,7 @@ class Heimdallr():
         self.dd = dist(self.xsz, self.xsz, between_pix=True)
         self.apod = np.exp(-(self.dd/8)**4)
 
+        self.gd_offset = np.zeros(6)
         # pf.writeto("apodizer.fits", self.apod, overwrite=True)
         
         self.pscale = 35
@@ -67,7 +68,7 @@ class Heimdallr():
         # phase and group delay to be measured relative to beam 3
         # so a custom PINV is requested here
         self.PINV = np.round(np.linalg.pinv(
-            np.delete(wfs.hdlr1.kpi.BLM, 2, axis=1)), 2)
+            np.delete(self.hdlr1.kpi.BLM, 2, axis=1)), 2)
         
         # self.PINV = np.round(np.linalg.pinv(self.hdlr1.kpi.BLM), 2)
 
@@ -133,10 +134,10 @@ class Heimdallr():
 
         self.opd_now_k1 = self.PINV.dot(np.angle(self.hdlr1.cvis[0]))
         self.opd_now_k2 = self.PINV.dot(np.angle(self.hdlr2.cvis[0]))
-        self.gdlay = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
-        self.gdlay *= self.dl_factor
-                             
-        self.dms_cmds = self.PINV.dot(self.gdlay)
+        tmp = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
+        self.gdlay = tmp * self.dl_factor
+
+        self.dms_cmds = self.PINV.dot(self.gdlay - self.gd_offset)
                
         # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
@@ -168,25 +169,12 @@ class Heimdallr():
     def dispatch_opds(self):
         ref_beam = 0.25 * np.sum(self.dms_cmds)
 
-        # self.disps[0] = self.dms_cmds[0] # - ref_beam
-        # self.disps[1] = self.dms_cmds[2] # - ref_beam
-        # self.disps[2] = 0.0 # ref_beam
-        # self.disps[3] = self.dms_cmds[1] # - ref_beam
-
 
         self.disps[0] = self.dms_cmds[0]
         self.disps[1] = self.dms_cmds[1] #0.0 # ref_beam
         self.disps[2] = 0.0
         self.disps[3] = self.dms_cmds[2]
 
-        # self.disps[0] = -self.dms_cmds[1] #0.0 # ref_beam
-        # self.disps[1] = self.dms_cmds[0]-self.dms_cmds[1]
-        # self.disps[2] = 0.0 # self.dms_cmds[1] #0.0 # ref_beam
-        # self.disps[3] = self.dms_cmds[2] - self.dms_cmds[1]
-        
-        # print(f"\rdisp = {self.disps[0]:+06.2f}, {self.disps[1]:+06.2f}, ",
-        #       end="")
-        # print(f"{self.disps[2]:+06.2f}, {self.disps[3]:+06.2f}", end="")
         if self.cloop_on:
             for ii in range(self.ndm):
                 p0 = self.dms[ii].get_data()
@@ -272,7 +260,7 @@ class Heimdallr():
             else:
                 print()
 
-            if (global_vis < 0.6 * best_vis) and \
+            if (global_vis < 0.8 * best_vis) and \
                (pos > x0) and (best_vis > 0.15):
                 time.sleep(0.5)
                 break
