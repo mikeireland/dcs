@@ -80,6 +80,10 @@ Eigen::VectorXd dmCmd;
 
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
+//// getting telemetry in AIV 
+imageID shm_sig, shm_eLO, shm_eHO;
+constexpr int shm_telem_samples = 40;  // Number of telemetry samples exported to SHM
+thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
 // dm rms model
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
@@ -262,6 +266,9 @@ void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
     std::cout << name << " size: " << v.size() << std::endl;
 }
 
+
+
+
 // // The main RTC function
 void rtc(){
     // Temporary variabiles that don't need initialisation
@@ -326,6 +333,17 @@ void rtc(){
         std::cerr << "Error: No metadata available in the subarray shared memory image." << std::endl;
     }
 
+    //// getting telemetry in AIV 
+
+    std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
+
+    ImageStreamIO_createIm_gpu(&shm_sig, "sig_telem", 2,(uint32_t[]){140, shm_telem_samples}, _DATATYPE_FLOAT, 0, 0);
+
+    ImageStreamIO_createIm_gpu(&shm_eLO, "eLO_telem", 2,(uint32_t[]){2, shm_telem_samples}, _DATATYPE_FLOAT, 0, 0);
+
+    ImageStreamIO_createIm_gpu(&shm_eHO, "eHO_telem", 2, (uint32_t[]){140, shm_telem_samples}, _DATATYPE_FLOAT, 0, 0);
+    
+    
     ////////////////////////////////////////////////////
     /// parameters below are calculated at run time (derived from rtc_config) so 
     // I made a method in the  bdr_rtc_config struct to init these..
@@ -870,6 +888,24 @@ void rtc(){
 
             // Increment the counter.
             rtc_config.telem.counter++;
+        }
+
+        //// getting telemetry in AIV 
+        // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
+        if (true){
+            std::lock_guard<std::mutex> lock(telemetry_mutex);
+            int shm_idx = shm_telem_cnt % shm_telem_samples;
+
+            std::memcpy(&shm_sig.im->array.F[0 * shm_telem_samples + shm_idx],
+                        sig.data(), sizeof(float) * 140);
+
+            std::memcpy(&shm_eLO.im->array.F[0 * shm_telem_samples + shm_idx],
+                        e_LO.data(), sizeof(float) * 2);
+
+            std::memcpy(&shm_eHO.im->array.F[0 * shm_telem_samples + shm_idx],
+                        e_HO.data(), sizeof(float) * 140);
+
+            shm_telem_cnt++
         }
 
         // -------------------- DEAD TIME BEGINS HERE 
