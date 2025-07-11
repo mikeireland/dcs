@@ -34,29 +34,51 @@ telescopes_label = pg.LabelItem(justify="center", color="w")
 telescopes_label.setText("<span style='font-size:16pt'><b>Telescopes</b></span>")
 win.addItem(telescopes_label, row=0, col=0)
 
+# Define color sets for each column
+TELESCOPE_COLORS = [
+    pg.mkPen(color) for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
+]
+BASELINE_COLORS = [
+    pg.mkPen(color)
+    for color in [
+        "#E69F00",
+        "#56B4E9",
+        "#009E73",
+        "#F0E442",
+        "#0072B2",
+        "#D55E00",
+    ]
+]
+
 # gd_tel
 p_gd_tel = win.addPlot(row=1, col=0, title="Group Delay (wavelengths)")
 p_gd_tel.setLabel("left", "GD (wavelengths)")
 p_gd_tel.setLabel("bottom", "samples")
-c_gd_tel = [p_gd_tel.plot(pen=pg.intColor(i, N_TSCOPES)) for i in range(N_TSCOPES)]
+c_gd_tel = [
+    p_gd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
 # pd_tel
 p_pd_tel = win.addPlot(row=2, col=0, title="Phase Delay (wavelengths)")
 p_pd_tel.setLabel("left", "PD (wavelengths)")
 p_pd_tel.setLabel("bottom", "samples")
-c_pd_tel = [p_pd_tel.plot(pen=pg.intColor(i, N_TSCOPES)) for i in range(N_TSCOPES)]
+c_pd_tel = [
+    p_pd_tel.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
 # offload
 p_offload = win.addPlot(row=3, col=0, title="Offloaded Piston (microns)")
 p_offload.setLabel("left", "Offloaded Piston (μm)")
 p_offload.setLabel("bottom", "samples")
-c_offload = [p_offload.plot(pen=pg.intColor(i, N_TSCOPES)) for i in range(N_TSCOPES)]
+c_offload = [
+    p_offload.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)
+]
 
 # dm
 p_dm = win.addPlot(row=4, col=0, title="Mirror Piston (fractional stroke)")
 p_dm.setLabel("left", "Mirror Piston")
 p_dm.setLabel("bottom", "samples")
-c_dm = [p_dm.plot(pen=pg.intColor(i, N_TSCOPES)) for i in range(N_TSCOPES)]
+c_dm = [p_dm.plot(pen=TELESCOPE_COLORS[i % N_TSCOPES]) for i in range(N_TSCOPES)]
 
 # --- Right Column: Baselines ---
 # Subheader
@@ -68,25 +90,33 @@ win.addItem(baselines_label, row=0, col=1)
 p_v2_K1 = win.addPlot(row=1, col=1, title="V² K1")
 p_v2_K1.setLabel("left", "V² K1")
 p_v2_K1.setLabel("bottom", "samples")
-c_v2_K1 = [p_v2_K1.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
+c_v2_K1 = [
+    p_v2_K1.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
 
 # v2_K2
 p_v2_K2 = win.addPlot(row=2, col=1, title="V² K2")
 p_v2_K2.setLabel("left", "V² K2")
 p_v2_K2.setLabel("bottom", "samples")
-c_v2_K2 = [p_v2_K2.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
+c_v2_K2 = [
+    p_v2_K2.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
 
 # gd_snr
 p_gd_snr = win.addPlot(row=3, col=1, title="Group Delay SNR")
 p_gd_snr.setLabel("left", "GD SNR")
 p_gd_snr.setLabel("bottom", "samples")
-c_gd_snr = [p_gd_snr.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
+c_gd_snr = [
+    p_gd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
 
 # pd_snr
 p_pd_snr = win.addPlot(row=4, col=1, title="Phase Delay SNR")
 p_pd_snr.setLabel("left", "PD SNR")
 p_pd_snr.setLabel("bottom", "samples")
-c_pd_snr = [p_pd_snr.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
+c_pd_snr = [
+    p_pd_snr.plot(pen=BASELINE_COLORS[i % N_BASELINES]) for i in range(N_BASELINES)
+]
 
 # --- Store curves for update ---
 curves = [
