@@ -118,6 +118,12 @@ class MyMainWidget(QWidget):
         self.pB_reset_dms = QtWidgets.QPushButton(self)
         self.pB_reset_dms.setText("RESET DMs")
 
+        self.pB_gd_set_offset = QtWidgets.QPushButton(self)
+        self.pB_gd_set_offset.setText("GD offset")
+
+        self.pB_gd_fgt_offset = QtWidgets.QPushButton(self)
+        self.pB_gd_fgt_offset.setText("Reset GD")
+        
         self.pB_test = QtWidgets.QPushButton(self)
         self.pB_test.setText("TEST")
 
@@ -175,7 +181,7 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def wfc_stop(self):
-        self.wfs.cloop = False
+        self.wfs.cloop_on = False
         print("Breaking the loop!")
         
     # =========================================================================
@@ -215,6 +221,8 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam3.setGeometry(QRect(btx, 350, 100, clh))
         self.pB_scan_beam4.setGeometry(QRect(btx, 380, 100, clh))
 
+        self.pB_gd_set_offset.setGeometry(QRect(btx, 440, 100, clh))
+        self.pB_gd_fgt_offset.setGeometry(QRect(btx, 470, 100, clh))
 
         # the TEST button
         self.pB_test.setGeometry(QRect(btx, 600, 100, clh))
@@ -268,8 +276,21 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam3.clicked.connect(self.scan_beam3)
         self.pB_scan_beam4.clicked.connect(self.scan_beam4)
 
+        self.pB_gd_set_offset.clicked.connect(self.set_gd_offset)
+        self.pB_gd_fgt_offset.clicked.connect(self.fgt_gd_offset)
+
         self.pB_test.clicked.connect(self.trigger_test)
         # self.pB_dec_pscale.clicked.connect(self.dec_pscale)
+
+    # =========================================================================
+    def set_gd_offset(self):
+        self.wfs.gd_offset = self.wfs.gdlay
+        print("New set point!")
+
+    # =========================================================================
+    def fgt_gd_offset(self):
+        self.wfs.gd_offset = np.zeros(6)
+        print("Forgot set point!")
 
     # =========================================================================
     def select_filter(self):

@@ -9,6 +9,7 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 
 status = Z.send("status")
 v2_K1 = np.zeros((100, 6))
+v2_K2 = np.zeros((100, 6))
 pd_tel = np.zeros((100, 4))
 gd_tel = np.zeros((100, 4))
 dm = np.zeros((100, 4))
@@ -22,13 +23,20 @@ win.setWindowTitle("Heimdallr Real-Time Plots")
 plots = []
 curves = []
 
-# V^2 plot
-p1 = win.addPlot(title="V^2")
+# V^2 plots
+p1 = win.addPlot(title="V^2 K1")
 p1.setLabel("left", "V^2")
 p1.setLabel("bottom", "samples")
 c1 = [p1.plot(pen=pg.intColor(i, 6)) for i in range(6)]
 plots.append(p1)
 curves.append(c1)
+
+p6 = win.addPlot(title="V^2 K2")
+p6.setLabel("left", "V^2")
+p6.setLabel("bottom", "samples")
+c6 = [p6.plot(pen=pg.intColor(i, 6)) for i in range(6)]
+plots.append(p6)
+curves.append(c6)
 
 win.nextRow()
 # Phase Delay plot
@@ -56,6 +64,7 @@ c4 = [p4.plot(pen=pg.intColor(i, 4)) for i in range(4)]
 plots.append(p4)
 curves.append(c4)
 
+#'closure_phase_K1', 'closure_phase_K2', 'dl_offload', 'dm_piston', 'gd_bl', 'gd_snr', 'gd_tel', 'pd_av', 'pd_av_filtered', 'pd_bl', 'pd_offset', 'pd_snr', 'pd_tel', 'test_ix', 'test_n', 'v2_K1', 'v2_K2'
 # Offloaded Piston plot
 p5 = win.addPlot(title="Offloaded Piston (microns)")
 p5.setLabel("left", "Offloaded Piston (microns)")
@@ -66,10 +75,12 @@ curves.append(c5)
 
 
 def update():
-    global status, v2_K1, pd_tel, gd_tel, dm, offload
+    global status, v2_K1, v2_K2, pd_tel, gd_tel, dm, offload
     status = Z.send("status")
     v2_K1[:-1] = v2_K1[1:]
     v2_K1[-1] = status["v2_K1"]
+    v2_K2[:-1] = v2_K2[1:]
+    v2_K2[-1] = status["v2_K2"]
     pd_tel[:-1] = pd_tel[1:]
     pd_tel[-1] = status["pd_tel"]
     gd_tel[:-1] = gd_tel[1:]
@@ -82,16 +93,17 @@ def update():
     # Update plots
     for i in range(6):
         curves[0][i].setData(v2_K1[:, i])
+        curves[1][i].setData(v2_K2[:, i])
     for i in range(4):
-        curves[1][i].setData(pd_tel[:, i])
-        curves[2][i].setData(gd_tel[:, i])
-        curves[3][i].setData(dm[:, i])
-        curves[4][i].setData(offload[:, i])
+        curves[2][i].setData(pd_tel[:, i])
+        curves[3][i].setData(gd_tel[:, i])
+        curves[4][i].setData(dm[:, i])
+        curves[5][i].setData(offload[:, i])
 
 
 timer = QtCore.QTimer()
 timer.timeout.connect(update)
-timer.start(100)  # update every 100 ms
+timer.start(50)  # update every 100 ms
 
 if __name__ == "__main__":
     QtWidgets.QApplication.instance().exec_()
