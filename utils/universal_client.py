@@ -1,5 +1,6 @@
 import sys
 import zmq
+import json
 from PyQt5 import QtWidgets, QtGui, QtCore
 
 # Load server list from sockets file
@@ -46,9 +47,18 @@ class ServerTab(QtWidgets.QWidget):
         try:
             self.zmq_socket.send_string(cmd)
             reply = self.zmq_socket.recv_string()
-            self.text_area.append(reply)
         except Exception as e:
-            self.text_area.append(f"[Error] {e}")
+            reply = f"[Error] {e}"
+        # Try to parse as JSON and pretty-print, else just show with \n expanded
+        try:
+            resp = json.loads(reply)
+            if isinstance(resp, dict):
+                pretty = json.dumps(resp, indent=4)
+                self.text_area.append(pretty)
+            else:
+                self.text_area.append(str(resp).replace("\\n", "\n"))
+        except json.JSONDecodeError:
+            self.text_area.append(reply.replace("\\n", "\n"))
         self.input_line.clear()
 
 class UniversalClient(QtWidgets.QMainWindow):
