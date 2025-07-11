@@ -40,6 +40,23 @@ def main():
     update_time = args.update_time
     linewidth = args.linewidth
 
+    # Define color sets for each column (move before legend_win)
+    TELESCOPE_COLORS = [
+        pg.mkPen(color, width=linewidth)
+        for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
+    ]
+    BASELINE_COLORS = [
+        pg.mkPen(color, width=linewidth)
+        for color in [
+            "#E69F00",
+            "#56B4E9",
+            "#009E73",
+            "#F0E442",
+            "#0072B2",
+            "#D55E00",
+        ]
+    ]
+
     # Time axis: from -window to 0, in seconds
     time_axis = np.linspace(-samples * update_time / 1000.0, 0, samples)
 
@@ -109,23 +126,6 @@ def main():
     telescopes_label = pg.LabelItem(justify="center", color="w")
     telescopes_label.setText("<span style='font-size:16pt'><b>Telescopes</b></span>")
     win.addItem(telescopes_label, row=0, col=0)
-
-    # Define color sets for each column
-    TELESCOPE_COLORS = [
-        pg.mkPen(color, width=linewidth)
-        for color in ["#601A4A", "#EE442F", "#63ACBE", "#F9F4EC"]
-    ]
-    BASELINE_COLORS = [
-        pg.mkPen(color, width=linewidth)
-        for color in [
-            "#E69F00",
-            "#56B4E9",
-            "#009E73",
-            "#F0E442",
-            "#0072B2",
-            "#D55E00",
-        ]
-    ]
 
     # gd_tel
     p_gd_tel = win.addPlot(row=1, col=0, title="Group Delay (wavelengths)")
