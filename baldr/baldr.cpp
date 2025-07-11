@@ -1555,6 +1555,70 @@ COMMANDER_REGISTER(m)
 
 
 
+// std::map<std::string, std::string> parse_named_args(int argc, char* argv[]) {
+//     std::map<std::string, std::string> opts;
+//     for (int i = 1; i < argc; ++i) {
+//         std::string key = argv[i];
+//         if (key.rfind("--", 0) != 0) {
+//             std::cerr << "[ERROR] Unexpected argument format: " << key << std::endl;
+//             continue;
+//         }
+
+//         key = key.substr(2);  // remove '--'
+//         if ((i + 1 < argc) && std::string(argv[i+1]).rfind("--", 0) != 0) {
+//             opts[key] = argv[++i];
+//         } else {
+//             opts[key] = "1";  // e.g., for --verbose
+//         }
+//     }
+//     return opts;
+// }
+
+
+// int main(int argc, char* argv[]) {
+//     auto args = parse_named_args(argc, argv);
+
+//     // Required
+//     if (!args.count("beam") || !args.count("mask")) {
+//         std::cerr << "Usage: " << argv[0]
+//                   << " --beam <id> --mask <name> [--mode bright|faint] [--config file.toml] [--socket tcp://*:6662]"
+//                   << std::endl;
+//         return 1;
+//     }
+
+//     int beam_id = std::stoi(args["beam"]);
+//     std::string phasemask = args["mask"];
+//     std::string observing_mode = args.count("mode") ? args["mode"] : "bright";
+
+//     if (observing_mode != "bright" && observing_mode != "faint") {
+//         std::cerr << "[ERROR] Invalid mode. Use 'bright' or 'faint'." << std::endl;
+//         return 1;
+//     }
+
+//     std::string filename;
+//     if (args.count("config")) {
+//         filename = args["config"];
+//         std::cout << "[INFO] Using user config file: " << filename << std::endl;
+//     } else {
+//         filename = find_latest_config_file(beam_id, observing_mode);
+//         std::cout << "[INFO] Using latest config: " << filename << std::endl;
+//     }
+
+//     // Load and parse config
+//     config = toml::parse_file(filename);
+//     rtc_config = readBDRConfig(config, "beam" + std::to_string(beam_id), phasemask);
+//     rtc_config.initDerivedParameters();
+
+//     // SHM logic (unchanged)...
+
+//     std::thread rtc_thread(rtc);
+//     std::thread telemetry_thread(telemetry);
+
+//     std::cout << "[INFO] RTC and telemetry threads started." << std::endl;
+
+//     // Pass original argc/argv to commander to preserve --socket etc
+//     commander::Server s(argc, argv);
+// }
 
 int main(int argc, char* argv[]) {
     if (argc < 3 || argc > 5) {
