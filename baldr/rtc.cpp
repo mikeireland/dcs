@@ -81,6 +81,7 @@ Eigen::VectorXd dmCmd;
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
 //// getting telemetry in AIV 
+typedef int imageID;
 imageID shm_sig, shm_eLO, shm_eHO;
 constexpr int shm_telem_samples = 40;  // Number of telemetry samples exported to SHM
 thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
@@ -905,7 +906,7 @@ void rtc(){
             std::memcpy(&shm_eHO.im->array.F[0 * shm_telem_samples + shm_idx],
                         e_HO.data(), sizeof(float) * 140);
 
-            shm_telem_cnt++
+            shm_telem_cnt++;
         }
 
         // -------------------- DEAD TIME BEGINS HERE 
