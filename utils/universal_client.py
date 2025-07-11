@@ -48,6 +48,53 @@ class ServerTab(QtWidgets.QWidget):
 
     def set_input_line(self, cmd):
         self.input_line.setText(cmd)
+        # Fetch and display arguments for the selected command
+        self.display_command_arguments(cmd)
+
+    def display_command_arguments(self, cmd):
+        # Send 'arguments "<cmd>"' to the server and display the result as a table
+        try:
+            self.zmq_socket.send_string(f'arguments "{cmd}"')
+            reply = self.zmq_socket.recv_string()
+        except zmq.error.Again:
+            self.text_area.append("[Error] ZMQ request timed out while fetching arguments.")
+            return
+        except zmq.error.ZMQError as e:
+            if "Operation cannot be accomplished in current state" in str(e):
+                self.text_area.append("[Warning] Socket out of state, attempting to reconnect for arguments...")
+                self.reconnect_socket()
+                try:
+                    self.zmq_socket.send_string(f'arguments "{cmd}"')
+                    reply = self.zmq_socket.recv_string()
+                except Exception:
+                    self.text_area.append("[Error] Could not fetch arguments after reconnect.")
+                    return
+            else:
+                self.text_area.append(f"[Error] {e}")
+                return
+        except Exception as e:
+            self.text_area.append(f"[Error] {e}")
+            return
+
+        # Try to parse the reply and display as a table
+        try:
+            args = json.loads(reply)
+            if args is None:
+                self.text_area.append("No arguments required.")
+            elif isinstance(args, list) and args and isinstance(args[0], dict):
+                # Display as a table
+                table = "<table border='1' cellspacing='0' cellpadding='2'><tr><th>Name</th><th>Type</th></tr>"
+                for arg in args:
+                    name = arg.get("name", "")
+                    typ = arg.get("type", "")
+                    table += f"<tr><td>{name}</td><td>{typ}</td></tr>"
+                table += "</table>"
+                self.text_area.append(table)
+            else:
+                self.text_area.append(str(args))
+        except Exception:
+            # Fallback: just show the reply
+            self.text_area.append(reply.replace("\\n", "\n"))
 
     def reconnect_socket(self):
         # Recreate the socket and reconnect
