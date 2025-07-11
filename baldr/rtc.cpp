@@ -340,9 +340,9 @@ void rtc(){
     std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
 
     // Allocate shapes
-    uint32_t size_sig[2] = {140, shm_telem_sample};
-    uint32_t size_eLO[2] = {2, shm_telem_sample};
-    uint32_t size_eHO[2] = {140, shm_telem_sample};
+    uint32_t size_sig[2] = {140, shm_telem_samples};
+    uint32_t size_eLO[2] = {2, shm_telem_samples};
+    uint32_t size_eHO[2] = {140, shm_telem_samples};
     // Create SHM images with no semaphores and no keywords
     ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
     ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
@@ -926,7 +926,7 @@ void rtc(){
             shm_eHO.md->cnt1++;
 
             // Increment index
-            shm_telem_cnt++
+            shm_telem_cnt++;
         }
 
         // -------------------- DEAD TIME BEGINS HERE 
