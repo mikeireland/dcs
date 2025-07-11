@@ -68,45 +68,25 @@ win.addItem(baselines_label, row=0, col=1)
 p_v2_K1 = win.addPlot(row=1, col=1, title="V² K1")
 p_v2_K1.setLabel("left", "V² K1")
 p_v2_K1.setLabel("bottom", "samples")
-c_v2_K1 = [
-    p_v2_K1.plot(
-        pen=pg.intColor(i, N_BASELINES)
-    )
-    for i in range(N_BASELINES)
-]
+c_v2_K1 = [p_v2_K1.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
 
 # v2_K2
 p_v2_K2 = win.addPlot(row=2, col=1, title="V² K2")
 p_v2_K2.setLabel("left", "V² K2")
 p_v2_K2.setLabel("bottom", "samples")
-c_v2_K2 = [
-    p_v2_K2.plot(
-        pen=pg.intColor(i, N_BASELINES)
-    )
-    for i in range(N_BASELINES)
-]
+c_v2_K2 = [p_v2_K2.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
 
 # gd_snr
 p_gd_snr = win.addPlot(row=3, col=1, title="Group Delay SNR")
 p_gd_snr.setLabel("left", "GD SNR")
 p_gd_snr.setLabel("bottom", "samples")
-c_gd_snr = [
-    p_gd_snr.plot(
-        pen=pg.intColor(i, N_BASELINES)
-    )
-    for i in range(N_BASELINES)
-]
+c_gd_snr = [p_gd_snr.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
 
 # pd_snr
 p_pd_snr = win.addPlot(row=4, col=1, title="Phase Delay SNR")
 p_pd_snr.setLabel("left", "PD SNR")
 p_pd_snr.setLabel("bottom", "samples")
-c_pd_snr = [
-    p_pd_snr.plot(
-        pen=pg.intColor(i, N_BASELINES)
-    )
-    for i in range(N_BASELINES)
-]
+c_pd_snr = [p_pd_snr.plot(pen=pg.intColor(i, N_BASELINES)) for i in range(N_BASELINES)]
 
 # --- Store curves for update ---
 curves = [
