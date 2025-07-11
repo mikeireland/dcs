@@ -535,16 +535,24 @@ void rtc(){
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
 
-        //BCB
-        //  Compute the averaged signal
+        
+        //  Compute the averaged signal, telem size can change mid rtc so check! 
         size_t M = rtc_config.telem.signal.size();
+
+
+
         sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
-        //if (M > boxcar) {
-        //    sig = weightedAverage(rtc_config.telem.signal, boxcar);
-        //} 
+
+        //// uncomment and build July 2025 AIV
+        // this boxcar weighted average is a first attempt - later evolve to
+        // burst window in full unfiltered non-destructive read mode with slope est. 
+        //int boxcar = global_boxcar.load();
+        // if ((boxcar > 1) && (M > boxcar)) {
+        //     sig = weightedAverage(rtc_config.telem.signal, boxcar);
+        // }
 
         
         //  Project into LO/HO as before, but now using the smoother sig_avg

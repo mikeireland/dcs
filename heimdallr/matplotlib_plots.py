@@ -1,80 +1,97 @@
 """
-Various methods of drawing scrolling plots.
+Various methods of drawing scrolling plots using pyqtgraph for speed and simplicity.
 """
+
 import ZMQ_control_client as Z
-import matplotlib.pyplot as plt
 import numpy as np
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtWidgets
 
-plt.ion()  # interactive mode on
-
-
-status = Z.send('status')
-v2_K1 = np.zeros((100, 6))  # create an array of zeros
-pd_tel = np.zeros((100, 4))  # create an array of zeros
-gd_tel = np.zeros((100, 4))  # create an array of zeros
-dm = np.zeros((100, 4))  
+status = Z.send("status")
+v2_K1 = np.zeros((100, 6))
+pd_tel = np.zeros((100, 4))
+gd_tel = np.zeros((100, 4))
+dm = np.zeros((100, 4))
 offload = np.zeros((100, 4))
 
-def updatev2():
-    v2_K1[:-1] = v2_K1[1:]  
-    v2_K1[-1] = status['v2_K1']
-    plt.figure(1)
-    plt.clf()  # clear the current figure
-    plt.plot(v2_K1)
-    plt.xlabel('samples')
-    plt.ylabel('V^2')
+app = QtWidgets.QApplication([])
+win = pg.GraphicsLayoutWidget(show=True, title="Scrolling Plots")
+win.resize(1000, 800)
+win.setWindowTitle("Heimdallr Real-Time Plots")
 
-def updatepd():
-    pd_tel[:-1] = pd_tel[1:]  
-    pd_tel[-1] = status['pd_tel']
-    plt.figure(2)
-    plt.clf()  # clear the current figure
-    plt.plot(pd_tel)
-    plt.xlabel('samples')
-    plt.ylabel('Phase Delay (wavelengths)')
+plots = []
+curves = []
 
-def updategd():
-    gd_tel[:-1] = gd_tel[1:]  
-    gd_tel[-1] = status['gd_tel']
-    plt.figure(5)
-    plt.clf()  # clear the current figure
-    plt.plot(gd_tel)
-    plt.xlabel('samples')
-    plt.ylabel('Group Delay (wavelengths)')
-    
-def updatepiston():
-    dm[:-1] = dm[1:]  
-    dm[-1] = status['dm_piston']
-    plt.figure(3)
-    plt.clf()  # clear the current figure
-    plt.plot(dm)
-    plt.xlabel('samples')
-    plt.ylabel('Mirror Piston (fractional stoke)')
-    
-def updateoffload():
-    offload[:-1] = offload[1:]  
-    offload[-1] = status['dl_offload']
-    plt.figure(4)
-    plt.clf()  # clear the current figure
-    plt.plot(offload)
-    plt.xlabel('samples')
-    plt.ylabel('Offloaded Piston (microns)')
+# V^2 plot
+p1 = win.addPlot(title="V^2")
+p1.setLabel("left", "V^2")
+p1.setLabel("bottom", "samples")
+c1 = [p1.plot(pen=pg.intColor(i, 6)) for i in range(6)]
+plots.append(p1)
+curves.append(c1)
+
+win.nextRow()
+# Phase Delay plot
+p2 = win.addPlot(title="Phase Delay (wavelengths)")
+p2.setLabel("left", "Phase Delay (wavelengths)")
+p2.setLabel("bottom", "samples")
+c2 = [p2.plot(pen=pg.intColor(i, 4)) for i in range(4)]
+plots.append(p2)
+curves.append(c2)
+
+# Group Delay plot
+p3 = win.addPlot(title="Group Delay (wavelengths)")
+p3.setLabel("left", "Group Delay (wavelengths)")
+p3.setLabel("bottom", "samples")
+c3 = [p3.plot(pen=pg.intColor(i, 4)) for i in range(4)]
+plots.append(p3)
+curves.append(c3)
+
+win.nextRow()
+# Mirror Piston plot
+p4 = win.addPlot(title="Mirror Piston (fractional stroke)")
+p4.setLabel("left", "Mirror Piston (fractional stroke)")
+p4.setLabel("bottom", "samples")
+c4 = [p4.plot(pen=pg.intColor(i, 4)) for i in range(4)]
+plots.append(p4)
+curves.append(c4)
+
+# Offloaded Piston plot
+p5 = win.addPlot(title="Offloaded Piston (microns)")
+p5.setLabel("left", "Offloaded Piston (microns)")
+p5.setLabel("bottom", "samples")
+c5 = [p5.plot(pen=pg.intColor(i, 4)) for i in range(4)]
+plots.append(p5)
+curves.append(c5)
 
 
-# update all plots
 def update():
-    #updatev2()
-    updatepd()
-    updategd()
-    updatepiston()
-    #updateoffload()
+    global status, v2_K1, pd_tel, gd_tel, dm, offload
+    status = Z.send("status")
+    v2_K1[:-1] = v2_K1[1:]
+    v2_K1[-1] = status["v2_K1"]
+    pd_tel[:-1] = pd_tel[1:]
+    pd_tel[-1] = status["pd_tel"]
+    gd_tel[:-1] = gd_tel[1:]
+    gd_tel[-1] = status["gd_tel"]
+    dm[:-1] = dm[1:]
+    dm[-1] = status["dm_piston"]
+    offload[:-1] = offload[1:]
+    offload[-1] = status["dl_offload"]
+
+    # Update plots
+    for i in range(6):
+        curves[0][i].setData(v2_K1[:, i])
+    for i in range(4):
+        curves[1][i].setData(pd_tel[:, i])
+        curves[2][i].setData(gd_tel[:, i])
+        curves[3][i].setData(dm[:, i])
+        curves[4][i].setData(offload[:, i])
 
 
-if __name__ == '__main__':
-    while(True):
-        # get the status
-        status = Z.send('status')
-        # update the plots
-        update()
-        # sleep for a while to allow the plot to update
-        plt.pause(.1)
+timer = QtCore.QTimer()
+timer.timeout.connect(update)
+timer.start(100)  # update every 100 ms
+
+if __name__ == "__main__":
+    QtWidgets.QApplication.instance().exec_()

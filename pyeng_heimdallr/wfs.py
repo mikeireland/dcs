@@ -63,7 +63,14 @@ class Heimdallr():
 
         self.hdlr1 = IWFS(array=hcoords)
         self.hdlr2 = IWFS(array=hcoords)
+
+        # phase and group delay to be measured relative to beam 3
+        # so a custom PINV is requested here
+        self.PINV = np.round(np.linalg.pinv(
+            np.delete(wfs.hdlr1.kpi.BLM, 2, axis=1)), 2)
         
+        # self.PINV = np.round(np.linalg.pinv(self.hdlr1.kpi.BLM), 2)
+
         self.hdlr1.update_img_properties(
             isz=self.xsz, wl=self.Ks_wl, pscale=self.pscale)
         self.hdlr2.update_img_properties(
@@ -124,11 +131,13 @@ class Heimdallr():
         if norm2 != 0:
             self.hdlr2.extract_data(k2d)
 
-        self.opd_now_k1 = self.hdlr1.get_opd()
-        self.opd_now_k2 = self.hdlr2.get_opd()
+        self.opd_now_k1 = self.PINV.dot(np.angle(self.hdlr1.cvis[0]))
+        self.opd_now_k2 = self.PINV.dot(np.angle(self.hdlr2.cvis[0]))
         self.gdlay = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
         self.gdlay *= self.dl_factor
-        self.dms_cmds = self.hdlr1.PINV.dot(self.gdlay)
+                             
+        self.dms_cmds = self.PINV.dot(self.gdlay)
+               
         # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
         # self.dms_cmds -= self.dms_cmds[2] # everything relative to Beam 3
@@ -164,15 +173,16 @@ class Heimdallr():
         # self.disps[2] = 0.0 # ref_beam
         # self.disps[3] = self.dms_cmds[1] # - ref_beam
 
-        # self.disps[0] = 0.0
-        # self.disps[1] = self.dms_cmds[0]
-        # self.disps[2] = self.dms_cmds[1] #0.0 # ref_beam
-        # self.disps[3] = self.dms_cmds[2]
 
-        self.disps[0] = -self.dms_cmds[1] #0.0 # ref_beam
-        self.disps[1] = self.dms_cmds[0]-self.dms_cmds[1]
-        self.disps[2] = 0.0 # self.dms_cmds[1] #0.0 # ref_beam
-        self.disps[3] = self.dms_cmds[2] - self.dms_cmds[1]
+        self.disps[0] = self.dms_cmds[0]
+        self.disps[1] = self.dms_cmds[1] #0.0 # ref_beam
+        self.disps[2] = 0.0
+        self.disps[3] = self.dms_cmds[2]
+
+        # self.disps[0] = -self.dms_cmds[1] #0.0 # ref_beam
+        # self.disps[1] = self.dms_cmds[0]-self.dms_cmds[1]
+        # self.disps[2] = 0.0 # self.dms_cmds[1] #0.0 # ref_beam
+        # self.disps[3] = self.dms_cmds[2] - self.dms_cmds[1]
         
         # print(f"\rdisp = {self.disps[0]:+06.2f}, {self.disps[1]:+06.2f}, ",
         #       end="")
@@ -211,6 +221,11 @@ class Heimdallr():
         - srange : the +/- search range in microns (float)
         - step   : the scan step in microns (float)
         -------------------------------------------------- '''
+        nav = 5  # number of measurements to average
+
+        for ii in range(self.ndm):
+            self.hfo_pos[ii] = self.get_dl_pos(ii+1)
+            
         x0 = self.hfo_pos[beamid-1] # startup position
         steps = np.arange(x0 - srange, x0 + srange, step)
         if band == "K1":
@@ -222,40 +237,47 @@ class Heimdallr():
         bl_ii = np.argwhere(BLM[:, beamid-1] != 0)[:, 0]  # concerned BLines
         # the starting point
         best_pos = x0
-        uvis = np.abs(sensor.cvis[0])[bl_ii]  # "useful" visibilities
-        best_vis = np.sqrt(np.sum(uvis**2))
-        # init_vis = np.sqrt(np.sum(uvis**2))
+        vis = []
+        for jj in range(nav):
+            vis.append(np.abs(sensor.cvis[0]))
+        vis = np.mean(np.array(vis), axis = 0)
+        uvis = np.round(np.abs(vis)[bl_ii], 2)  # "useful" visibilities
+        best_vis = np.round(np.sqrt(np.mean(uvis**2)), 2)
+        print(f"HFO{beamid} x0  = {x0:8.2f}", end="")
+        print(uvis, best_vis)
         found_one = 0
 
         if self.cloop_on:
             self.cloop_on = False  # interrupting the loop
             print("Opening the loop")
 
-        for ii in range(self.ndm):
-            self.hfo_pos[ii] = self.get_dl_pos(ii+1)
-            # print(f"HFO{ii+1} = {self.hfo_pos[ii]:.2f} um)"
-            
         for ii, pos in enumerate(steps):
             self.move_dl(pos, beamid)
-            print(f"\rpos = {pos:8.2f}, ", end="")
-            vis = np.abs(sensor.cvis[0])
+            print(f"HFO{beamid} pos = {pos:8.2f} ", end="")
+            time.sleep(0.5)
+            vis = []
+            for jj in range(nav):
+                vis.append(np.abs(sensor.cvis[0]))
+            vis = np.mean(np.array(vis), axis = 0)
+
             uvis = np.round(vis[bl_ii], 2)  # the useful visibilities here
             global_vis = np.round(np.sqrt(np.mean(uvis**2)), 2)
             print(uvis, global_vis, end="")
             
-            if global_vis >= 1.05 * best_vis:
+            if (global_vis >= 1.01 * best_vis) and (global_vis > 0.15) :
                 best_vis = global_vis
                 best_pos = pos
                 found_one += 1 # (found_one == 1) and
-                print(f"    - Current best pos: {pos:.2f}", end="")
+                print(f"    - Current best pos: {pos:.2f}")
+            else:
+                print()
 
-            if (global_vis < 0.9 * best_vis) and \
+            if (global_vis < 0.6 * best_vis) and \
                (pos > x0) and (best_vis > 0.15):
                 time.sleep(0.5)
                 break
-            time.sleep(0.5)
-        print("\ndone!")
-        print(f"Best position is {best_pos:.2f} um for v = {best_vis:.2f}")
+            # time.sleep(0.5)  --> wait after moving the HFO instead?
+        print(f"Done! Best pos is {best_pos:.2f} um for v = {best_vis:.2f}\n")
         self.move_dl(best_pos, beamid)
 
     # =========================================================================

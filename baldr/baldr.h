@@ -766,6 +766,11 @@ extern bdr_rtc_config rtc_config;
 //extern float loop_time ; //us 
 //extern bool loop_time_override ;
 
+
+//// uncomment and build July 2025 AIV
+//extern std::atomic<int> global_boxcar;
+
+
 //extern std::vector<bdr_rtc_config> rtc_config_list; // what the rtc will use and edit
 extern std::atomic<int> servo_mode; 
 extern std::atomic<int> servo_mode_LO;
