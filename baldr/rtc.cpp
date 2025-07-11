@@ -546,13 +546,13 @@ void rtc(){
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
 
-        //// uncomment and build July 2025 AIV
-        // this boxcar weighted average is a first attempt - later evolve to
-        // burst window in full unfiltered non-destructive read mode with slope est. 
-        //int boxcar = global_boxcar.load();
-        // if ((boxcar > 1) && (M > boxcar)) {
-        //     sig = weightedAverage(rtc_config.telem.signal, boxcar);
-        // }
+        // uncomment and build July 2025 AIV
+        //this boxcar weighted average is a first attempt - later evolve to
+        //burst window in full unfiltered non-destructive read mode with slope est. 
+        int boxcar = global_boxcar.load();
+        if ((boxcar > 1) && (M > boxcar)) {
+            sig = weightedAverage(rtc_config.telem.signal, boxcar);
+        }
 
         
         //  Project into LO/HO as before, but now using the smoother sig_avg

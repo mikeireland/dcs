@@ -56,7 +56,7 @@ std::mutex rtc_pause_mutex;  //protect access to shared state (in this case, the
 std::condition_variable rtc_pause_cv; //condition variable is used to block (put to sleep) the RTC thread until a particular condition is met
 
 //// uncomment and build July 2025 AIV
-//std::atomic<int> global_boxcar{1};  // for possible weighted averaging of signals in rtc
+std::atomic<int> global_boxcar{1};  // for possible weighted averaging of signals in rtc
 
 IMAGE subarray; // The C-red subarray
 IMAGE dm_rtc; // The DM subarray
@@ -580,20 +580,20 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
 }
 
 
-// uncomment and build July 2025 AIV
-// void change_boxcar(std::string cmd) {
-//     try {
-//         int new_val = std::stoi(cmd);
-//         if (new_val > 0 && new_val < 1000) {
-//             global_boxcar.store(new_val); //atomic threadsafe
-//             std::cout << "Boxcar window updated to " << new_val << std::endl;
-//         } else {
-//             std::cerr << "Boxcar value out of allowed range (1–999)" << std::endl;
-//         }
-//     } catch (...) {
-//         std::cerr << "Invalid boxcar input: " << cmd << std::endl;
-//     }
-// }
+//uncomment and build July 2025 AIV
+void change_boxcar(int cmd) {
+    try {
+        int new_val = cmd; //std::stoi(cmd);
+        if (new_val > 0 && new_val < 1000) {
+            global_boxcar.store(new_val); //atomic threadsafe
+            std::cout << "Boxcar window updated to " << new_val << std::endl;
+        } else {
+            std::cerr << "Boxcar value out of allowed range (1–999)" << std::endl;
+        }
+    } catch (...) {
+        std::cerr << "Invalid boxcar input: " << cmd << std::endl;
+    }
+}
 
 
 void new_dark_and_bias() {
@@ -1468,8 +1468,8 @@ COMMANDER_REGISTER(m)
     m.def("configure_burst", cmd_configure_burst,  "Update the rolling burst window (size and dt) for non-destructive read mode slope estimates", "args"_arg);
 
 
-    //// uncomment and build July 2025 AIV
-    //m.def("change_boxcar", change_boxcar,  "Update the number of signal samples from telem ring buffer to weight an average. Only applied for values > 1", "args"_arg);
+    // uncomment and build July 2025 AIV
+    m.def("change_boxcar", change_boxcar,  "Update the number of signal samples from telem ring buffer to weight an average. Only applied for values > 1", "args"_arg);
 
 
     m.def("I0_update", I0_update,
@@ -1555,110 +1555,54 @@ COMMANDER_REGISTER(m)
 
 
 
-// std::map<std::string, std::string> parse_named_args(int argc, char* argv[]) {
-//     std::map<std::string, std::string> opts;
-//     for (int i = 1; i < argc; ++i) {
-//         std::string key = argv[i];
-//         if (key.rfind("--", 0) != 0) {
-//             std::cerr << "[ERROR] Unexpected argument format: " << key << std::endl;
-//             continue;
-//         }
+std::map<std::string, std::string> parse_named_args(int argc, char* argv[]) {
+    std::map<std::string, std::string> opts;
+    for (int i = 1; i < argc; ++i) {
+        std::string key = argv[i];
+        if (key.rfind("--", 0) != 0) {
+            std::cerr << "[ERROR] Unexpected argument format: " << key << std::endl;
+            continue;
+        }
 
-//         key = key.substr(2);  // remove '--'
-//         if ((i + 1 < argc) && std::string(argv[i+1]).rfind("--", 0) != 0) {
-//             opts[key] = argv[++i];
-//         } else {
-//             opts[key] = "1";  // e.g., for --verbose
-//         }
-//     }
-//     return opts;
-// }
+        key = key.substr(2);  // remove '--'
+        if ((i + 1 < argc) && std::string(argv[i+1]).rfind("--", 0) != 0) {
+            opts[key] = argv[++i];
+        } else {
+            opts[key] = "1";  // e.g., for --verbose
+        }
+    }
+    return opts;
+}
 
-
-// int main(int argc, char* argv[]) {
-//     auto args = parse_named_args(argc, argv);
-
-//     // Required
-//     if (!args.count("beam") || !args.count("mask")) {
-//         std::cerr << "Usage: " << argv[0]
-//                   << " --beam <id> --mask <name> [--mode bright|faint] [--config file.toml] [--socket tcp://*:6662]"
-//                   << std::endl;
-//         return 1;
-//     }
-
-//     int beam_id = std::stoi(args["beam"]);
-//     std::string phasemask = args["mask"];
-//     std::string observing_mode = args.count("mode") ? args["mode"] : "bright";
-
-//     if (observing_mode != "bright" && observing_mode != "faint") {
-//         std::cerr << "[ERROR] Invalid mode. Use 'bright' or 'faint'." << std::endl;
-//         return 1;
-//     }
-
-//     std::string filename;
-//     if (args.count("config")) {
-//         filename = args["config"];
-//         std::cout << "[INFO] Using user config file: " << filename << std::endl;
-//     } else {
-//         filename = find_latest_config_file(beam_id, observing_mode);
-//         std::cout << "[INFO] Using latest config: " << filename << std::endl;
-//     }
-
-//     // Load and parse config
-//     config = toml::parse_file(filename);
-//     rtc_config = readBDRConfig(config, "beam" + std::to_string(beam_id), phasemask);
-//     rtc_config.initDerivedParameters();
-
-//     // SHM logic (unchanged)...
-
-//     std::thread rtc_thread(rtc);
-//     std::thread telemetry_thread(telemetry);
-
-//     std::cout << "[INFO] RTC and telemetry threads started." << std::endl;
-
-//     // Pass original argc/argv to commander to preserve --socket etc
-//     commander::Server s(argc, argv);
-// }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3 || argc > 5) {
-        std::cerr << "Usage: " << argv[0] << " <beam_id> <phaseMask> [mode (bright|faint)] [optional config_filename.toml]" << std::endl;
+    auto args = parse_named_args(argc, argv);
+
+    // Required
+    if (!args.count("beam") || !args.count("mask")) {
+        std::cerr << "Usage: " << argv[0]
+                  << " --beam <id> --mask <name> [--mode bright|faint] [--config file.toml] [--socket tcp://*:6662]"
+                  << std::endl;
         return 1;
     }
 
-    // Mandatory inputs
-    beam_id = std::stoi(argv[1]);
-    phasemask = argv[2];
+    int beam_id = std::stoi(args["beam"]);
+    std::string phasemask = args["mask"];
+    std::string observing_mode = args.count("mode") ? args["mode"] : "bright";
 
-    // Optional mode
-    if (argc >= 4) {
-        observing_mode = argv[3];
-        if (observing_mode != "bright" && observing_mode != "faint") {
-            std::cerr << "[ERROR] Invalid observing mode. Must be 'bright' or 'faint'." << std::endl;
-            return 1;
-        }
-    }
-
-    // Optional user configuration file
-    if (argc == 5) {
-        user_config_filename = argv[4];
-        user_provided_config = true;
+    if (observing_mode != "bright" && observing_mode != "faint") {
+        std::cerr << "[ERROR] Invalid mode. Use 'bright' or 'faint'." << std::endl;
+        return 1;
     }
 
     std::string filename;
-    if (user_provided_config) {
-        filename = user_config_filename;
-        std::cout << "[INFO] Using user-provided config file: " << filename << std::endl;
+    if (args.count("config")) {
+        filename = args["config"];
+        std::cout << "[INFO] Using user config file: " << filename << std::endl;
     } else {
-        try {
-            filename = find_latest_config_file(beam_id, observing_mode); // <--- updated find_latest_config_file
-            std::cout << "[INFO] Using latest config for mode '" << observing_mode << "': " << filename << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Error finding latest config file: " << e.what() << std::endl;
-            return 1;
-        }
+        filename = find_latest_config_file(beam_id, observing_mode);
+        std::cout << "[INFO] Using latest config: " << filename << std::endl;
     }
-
     // Load and parse TOML config
     try {
         config = toml::parse_file(filename);
@@ -1708,8 +1652,37 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[INFO] RTC and telemetry threads started." << std::endl;
 
+    
+    // prepare commander arguments
+    std::vector<std::string> commander_args = {argv[0]};
+
+    if (args.count("socket")){
+        commander_args.push_back("--socket");
+        commander_args.push_back(args["socket"]);
+    }
+
+    // this is a safe C style allocation of strings so if commander_args arn't allive we dont get invalid pointer
+    std::vector<std::unique_ptr<char[]>> argv_storage;
+    std::vector<char*> commander_argv;
+    for (const auto& s : commander_args){
+        argv_storage.emplace_back(std::make_unique<char[]>(s.size()+1));
+        std::strcpy(argv_storage.back().get(), s.c_str());
+        commander_argv.push_back(argv_storage.back().get());
+    }
+    
+    // this was the old functional but maybe less robust way fo commander_argv
+    //std::vector<char*> commander_argv;
+    //for (auto& s : commander_args )
+    //    commander_argv.push_back(&s[0]);
+    
+    int commander_argc = commander_argv.size();
     // Start commander server
-    commander::Server s(argc, argv);
+    //commander::Server s(argc, argv);
+    commander::Server s(commander_argc, commander_argv.data());
+
+    // test we past commander input 
+    std::cout << "commander server started" << std::endl;
+
     s.run();
 
     // Clean shutdown
@@ -1720,6 +1693,113 @@ int main(int argc, char* argv[]) {
     std::cout << "DONE" << std::endl;
     return 0;
 }
+
+
+// // previous working veruis 
+// int main(int argc, char* argv[]) {
+//     if (argc < 3 || argc > 5) {
+//         std::cerr << "Usage: " << argv[0] << " <beam_id> <phaseMask> [mode (bright|faint)] [optional config_filename.toml]" << std::endl;
+//         return 1;
+//     }
+
+//     // Mandatory inputs
+//     beam_id = std::stoi(argv[1]);
+//     phasemask = argv[2];
+
+//     // Optional mode
+//     if (argc >= 4) {
+//         observing_mode = argv[3];
+//         if (observing_mode != "bright" && observing_mode != "faint") {
+//             std::cerr << "[ERROR] Invalid observing mode. Must be 'bright' or 'faint'." << std::endl;
+//             return 1;
+//         }
+//     }
+
+//     // Optional user configuration file
+//     if (argc == 5) {
+//         user_config_filename = argv[4];
+//         user_provided_config = true;
+//     }
+
+//     std::string filename;
+//     if (user_provided_config) {
+//         filename = user_config_filename;
+//         std::cout << "[INFO] Using user-provided config file: " << filename << std::endl;
+//     } else {
+//         try {
+//             filename = find_latest_config_file(beam_id, observing_mode); // <--- updated find_latest_config_file
+//             std::cout << "[INFO] Using latest config for mode '" << observing_mode << "': " << filename << std::endl;
+//         } catch (const std::exception& e) {
+//             std::cerr << "Error finding latest config file: " << e.what() << std::endl;
+//             return 1;
+//         }
+//     }
+
+//     // Load and parse TOML config
+//     try {
+//         config = toml::parse_file(filename);
+//         std::cout << "Loaded configuration for beam " << beam_id << " from " << filename << std::endl;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error parsing file " << filename << ": " << e.what() << std::endl;
+//         return 1;
+//     }
+
+//     // Now set up rtc_config
+//     std::string beamKey = "beam" + std::to_string(beam_id);
+//     try {
+//         rtc_config = readBDRConfig(config, beamKey, phasemask);
+//         rtc_config.initDerivedParameters();
+//         std::cout << "[INFO] RTC configuration initialized for beam " << beam_id << std::endl;
+//     } catch (const std::exception& e) {
+//         std::cerr << "Error initializing RTC config: " << e.what() << std::endl;
+//         return 1;
+//     }
+
+//     // Open shared memory
+//     if (!rtc_config.state.simulation_mode) {
+//         std::cout << "[INFO] Opening real SHM (not simulation)..." << std::endl;
+
+//         ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
+
+//         std::string name = "dm" + std::to_string(beam_id) + "disp02";
+//         std::string name0 = "dm" + std::to_string(beam_id);
+
+//         if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
+//             std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
+//             return 1;
+//         }
+//         if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+//             std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
+//             return 1;
+//         }
+
+//     } else {
+//         std::cerr << "[ERROR] Simulation mode not implemented yet." << std::endl;
+//         throw std::runtime_error("Simulation mode not implemented");
+//     }
+
+//     // Start RTC threads
+//     std::thread rtc_thread(rtc);
+//     std::thread telemetry_thread(telemetry);
+
+//     std::cout << "[INFO] RTC and telemetry threads started." << std::endl;
+
+//     // Start commander server
+//     commander::Server s(argc, argv);
+//     s.run();
+
+//     // Clean shutdown
+//     servo_mode = SERVO_STOP;
+//     rtc_thread.join();
+//     telemetry_thread.join();
+
+//     std::cout << "DONE" << std::endl;
+//     return 0;
+// }
+
+
+
+
 
 // before we introduced faint mode 
 // // configure like ./baldr 1 H3 
