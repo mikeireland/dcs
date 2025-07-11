@@ -81,6 +81,16 @@ def main():
     legend_win.setFixedSize(350, 350)
     legend_layout = QtWidgets.QVBoxLayout()
     legend_win.setLayout(legend_layout)
+    # Set dark theme for legend_win
+    legend_win.setStyleSheet("""
+        QWidget {
+            background-color: #222;
+            color: #EEE;
+        }
+        QLabel {
+            color: #EEE;
+        }
+    """)
 
     # Telescopes legend
     tel_label = QtWidgets.QLabel("<b>Telescopes</b>")
