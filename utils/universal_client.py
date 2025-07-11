@@ -28,8 +28,12 @@ class ServerTab(QtWidgets.QWidget):
         self.text_area.setReadOnly(True)
         self.input_line = QtWidgets.QLineEdit(self)
         self.send_button = QtWidgets.QPushButton("Send", self)
+        self.command_dropdown = QtWidgets.QComboBox(self)
+        self.command_dropdown.setEditable(False)
+        self.command_dropdown.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
 
         hlayout = QtWidgets.QHBoxLayout()
+        hlayout.addWidget(self.command_dropdown)
         hlayout.addWidget(self.input_line)
         hlayout.addWidget(self.send_button)
 
@@ -38,6 +42,10 @@ class ServerTab(QtWidgets.QWidget):
 
         self.send_button.clicked.connect(self.send_command)
         self.input_line.returnPressed.connect(self.send_command)
+        self.command_dropdown.activated[str].connect(self.set_input_line)
+
+    def set_input_line(self, cmd):
+        self.input_line.setText(cmd)
 
     def send_command(self):
         cmd = self.input_line.text().strip()
@@ -47,6 +55,8 @@ class ServerTab(QtWidgets.QWidget):
         try:
             self.zmq_socket.send_string(cmd)
             reply = self.zmq_socket.recv_string()
+        except zmq.error.Again:
+            reply = "[Error] ZMQ request timed out."
         except Exception as e:
             reply = f"[Error] {e}"
         # Try to parse as JSON and pretty-print, else just show with \n expanded
@@ -61,22 +71,57 @@ class ServerTab(QtWidgets.QWidget):
             self.text_area.append(reply.replace("\\n", "\n"))
         self.input_line.clear()
 
+    def populate_commands(self):
+        # Send "command_names" and populate the dropdown
+        self.command_dropdown.clear()
+        try:
+            self.zmq_socket.send_string("command_names")
+            reply = self.zmq_socket.recv_string()
+            try:
+                commands = json.loads(reply)
+                if isinstance(commands, list):
+                    self.command_dropdown.addItems(commands)
+            except Exception:
+                # Fallback: try to eval a python list string
+                try:
+                    commands = eval(reply)
+                    if isinstance(commands, list):
+                        self.command_dropdown.addItems([str(c) for c in commands])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
 class UniversalClient(QtWidgets.QMainWindow):
     def __init__(self, ip_addr, servers, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Universal ZMQ Client")
+        self.setWindowTitle(f"Asgard DCS text interface: {ip_addr}")
         self.resize(700, 500)
         self.tabs = QtWidgets.QTabWidget(self)
         self.setCentralWidget(self.tabs)
         self.context = zmq.Context()
         self.sockets = []
+        self.tab_widgets = []
 
         for name, port in servers:
             socket = self.context.socket(zmq.REQ)
             socket.connect(f"tcp://{ip_addr}:{port}")
+            # Set ZMQ send/recv timeouts (milliseconds)
+            socket.setsockopt(zmq.SNDTIMEO, 2000)
+            socket.setsockopt(zmq.RCVTIMEO, 2000)
             self.sockets.append(socket)
             tab = ServerTab(name, socket)
             self.tabs.addTab(tab, name)
+            self.tab_widgets.append(tab)
+
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+        # Populate commands for the first tab
+        if self.tab_widgets:
+            self.tab_widgets[0].populate_commands()
+
+    def on_tab_changed(self, idx):
+        if 0 <= idx < len(self.tab_widgets):
+            self.tab_widgets[idx].populate_commands()
 
 def main():
     if len(sys.argv) != 2:
