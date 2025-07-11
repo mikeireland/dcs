@@ -70,7 +70,7 @@ p_v2_K1.setLabel("left", "V² K1")
 p_v2_K1.setLabel("bottom", "samples")
 c_v2_K1 = [
     p_v2_K1.plot(
-        pen=pg.intColor(i, N_BASELINES, hues=N_BASELINES, values=1.0, maxValue=255)
+        pen=pg.intColor(i, N_BASELINES)
     )
     for i in range(N_BASELINES)
 ]
@@ -81,7 +81,7 @@ p_v2_K2.setLabel("left", "V² K2")
 p_v2_K2.setLabel("bottom", "samples")
 c_v2_K2 = [
     p_v2_K2.plot(
-        pen=pg.intColor(i, N_BASELINES, hues=N_BASELINES, values=0.7, maxValue=255)
+        pen=pg.intColor(i, N_BASELINES)
     )
     for i in range(N_BASELINES)
 ]
@@ -92,7 +92,7 @@ p_gd_snr.setLabel("left", "GD SNR")
 p_gd_snr.setLabel("bottom", "samples")
 c_gd_snr = [
     p_gd_snr.plot(
-        pen=pg.intColor(i, N_BASELINES, hues=N_BASELINES, values=0.5, maxValue=255)
+        pen=pg.intColor(i, N_BASELINES)
     )
     for i in range(N_BASELINES)
 ]
@@ -103,7 +103,7 @@ p_pd_snr.setLabel("left", "PD SNR")
 p_pd_snr.setLabel("bottom", "samples")
 c_pd_snr = [
     p_pd_snr.plot(
-        pen=pg.intColor(i, N_BASELINES, hues=N_BASELINES, values=0.3, maxValue=255)
+        pen=pg.intColor(i, N_BASELINES)
     )
     for i in range(N_BASELINES)
 ]
