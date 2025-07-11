@@ -7,6 +7,8 @@
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.3
 
+using namespace std::complex_literals;
+
 long unsigned int ft_cnt=0, cnt_since_init=0;
 long unsigned int nerrors=0;
 double gd_to_K1=1.0;
@@ -130,7 +132,13 @@ void initialise_baselines(){
     float wave_K1 = config["wave"]["K1"].value_or(2.05);
     float wave_K2 = config["wave"]["K2"].value_or(2.25);
     gd_to_K1 = wave_K2/(wave_K2-wave_K1)/2/M_PI;
+
     for (int bl=0; bl<N_BL; bl++){
+        // Set the offsets to the group delay
+        baselines.gd_phasor_offset(bl) = 
+            std::exp(-1.0i *config["servo"]["gd_phasor_offset"][bl].value_or(0.0)/gd_to_K1);
+
+        // Set the x and y coordinates for extracting flux
         float bl_x = config["geometry"]["beam_x"][baseline2beam[bl][1]].value_or(0.0) -
             config["geometry"]["beam_x"][baseline2beam[bl][0]].value_or(0.0);
         float bl_y = config["geometry"]["beam_y"][baseline2beam[bl][1]].value_or(0.0) -
@@ -263,7 +271,7 @@ void fringe_tracker(){
             baselines.gd_phasor_boxcar[gd_ix](bl) = 
                 K1_phasor[bl] * std::conj(K2_phasor[bl]);
             baselines.gd_phasor(bl) += baselines.gd_phasor_boxcar[gd_ix](bl);  
-            baselines.gd(bl) = std::arg(baselines.gd_phasor(bl)) * gd_to_K1;
+            baselines.gd(bl) = std::arg(baselines.gd_phasor(bl)*baselines.gd_phasor_offset(bl)) * gd_to_K1;
 
             // Compute the unwrapped phase delay and signal to noise. 
             // Until SNR is high enough, pd_filtered is zero
@@ -426,8 +434,8 @@ void fringe_tracker(){
                 add_to_delay_lines(-control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
-            else if (offload_mode == OFFLOAD_GD)
-                add_to_delay_lines(-control_a.gd * config["wave"]["K1"].value_or(2.05));
+            else if (offload_mode == OFFLOAD_GD) //!!! Was -1...
+                add_to_delay_lines(-0.5*control_a.gd * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
 

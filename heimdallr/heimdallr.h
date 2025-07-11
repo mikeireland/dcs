@@ -142,7 +142,7 @@ struct ControlA{
 
 struct Baselines{
     Eigen::Matrix<double, N_BL, 1> gd, pd, gd_snr, pd_snr, v2_K1, v2_K2, pd_av_filtered, pd_av;
-    Eigen::Matrix<dcomp, N_BL, 1> gd_phasor, pd_phasor;
+    Eigen::Matrix<dcomp, N_BL, 1> gd_phasor, pd_phasor, gd_phasor_offset;
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];

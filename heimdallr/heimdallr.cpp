@@ -244,6 +244,7 @@ Status get_status() {
     // Get the status of the system. This is a simple struct with the
     // values we want to send back to the commander.
     // We have to initialise everything to zero or we get a core dump!
+    // !!! Should also truncate number of decimals.
     status.gd_bl = std::vector<double>(N_BL);
     status.pd_bl = std::vector<double>(N_BL);
     status.gd_tel = std::vector<double>(N_TEL);
@@ -317,7 +318,7 @@ COMMANDER_REGISTER(m)
     m.def("set_search_offset", set_search_offset, "Set the search offset in microns", 
         "offset"_arg=std::vector<double>(N_TEL, 0.0));
     m.def("dark", save_dark, "Save the dark frames");
-    m.def("delay_line", set_delay_line, "Set a delay line value in microns", 
+    m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);

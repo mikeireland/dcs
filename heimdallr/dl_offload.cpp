@@ -5,6 +5,7 @@
 
 int controllinoSocket;
 Eigen::Vector4d next_offload;
+// This is non-zero to make sure if using the Piezos the DLs are centred.
 Eigen::Vector4d last_offload = Eigen::Vector4d::Constant(0.01);
 int offloads_done = 0;
 int search_ix = 0;
@@ -12,6 +13,7 @@ int search_length = 0;
 int search_dl = 0;
 double search_delta = 0.5;
 double search_start = 0.0;
+double hfo_running_average = 0.0;
 double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
 
 // Initialize global ZMQ variables for MultiDeviceServer
@@ -53,9 +55,11 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
 
     // Apply a delay-line type deadband (needed for HFO motors)
     if (delay_line_type == "hfo"){
+        dl -= hfo_running_average * Eigen::Vector4d::Ones(4,1);
         for (int i = 0; i < N_TEL; i++) 
             if (std::abs(dl(i)) < HFO_DEADBAND) dl(i)=0;
-        dl = dl - dl.mean()*Eigen::Vector4d::Ones(4,1); //Ensure the resulting values have zero mean.
+        // If we are moving all delay lines in the same direction, record this.
+        hfo_running_average += dl.mean(); 
     }
     next_offload += dl;
     offloads_to_do++;
@@ -105,7 +109,7 @@ void move_piezos(){
 void move_hfo(){
     // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
-        if ( std::abs(last_offload(i)  - next_offload(i) - search_offset(i)) > HFO_DEADBAND) {
+        if ( last_offload(i)  != next_offload(i) - search_offset(i) ) {
             // Set the delay line value for the current telescope (value in mm of physical motion)
             double dl_value = hfo_offsets[i] - (next_offload(i) + search_offset(i)) * 0.0005;
             std::string message = "moveabs HFO" + std::to_string(i+1) + " " + std::to_string(dl_value);

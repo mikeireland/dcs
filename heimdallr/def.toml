@@ -13,6 +13,10 @@ beam_x = [-0.00792,-0.0085,  0.0 ,  0.02130] #was 953
 beam_y = [0.019,  -0.01484,  0.0 , -0.00015]
 pix = 24.0
 
+[servo]
+gd_phasor_offset = [4.3,-2.0,1.5,4.6,-3.4,3.5]
+#gd_phasor_offset = [0,0,0,0,0,0]
+
 #All units are in microns
 [wave]
 K1  = 2.1 
