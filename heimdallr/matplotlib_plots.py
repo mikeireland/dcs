@@ -5,7 +5,7 @@ Various methods of drawing scrolling plots using pyqtgraph for speed and simplic
 import ZMQ_control_client as Z
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
+from pyqtgraph.Qt import QtCore, QtWidgets
 import argparse
 
 N_TSCOPES = 4
@@ -114,34 +114,27 @@ def main():
     legend_layout.addSpacing(10)
     base_label = QtWidgets.QLabel("<b>Baselines</b>")
     legend_layout.addWidget(base_label)
-    # Remove the old baseline legend box code
-    # baseline_names = [f"B{i+1}" for i in range(N_BASELINES)]
-    # for i, name in enumerate(baseline_names):
-    #     color = BASELINE_COLORS[i % N_BASELINES].color()
-    #     color_hex = color.name() if hasattr(color, "name") else color
-    #     swatch = QtWidgets.QLabel()
-    #     swatch.setFixedWidth(30)
-    #     swatch.setFixedHeight(15)
-    #     swatch.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #333;")
-    #     row = QtWidgets.QHBoxLayout()
-    #     row.addWidget(swatch)
-    #     row.addWidget(QtWidgets.QLabel(name))
-    #     row.addStretch()
-    #     legend_layout.addLayout(row)
 
     # --- Baseline positions and circle plot ---
     BASELINE_POSITIONS = np.array(
         [
-            [0, 0],
-            [1, 0],
-            [0, 1],
-            [1, 1],
-            [0.5, 1.5],
-            [1.5, 0.5],
+            [-3.93, -2.0],
+            [-3.81, 2.425],
+            [-2.785, -0.035],
+            [-1.145, -1.965],
+            [-1.025, 2.46],
+            [-0.12, -4.425],
         ]
     )  # shape: (N_BASELINES, 2), adjust as needed
 
-    baseline_names = [f"B{i+1}" for i in range(N_BASELINES)]
+    baseline_names = [
+        "24",
+        "14",
+        "34",
+        "23",
+        "13",
+        "12",
+    ]
 
     baseline_plot_widget = pg.PlotWidget()
     baseline_plot_widget.setBackground("#222")
@@ -162,9 +155,26 @@ def main():
     # Add text labels inside circles
     for i, name in enumerate(baseline_names):
         text = pg.TextItem(name, color="k", anchor=(0.5, 0.5), border=None, fill=None)
-        text.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Bold))
+        text.setFont(QtWidgets.QFont("Arial", 12, QtWidgets.QFont.Bold))
         text.setPos(BASELINE_POSITIONS[i, 0], BASELINE_POSITIONS[i, 1])
         baseline_plot_widget.addItem(text)
+
+    # and negative case for pspec
+    scatter = pg.ScatterPlotItem(
+        x=-BASELINE_POSITIONS[:, 0],
+        y=-BASELINE_POSITIONS[:, 1],
+        size=50,
+        brush=[BASELINE_COLORS[i % N_BASELINES].color() for i in range(N_BASELINES)],
+        pen=pg.mkPen("w", width=2),
+    )
+    baseline_plot_widget.addItem(scatter)
+    # Add text labels inside circles
+    for i, name in enumerate(baseline_names):
+        text = pg.TextItem(name, color="k", anchor=(0.5, 0.5), border=None, fill=None)
+        text.setFont(QtWidgets.QFont("Arial", 12, QtWidgets.QFont.Bold))
+        text.setPos(-BASELINE_POSITIONS[i, 0], -BASELINE_POSITIONS[i, 1])
+        baseline_plot_widget.addItem(text)
+
 
     legend_layout.addWidget(baseline_plot_widget)
 
