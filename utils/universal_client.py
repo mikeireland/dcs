@@ -21,24 +21,26 @@ def load_servers(filename):
 class ServerTab(QtWidgets.QWidget):
     def __init__(self, server_name, zmq_socket, parent=None):
         super().__init__(parent)
+        self.server_name = server_name
         self.zmq_socket = zmq_socket
+        self.parent_window = parent  # Not used, but could be for future
 
         layout = QtWidgets.QVBoxLayout(self)
-        self.text_area = QtWidgets.QTextEdit(self)
-        self.text_area.setReadOnly(True)
-        self.input_line = QtWidgets.QLineEdit(self)
-        self.send_button = QtWidgets.QPushButton("Send", self)
         self.command_dropdown = QtWidgets.QComboBox(self)
         self.command_dropdown.setEditable(False)
         self.command_dropdown.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        self.input_line = QtWidgets.QLineEdit(self)
+        self.send_button = QtWidgets.QPushButton("Send", self)
+        self.text_area = QtWidgets.QTextEdit(self)
+        self.text_area.setReadOnly(True)
 
         hlayout = QtWidgets.QHBoxLayout()
         hlayout.addWidget(self.command_dropdown)
         hlayout.addWidget(self.input_line)
         hlayout.addWidget(self.send_button)
 
-        layout.addWidget(self.text_area)
         layout.addLayout(hlayout)
+        layout.addWidget(self.text_area)
 
         self.send_button.clicked.connect(self.send_command)
         self.input_line.returnPressed.connect(self.send_command)
@@ -46,6 +48,21 @@ class ServerTab(QtWidgets.QWidget):
 
     def set_input_line(self, cmd):
         self.input_line.setText(cmd)
+
+    def reconnect_socket(self):
+        # Recreate the socket and reconnect
+        try:
+            context = self.zmq_socket.context
+            # Get the endpoint from the socket's last connection
+            last_endpoint = self.zmq_socket.getsockopt(zmq.LAST_ENDPOINT).decode()
+            self.zmq_socket.close(linger=0)
+            new_socket = context.socket(zmq.REQ)
+            new_socket.setsockopt(zmq.SNDTIMEO, 2000)
+            new_socket.setsockopt(zmq.RCVTIMEO, 2000)
+            new_socket.connect(last_endpoint)
+            self.zmq_socket = new_socket
+        except Exception as e:
+            self.text_area.append(f"[Error] Could not reconnect socket: {e}")
 
     def send_command(self):
         cmd = self.input_line.text().strip()
@@ -57,6 +74,17 @@ class ServerTab(QtWidgets.QWidget):
             reply = self.zmq_socket.recv_string()
         except zmq.error.Again:
             reply = "[Error] ZMQ request timed out."
+        except zmq.error.ZMQError as e:
+            if "Operation cannot be accomplished in current state" in str(e):
+                self.text_area.append("[Warning] Socket out of state, attempting to reconnect...")
+                self.reconnect_socket()
+                try:
+                    self.zmq_socket.send_string(cmd)
+                    reply = self.zmq_socket.recv_string()
+                except Exception as e2:
+                    reply = f"[Error] After reconnect: {e2}"
+            else:
+                reply = f"[Error] {e}"
         except Exception as e:
             reply = f"[Error] {e}"
         # Try to parse as JSON and pretty-print, else just show with \n expanded
@@ -77,20 +105,33 @@ class ServerTab(QtWidgets.QWidget):
         try:
             self.zmq_socket.send_string("command_names")
             reply = self.zmq_socket.recv_string()
-            try:
-                commands = json.loads(reply)
-                if isinstance(commands, list):
-                    self.command_dropdown.addItems(commands)
-            except Exception:
-                # Fallback: try to eval a python list string
+        except zmq.error.Again:
+            self.text_area.append("[Error] ZMQ request timed out while fetching commands.")
+            return
+        except zmq.error.ZMQError as e:
+            if "Operation cannot be accomplished in current state" in str(e):
+                self.text_area.append("[Warning] Socket out of state, attempting to reconnect for commands...")
+                self.reconnect_socket()
                 try:
-                    commands = eval(reply)
-                    if isinstance(commands, list):
-                        self.command_dropdown.addItems([str(c) for c in commands])
+                    self.zmq_socket.send_string("command_names")
+                    reply = self.zmq_socket.recv_string()
                 except Exception:
-                    pass
+                    return
+            else:
+                return
         except Exception:
-            pass
+            return
+        try:
+            commands = json.loads(reply)
+            if isinstance(commands, list):
+                self.command_dropdown.addItems(commands)
+        except Exception:
+            try:
+                commands = eval(reply)
+                if isinstance(commands, list):
+                    self.command_dropdown.addItems([str(c) for c in commands])
+            except Exception:
+                pass
 
 class UniversalClient(QtWidgets.QMainWindow):
     def __init__(self, ip_addr, servers, parent=None):
