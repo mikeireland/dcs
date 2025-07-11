@@ -103,6 +103,7 @@ class Heimdallr():
         self.keepgoing = True
         self.log_len = 2000  # length of the sensor log
         self.opds = [[], [], []]  # the log of the measured OPDs
+        self.gdlays = [[], [], [], [], [], []]  # the log of group delays
         self.vis_k1 = [[], [], [], [], [], []]  # log of K1 visibility
         self.vis_k2 = [[], [], [], [], [], []]  # log of K2 visibility
 
@@ -135,9 +136,9 @@ class Heimdallr():
         self.opd_now_k1 = self.PINV.dot(np.angle(self.hdlr1.cvis[0]))
         self.opd_now_k2 = self.PINV.dot(np.angle(self.hdlr2.cvis[0]))
         tmp = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
-        self.gdlay = tmp * self.dl_factor
+        self.gdlay = tmp * self.dl_factor - self.gd_offset
 
-        self.dms_cmds = self.PINV.dot(self.gdlay - self.gd_offset)
+        self.dms_cmds = self.PINV.dot(self.gdlay)
                
         # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
@@ -146,6 +147,9 @@ class Heimdallr():
 
     # =========================================================================
     def log_opds(self):
+        for ii in range(6):
+            self.gdlays[ii].append(self.gdlay[ii])
+
         for ii in range(self.ndm-1):
             # self.opds[ii].append(self.opd_now_k1[ii])
             self.opds[ii].append(self.dms_cmds[ii])
@@ -153,6 +157,9 @@ class Heimdallr():
         if len(self.opds[0]) > self.log_len:
             for ii in range(self.ndm-1):
                 self.opds[ii].pop(0)
+
+            for ii in range(6):
+                self.gdlays[ii].pop(0)
 
     # =========================================================================
     def log_vis(self):

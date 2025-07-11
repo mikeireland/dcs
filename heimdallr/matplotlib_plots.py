@@ -117,23 +117,23 @@ def main():
 
     # --- Baseline positions and circle plot ---
     BASELINE_POSITIONS = np.array(
-        [
-            [-3.93, -2.0],
-            [-3.81, 2.425],
-            [-2.785, -0.035],
-            [-1.145, -1.965],
-            [-1.025, 2.46],
+        [            
             [-0.12, -4.425],
+            [-1.025, 2.46],
+            [-3.81, 2.425],
+            [-1.145, -1.965],
+            [-3.93, -2.0],
+            [-2.785, -0.035],
         ]
     )  # shape: (N_BASELINES, 2), adjust as needed
 
     baseline_names = [
-        "24",
-        "14",
-        "34",
-        "23",
-        "13",
-        "12",
+    	"12",
+    	"13",
+   	"14",
+    	"23",
+    	"24",
+    	"34",
     ]
 
     baseline_plot_widget = pg.PlotWidget()
@@ -147,7 +147,7 @@ def main():
     scatter = pg.ScatterPlotItem(
         x=BASELINE_POSITIONS[:, 0],
         y=BASELINE_POSITIONS[:, 1],
-        size=50,
+        size=35,
         brush=[BASELINE_COLORS[i % N_BASELINES].color() for i in range(N_BASELINES)],
         pen=pg.mkPen("w", width=2),
     )
@@ -163,7 +163,7 @@ def main():
     scatter = pg.ScatterPlotItem(
         x=-BASELINE_POSITIONS[:, 0],
         y=-BASELINE_POSITIONS[:, 1],
-        size=50,
+        size=35,
         brush=[BASELINE_COLORS[i % N_BASELINES].color() for i in range(N_BASELINES)],
         pen=pg.mkPen("w", width=2),
     )

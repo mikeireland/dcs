@@ -253,11 +253,15 @@ class MyMainWidget(QWidget):
                 [0, self.wfs.log_len], [ii, ii],
                 pen=colors[ii], name=f"v2 #{ii+1}"))
 
-        for ii in range(3):
+        # for ii in range(3):
+        #     self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
+        #         [0, self.wfs.log_len], [ii, ii],
+        #         pen=colors[ii], name=f"OPD #{ii+1}"))
+
+        for ii in range(6):
             self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
                 [0, self.wfs.log_len], [ii, ii],
                 pen=colors[ii], name=f"OPD #{ii+1}"))
-
 
         self.pB_start.clicked.connect(self.wfs_start)
         self.pB_stop.clicked.connect(self.wfs_stop)
@@ -348,8 +352,10 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def refresh_plot(self):
-        for ii in range(3):
-            self.logplot_gdlay[ii].setData(self.wfs.opds[ii])
+        for ii in range(6):
+            self.logplot_gdlay[ii].setData(self.wfs.gdlays[ii])
+        # for ii in range(3):
+        #     self.logplot_gdlay[ii].setData(self.wfs.opds[ii])
         for ii in range(6):
             self.logplot_vis_k1[ii].setData(self.wfs.vis_k1[ii])
             self.logplot_vis_k2[ii].setData(self.wfs.vis_k2[ii])
