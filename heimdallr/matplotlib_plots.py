@@ -141,6 +141,7 @@ def main():
     p_gd_tel = win.addPlot(row=1, col=0, title="Group Delay (wavelengths)")
     p_gd_tel.setLabel("left", "GD (wavelengths)")
     p_gd_tel.setLabel("bottom", "Time (s)")
+    p_gd_tel.showGrid(x=True, y=True)
     c_gd_tel = [
         p_gd_tel.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
         for i in range(N_TSCOPES)
@@ -150,6 +151,7 @@ def main():
     p_pd_tel = win.addPlot(row=2, col=0, title="Phase Delay (wavelengths)")
     p_pd_tel.setLabel("left", "PD (wavelengths)")
     p_pd_tel.setLabel("bottom", "Time (s)")
+    p_pd_tel.showGrid(x=True, y=True)
     c_pd_tel = [
         p_pd_tel.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
         for i in range(N_TSCOPES)
@@ -159,6 +161,7 @@ def main():
     p_offload = win.addPlot(row=3, col=0, title="Offloaded Piston (microns)")
     p_offload.setLabel("left", "Offloaded Piston (μm)")
     p_offload.setLabel("bottom", "Time (s)")
+    p_offload.showGrid(x=True, y=True)
     c_offload = [
         p_offload.plot(
             time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES]
@@ -170,6 +173,7 @@ def main():
     p_dm = win.addPlot(row=4, col=0, title="Mirror Piston (fractional stroke)")
     p_dm.setLabel("left", "Mirror Piston")
     p_dm.setLabel("bottom", "Time (s)")
+    p_dm.showGrid(x=True, y=True)
     c_dm = [
         p_dm.plot(time_axis, np.zeros(samples), pen=TELESCOPE_COLORS[i % N_TSCOPES])
         for i in range(N_TSCOPES)
@@ -185,6 +189,7 @@ def main():
     p_v2_K1 = win.addPlot(row=1, col=1, title="V² K1")
     p_v2_K1.setLabel("left", "V² K1")
     p_v2_K1.setLabel("bottom", "Time (s)")
+    p_v2_K1.showGrid(x=True, y=True)
     c_v2_K1 = [
         p_v2_K1.plot(time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES])
         for i in range(N_BASELINES)
@@ -194,6 +199,7 @@ def main():
     p_v2_K2 = win.addPlot(row=2, col=1, title="V² K2")
     p_v2_K2.setLabel("left", "V² K2")
     p_v2_K2.setLabel("bottom", "Time (s)")
+    p_v2_K2.showGrid(x=True, y=True)
     c_v2_K2 = [
         p_v2_K2.plot(time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES])
         for i in range(N_BASELINES)
@@ -203,6 +209,7 @@ def main():
     p_gd_snr = win.addPlot(row=3, col=1, title="Group Delay SNR")
     p_gd_snr.setLabel("left", "GD SNR")
     p_gd_snr.setLabel("bottom", "Time (s)")
+    p_gd_snr.showGrid(x=True, y=True)
     c_gd_snr = [
         p_gd_snr.plot(
             time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES]
@@ -214,6 +221,7 @@ def main():
     p_pd_snr = win.addPlot(row=4, col=1, title="Phase Delay SNR")
     p_pd_snr.setLabel("left", "PD SNR")
     p_pd_snr.setLabel("bottom", "Time (s)")
+    p_pd_snr.showGrid(x=True, y=True)
     c_pd_snr = [
         p_pd_snr.plot(
             time_axis, np.zeros(samples), pen=BASELINE_COLORS[i % N_BASELINES]
