@@ -5,7 +5,7 @@ Various methods of drawing scrolling plots using pyqtgraph for speed and simplic
 import ZMQ_control_client as Z
 import numpy as np
 import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt import QtCore, QtWidgets, QtGui
 import argparse
 
 N_TSCOPES = 4
@@ -162,7 +162,7 @@ def main():
     # Add text labels inside circles
     for i, name in enumerate(baseline_names):
         text = pg.TextItem(name, color="k", anchor=(0.5, 0.5), border=None, fill=None)
-        text.setFont(QtWidgets.QFont("Arial", 12, QtWidgets.QFont.Bold))
+        text.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Bold))
         text.setPos(BASELINE_POSITIONS[i, 0], BASELINE_POSITIONS[i, 1])
         baseline_plot_widget.addItem(text)
 
