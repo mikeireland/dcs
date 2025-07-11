@@ -82,7 +82,8 @@ def main():
     legend_layout = QtWidgets.QVBoxLayout()
     legend_win.setLayout(legend_layout)
     # Set dark theme for legend_win
-    legend_win.setStyleSheet("""
+    legend_win.setStyleSheet(
+        """
         QWidget {
             background-color: #222;
             color: #EEE;
@@ -90,7 +91,8 @@ def main():
         QLabel {
             color: #EEE;
         }
-    """)
+    """
+    )
 
     # Telescopes legend
     tel_label = QtWidgets.QLabel("<b>Telescopes</b>")
@@ -112,19 +114,59 @@ def main():
     legend_layout.addSpacing(10)
     base_label = QtWidgets.QLabel("<b>Baselines</b>")
     legend_layout.addWidget(base_label)
+    # Remove the old baseline legend box code
+    # baseline_names = [f"B{i+1}" for i in range(N_BASELINES)]
+    # for i, name in enumerate(baseline_names):
+    #     color = BASELINE_COLORS[i % N_BASELINES].color()
+    #     color_hex = color.name() if hasattr(color, "name") else color
+    #     swatch = QtWidgets.QLabel()
+    #     swatch.setFixedWidth(30)
+    #     swatch.setFixedHeight(15)
+    #     swatch.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #333;")
+    #     row = QtWidgets.QHBoxLayout()
+    #     row.addWidget(swatch)
+    #     row.addWidget(QtWidgets.QLabel(name))
+    #     row.addStretch()
+    #     legend_layout.addLayout(row)
+
+    # --- Baseline positions and circle plot ---
+    BASELINE_POSITIONS = np.array(
+        [
+            [0, 0],
+            [1, 0],
+            [0, 1],
+            [1, 1],
+            [0.5, 1.5],
+            [1.5, 0.5],
+        ]
+    )  # shape: (N_BASELINES, 2), adjust as needed
+
     baseline_names = [f"B{i+1}" for i in range(N_BASELINES)]
+
+    baseline_plot_widget = pg.PlotWidget()
+    baseline_plot_widget.setBackground("#222")
+    baseline_plot_widget.setFixedHeight(200)
+    baseline_plot_widget.setFixedWidth(320)
+    baseline_plot_widget.setMouseEnabled(x=False, y=False)
+    baseline_plot_widget.hideAxis("bottom")
+    baseline_plot_widget.hideAxis("left")
+    baseline_plot_widget.setAspectLocked(True)
+    scatter = pg.ScatterPlotItem(
+        x=BASELINE_POSITIONS[:, 0],
+        y=BASELINE_POSITIONS[:, 1],
+        size=50,
+        brush=[BASELINE_COLORS[i % N_BASELINES].color() for i in range(N_BASELINES)],
+        pen=pg.mkPen("w", width=2),
+    )
+    baseline_plot_widget.addItem(scatter)
+    # Add text labels inside circles
     for i, name in enumerate(baseline_names):
-        color = BASELINE_COLORS[i % N_BASELINES].color()
-        color_hex = color.name() if hasattr(color, "name") else color
-        swatch = QtWidgets.QLabel()
-        swatch.setFixedWidth(30)
-        swatch.setFixedHeight(15)
-        swatch.setStyleSheet(f"background-color: {color_hex}; border: 1px solid #333;")
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(swatch)
-        row.addWidget(QtWidgets.QLabel(name))
-        row.addStretch()
-        legend_layout.addLayout(row)
+        text = pg.TextItem(name, color="k", anchor=(0.5, 0.5), border=None, fill=None)
+        text.setFont(QtWidgets.QFont("Arial", 12, QtWidgets.QFont.Bold))
+        text.setPos(BASELINE_POSITIONS[i, 0], BASELINE_POSITIONS[i, 1])
+        baseline_plot_widget.addItem(text)
+
+    legend_layout.addWidget(baseline_plot_widget)
 
     legend_win.show()
 
