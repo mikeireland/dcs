@@ -57,7 +57,7 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
     auto now = std::chrono::high_resolution_clock::now();
     double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
     double total_offload = 0.0;
-    if (delay_line_type == 'hfo'){
+    if (delay_line_type == "hfo"){
         for (int i = 0; i < N_TEL; i++) {
             total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i) + dl(i)));
         }

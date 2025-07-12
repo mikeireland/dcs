@@ -331,7 +331,7 @@ COMMANDER_REGISTER(m)
 
 int main(int argc, char* argv[]) {
     IMAGE K1, K2;
-    nice(-10);
+    int new_nice = nice(-10);
     // Read in the configuration file
     if (argc < 2) {
         std::cout << "Usage: " << argv[0] << " <config file>.toml [options]" << std::endl;
