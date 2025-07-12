@@ -9,6 +9,8 @@ from xaosim.pupil import _dist as dist
 import astropy.io.fits as pf
 import time
 import zmq
+import datetime
+import os
 
 # from scipy.interpolate import griddata
 
@@ -103,6 +105,7 @@ class Heimdallr():
         self.keepgoing = True
         self.log_len = 2000  # length of the sensor log
         self.opds = [[], [], []]  # the log of the measured OPDs
+        self.gdlays = [[], [], [], [], [], []]  # the log of group delays
         self.vis_k1 = [[], [], [], [], [], []]  # log of K1 visibility
         self.vis_k2 = [[], [], [], [], [], []]  # log of K2 visibility
 
@@ -135,9 +138,9 @@ class Heimdallr():
         self.opd_now_k1 = self.PINV.dot(np.angle(self.hdlr1.cvis[0]))
         self.opd_now_k2 = self.PINV.dot(np.angle(self.hdlr2.cvis[0]))
         tmp = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
-        self.gdlay = tmp * self.dl_factor
+        self.gdlay = tmp * self.dl_factor - self.gd_offset
 
-        self.dms_cmds = self.PINV.dot(self.gdlay - self.gd_offset)
+        self.dms_cmds = self.PINV.dot(self.gdlay)
                
         # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
@@ -146,6 +149,9 @@ class Heimdallr():
 
     # =========================================================================
     def log_opds(self):
+        for ii in range(6):
+            self.gdlays[ii].append(self.gdlay[ii])
+
         for ii in range(self.ndm-1):
             # self.opds[ii].append(self.opd_now_k1[ii])
             self.opds[ii].append(self.dms_cmds[ii])
@@ -153,6 +159,9 @@ class Heimdallr():
         if len(self.opds[0]) > self.log_len:
             for ii in range(self.ndm-1):
                 self.opds[ii].pop(0)
+
+            for ii in range(6):
+                self.gdlays[ii].pop(0)
 
     # =========================================================================
     def log_vis(self):
@@ -275,10 +284,12 @@ class Heimdallr():
         -------------------------------------------------- '''
         nmod = 100
         nc = [1, 2, 3, 4]
-        a0 = 0.05  # I want \lambda/4
+        a0 = 10.0 # 0.5
+        nav = 10  # number of measures per modulation
         
         self.reset_dms()
-        
+        now = datetime.datetime.utcnow()
+
         # prepare sinusoidal modulation commands
         cmds = np.zeros((self.ndm, nmod))
         for jj in range(self.ndm):
@@ -289,11 +300,11 @@ class Heimdallr():
         # cmds[3] *= 0.0
         
         # to store the data
-        cvis1 = np.zeros((self.hdlr1.kpi.nbuv, nmod), dtype=complex)
-        cvis2 = np.zeros((self.hdlr2.kpi.nbuv, nmod), dtype=complex)
+        cvis1 = np.zeros((self.hdlr1.kpi.nbuv, nmod * nav), dtype=complex)
+        cvis2 = np.zeros((self.hdlr2.kpi.nbuv, nmod * nav), dtype=complex)
 
-        cube1 = np.zeros((nmod, 32, 32))
-        cube2 = np.zeros((nmod, 32, 32))
+        cube1 = np.zeros((nmod * nav, 32, 32))
+        cube2 = np.zeros((nmod * nav, 32, 32))
 
         for ii in range(nmod):
             # modulate the DMs
@@ -303,20 +314,30 @@ class Heimdallr():
                 time.sleep(0.05)
 
             # record the data
-            imK1 = self.Ks.get_latest_data() - im_offset
-            imK2 = self.Kl.get_latest_data() - im_offset
-            cube1[ii] = imK1
-            cube2[ii] = imK2
+            for jj in range(nav):
+                imK1 = self.Ks.get_latest_data() - im_offset
+                imK2 = self.Kl.get_latest_data() - im_offset
+                cube1[ii * nav + jj] = imK1
+                cube2[ii * nav + jj] = imK2
 
-            cvis1[:, ii] = self.hdlr1.extract_cvis_from_img(imK1)
-            cvis2[:, ii] = self.hdlr2.extract_cvis_from_img(imK2)
+                cvis1[:, ii * nav + jj] = self.hdlr1.extract_cvis_from_img(imK1)
+                cvis2[:, ii * nav + jj] = self.hdlr2.extract_cvis_from_img(imK2)
 
         self.reset_dms()
-        np.savetxt("modulation_cvis1.txt", cvis1)
-        np.savetxt("modulation_cvis2.txt", cvis2)
 
-        pf.writeto("modulation_cube_k1.fits", cube1, overwrite=True)
-        pf.writeto("modulation_cube_k2.fits", cube2, overwrite=True)
+        sdir = f"/home/asg/Data/{now.year}{now.month:02d}{now.day:02d}/custom/"
+        if not os.path.exists(sdir):
+            os.makedirs(sdir)
+        
+        fname_root = sdir+f"data_{now.hour:02d}:{now.minute:02d}:{now.second:02d}_"
+
+        np.savetxt(fname_root + f"modulation_cvis1_a0={a0:.2f}.txt", cvis1)
+        np.savetxt(fname_root + f"modulation_cvis2_a0={a0:.2f}.txt", cvis2)
+
+        pf.writeto(fname_root + f"modulation_cube_k1_a0={a0:.2f}.fits", cube1,
+                   overwrite=True)
+        pf.writeto(fname_root + f"modulation_cube_k2_a0={a0:.2f}.fits", cube2,
+                   overwrite=True)
         print("modulation test done")
 
     # =========================================================================
