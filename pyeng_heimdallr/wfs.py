@@ -9,6 +9,8 @@ from xaosim.pupil import _dist as dist
 import astropy.io.fits as pf
 import time
 import zmq
+import datetime
+import os
 
 # from scipy.interpolate import griddata
 
@@ -282,10 +284,12 @@ class Heimdallr():
         -------------------------------------------------- '''
         nmod = 100
         nc = [1, 2, 3, 4]
-        a0 = 0.05  # I want \lambda/4
+        a0 = 10.0 # 0.5
+        nav = 10  # number of measures per modulation
         
         self.reset_dms()
-        
+        now = datetime.datetime.utcnow()
+
         # prepare sinusoidal modulation commands
         cmds = np.zeros((self.ndm, nmod))
         for jj in range(self.ndm):
@@ -296,11 +300,11 @@ class Heimdallr():
         # cmds[3] *= 0.0
         
         # to store the data
-        cvis1 = np.zeros((self.hdlr1.kpi.nbuv, nmod), dtype=complex)
-        cvis2 = np.zeros((self.hdlr2.kpi.nbuv, nmod), dtype=complex)
+        cvis1 = np.zeros((self.hdlr1.kpi.nbuv, nmod * nav), dtype=complex)
+        cvis2 = np.zeros((self.hdlr2.kpi.nbuv, nmod * nav), dtype=complex)
 
-        cube1 = np.zeros((nmod, 32, 32))
-        cube2 = np.zeros((nmod, 32, 32))
+        cube1 = np.zeros((nmod * nav, 32, 32))
+        cube2 = np.zeros((nmod * nav, 32, 32))
 
         for ii in range(nmod):
             # modulate the DMs
@@ -310,20 +314,30 @@ class Heimdallr():
                 time.sleep(0.05)
 
             # record the data
-            imK1 = self.Ks.get_latest_data() - im_offset
-            imK2 = self.Kl.get_latest_data() - im_offset
-            cube1[ii] = imK1
-            cube2[ii] = imK2
+            for jj in range(nav):
+                imK1 = self.Ks.get_latest_data() - im_offset
+                imK2 = self.Kl.get_latest_data() - im_offset
+                cube1[ii * nav + jj] = imK1
+                cube2[ii * nav + jj] = imK2
 
-            cvis1[:, ii] = self.hdlr1.extract_cvis_from_img(imK1)
-            cvis2[:, ii] = self.hdlr2.extract_cvis_from_img(imK2)
+                cvis1[:, ii * nav + jj] = self.hdlr1.extract_cvis_from_img(imK1)
+                cvis2[:, ii * nav + jj] = self.hdlr2.extract_cvis_from_img(imK2)
 
         self.reset_dms()
-        np.savetxt("modulation_cvis1.txt", cvis1)
-        np.savetxt("modulation_cvis2.txt", cvis2)
 
-        pf.writeto("modulation_cube_k1.fits", cube1, overwrite=True)
-        pf.writeto("modulation_cube_k2.fits", cube2, overwrite=True)
+        sdir = f"/home/asg/Data/{now.year}{now.month:02d}{now.day:02d}/custom/"
+        if not os.path.exists(sdir):
+            os.makedirs(sdir)
+        
+        fname_root = sdir+f"data_{now.hour:02d}:{now.minute:02d}:{now.second:02d}_"
+
+        np.savetxt(fname_root + f"modulation_cvis1_a0={a0:.2f}.txt", cvis1)
+        np.savetxt(fname_root + f"modulation_cvis2_a0={a0:.2f}.txt", cvis2)
+
+        pf.writeto(fname_root + f"modulation_cube_k1_a0={a0:.2f}.fits", cube1,
+                   overwrite=True)
+        pf.writeto(fname_root + f"modulation_cube_k2_a0={a0:.2f}.fits", cube2,
+                   overwrite=True)
         print("modulation test done")
 
     # =========================================================================
