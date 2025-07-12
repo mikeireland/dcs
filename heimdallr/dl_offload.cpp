@@ -1,4 +1,3 @@
-
 #include "heimdallr.h"
 #define OFFLOAD_DT 0.01
 #define HFO_DEADBAND 1.0 //Deadband of HFO motion in microns of OPD
@@ -17,6 +16,8 @@ double search_start = 0.0;
 double hfo_running_average = 0.0; //!!! delete this - simpler now !!!
 double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
 auto last_hfo = std::chrono::high_resolution_clock::now();
+// Add a local global to track last HFO offset send time
+auto last_hfo_offset = std::chrono::high_resolution_clock::now();
 
 // Initialize global ZMQ variables for MultiDeviceServer
 zmq::context_t mds_zmq_context(1);
@@ -52,8 +53,23 @@ void set_delay_lines(Eigen::Vector4d dl) {
 }
 
 void add_to_delay_lines(Eigen::Vector4d dl) {
+    // Only add if more than 1s since last HFO offset and total offload > HFO_DEADBAND
+    auto now = std::chrono::high_resolution_clock::now();
+    double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
+    double total_offload = 0.0;
+    if (delay_line_type == 'hfo'){
+        for (int i = 0; i < N_TEL; i++) {
+            total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i) + dl(i)));
+        }
+        if (seconds_since_last < 1.0 || total_offload < HFO_DEADBAND) {
+            return;
+        }
+    }
+
     // This function adds the delay line values to the current delay line values.
-    // The value is in K1 wavelengths.
+    // The value is in K1 wavelengths. The assumption is that whatever is added 
+    // here is completed almost instantly. If the actuator can't handle that, then
+    // we must ignore this addition.
 
     // Apply a delay-line type deadband (needed for HFO motors)
    /* if (delay_line_type == "hfo"){
@@ -105,15 +121,27 @@ void move_piezos(){
         }
     }
     last_offload = next_offload + search_offset;
-    offloads_done++;
 }
 
 void move_hfo(){
-    // First, we check to find the total offload requested.
+    // Only send if more than 1s since last offset
+    auto now = std::chrono::high_resolution_clock::now();
+    double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
+    if (seconds_since_last < 1.0) {
+        return;
+    }
+    // Check to find the total offload requested, adding all values of
+    // last_offload - (next_offload + search_offset). 
+    double total_offload = 0.0;
+    for (int i = 0; i < N_TEL; i++) {
+        total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i)));
+    }
+    // If the total offload is less than 0.1mm, do not send
+    if (total_offload < HFO_DEADBAND) return;
 
     // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
-        if ( last_offload(i)  != next_offload(i) - search_offset(i) ) {
+        if ( last_offload(i)  != next_offload(i) + search_offset(i) ) {
             // Set the delay line value for the current telescope (value in mm of physical motion)
             double dl_value = hfo_offsets[i] - (next_offload(i) + search_offset(i)) * 0.0005;
             std::string message = "moveabs HFO" + std::to_string(i+1) + " " + std::to_string(dl_value);
@@ -122,7 +150,7 @@ void move_hfo(){
             last_offload(i) = next_offload(i) + search_offset(i);
         } 
     }
-    offloads_done++;
+    last_hfo_offset = now;
 }
 
 // The main thread function
@@ -184,6 +212,7 @@ void dl_offload(){
             }
         } else search_offset(search_dl) = 0.0;
         if (offloads_to_do > offloads_done) {
+            offloads_done = offloads_to_do;
             if (delay_line_type == "piezo") {
                 // Move the piezo delay line to the next position
                 move_piezos();
