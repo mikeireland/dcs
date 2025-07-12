@@ -1,5 +1,6 @@
 
 #include "heimdallr.h"
+#define OFFLOAD_DT 0.01
 #define HFO_DEADBAND 1.0 //Deadband of HFO motion in microns of OPD
 // Local globals.
 
@@ -13,8 +14,9 @@ int search_length = 0;
 int search_dl = 0;
 double search_delta = 0.5;
 double search_start = 0.0;
-double hfo_running_average = 0.0;
+double hfo_running_average = 0.0; //!!! delete this - simpler now !!!
 double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
+auto last_hfo = std::chrono::high_resolution_clock::now();
 
 // Initialize global ZMQ variables for MultiDeviceServer
 zmq::context_t mds_zmq_context(1);
@@ -54,13 +56,13 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
     // The value is in K1 wavelengths.
 
     // Apply a delay-line type deadband (needed for HFO motors)
-    if (delay_line_type == "hfo"){
+   /* if (delay_line_type == "hfo"){
         dl -= hfo_running_average * Eigen::Vector4d::Ones(4,1);
         for (int i = 0; i < N_TEL; i++) 
             if (std::abs(dl(i)) < HFO_DEADBAND) dl(i)=0;
         // If we are moving all delay lines in the same direction, record this.
         hfo_running_average += dl.mean(); 
-    }
+    }*/
     next_offload += dl;
     offloads_to_do++;
 }
@@ -107,6 +109,8 @@ void move_piezos(){
 }
 
 void move_hfo(){
+    // First, we check to find the total offload requested.
+
     // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
         if ( last_offload(i)  != next_offload(i) - search_offset(i) ) {
@@ -149,8 +153,8 @@ void dl_offload(){
     set_delay_lines(Eigen::Vector4d::Zero());
 
     while (keep_offloading) {
-        // Wait for the next offload
-        usleep(500000);
+        // Wait for the next offload - 100Hz
+        usleep(OFFLOAD_DT*1000000);
 
         if (search_ix < search_length) {
             double max_snr = 0.0;
@@ -166,14 +170,14 @@ void dl_offload(){
             fmt::print("Search beam max SNR: {}\n", max_snr);
             // Check if the SNR is above the threshold
             if (max_snr > 10.0) {
-                // Set the search value to the current search offset !!! TODO
+                // Set the search value to the current search offset !!! TODO - everything is next_offload for now.
                 //search_offset(search_dl) = search_start + search_ix * search_delta;
                 // Finish the search by setting search_length to 0
                 search_length = 0;
             } else {
                 // Move the piezo to the next position
                 //search_offset(search_dl) = search_start + search_ix * search_delta;
-                next_offload(search_dl) = search_start + search_ix * search_delta;
+                next_offload(search_dl) = search_start + search_ix * search_delta*OFFLOAD_DT;
                 // Indicate that there is another piezo offload to do.
                 offloads_to_do++;
                 search_ix++;
