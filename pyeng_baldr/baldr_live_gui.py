@@ -1,5 +1,6 @@
 import sys
 import time
+import zmq 
 import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
@@ -9,25 +10,42 @@ from PyQt5.QtCore import QTimer, pyqtSignal
 import pyqtgraph as pg
 
 
-def poll_telemetry(signal_name, socket = None):
-    """
-    Placeholder function to simulate polling from ZMQ or another source.
-    In production, this could call a shared buffer or zmq.REQ/REP client.
-    """
-    #import math
+# Create global ZMQ client socket and context once
+_zmq_context = zmq.Context.instance()
+_zmq_socket = _zmq_context.socket(zmq.REQ)
+_zmq_socket.connect("tcp://127.0.0.1:5555")  # Match the server address/port
 
-    # Simulated dummy values based on signal name
-    t = time.time()
-    if signal_name == "Signal 1":
-        return np.sin(t)
-    elif signal_name == "Signal 2":
-        return np.cos(t)
-    elif signal_name == "Signal 3":
-        return np.sin(t * 2) * np.exp(-0.1 * t % 10)
-    else:
+def poll_telemetry(signal_name, socket=None):
+    """
+    Poll telemetry using ZMQ REQ/REP protocol.
+    If ZMQ fails, fallback to dummy values.
+    """
+
+    try:
+        _zmq_socket.send_string(f"status {signal_name}")
+        response = _zmq_socket.recv_string()
+        return float(response)
+    except Exception as e:
+        print(f"[poll_telemetry] ZMQ error: {e}")
         return 0.0
-    
 
+    # try:
+    #     _zmq_socket.send_string(signal_name)
+    #     response = _zmq_socket.recv_string()
+    #     return float(response)
+    # except Exception as e:
+    #     print(f"[poll_telemetry] ZMQ error or timeout for '{signal_name}': {e}")
+    #     # Fallback to dummy values
+    #     # t = time.time()
+    #     # if signal_name == "Signal 1":
+    #     #     return np.sin(t)
+    #     # elif signal_name == "Signal 2":
+    #     #     return np.cos(t)
+    #     # elif signal_name == "Signal 3":
+    #     #     return np.sin(t * 2) * np.exp(-0.1 * t % 10)
+    #     # else:
+    #     #     return 0.0
+        
 class PlotWidget(QWidget):
     new_plot_requested = pyqtSignal()
 
@@ -76,7 +94,7 @@ class PlotWidget(QWidget):
         self.x.append(t)
 
         current_signal = self.combo.currentText()
-        y_val = poll_telemetry(current_signal, socket = None)
+        y_val = poll_telemetry(current_signal, socket = _zmq_socket)
 
         self.y.append(y_val)
         self.curve.setData(self.x[-100:], self.y[-100:])
@@ -96,11 +114,34 @@ class CommandLine(QWidget):
         layout.addWidget(self.prompt)
         self.setLayout(layout)
 
+    # # def handle_command(self):
+    # #     text = self.prompt.text()
+    # #     self.history.append(f"> {text}")
+    # #     self.prompt.clear()
+    # def handle_command(self):
+    #     text = self.prompt.text()
+    #     self.history.append(f"> {text}")
+    #     self.prompt.clear()
+
+    #     try:
+    #         _zmq_command_socket.send_string(text)
+    #         response = _zmq_command_socket.recv_string()
+    #         self.history.append(response)
+    #     except Exception as e:
+    #         self.history.append(f"[ZMQ error] {e}")
+
+
     def handle_command(self):
         text = self.prompt.text()
         self.history.append(f"> {text}")
         self.prompt.clear()
 
+        try:
+            _zmq_socket.send_string(f"{text}")
+            response = _zmq_socket.recv_string()
+            self.history.append(response)
+        except Exception as e:
+            self.history.append(f"[ZMQ error] {e}")
 
 class ControlPanel(QWidget):
     def __init__(self):
