@@ -3,7 +3,8 @@
 #include "controller.h"
 #include <Eigen/Dense>
 
-//clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 test_controllers.cpp controller.cpp -o test_controllers
+// from this directory (on mac)
+//clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 -I../../catch2 test_controllers.cpp controller.cpp -o test_controllers
 
 TEST_CASE("PIDController_1 reset and gain change", "[PID]") {
     Eigen::VectorXd Kp = Eigen::VectorXd::Constant(2, 1.0);
