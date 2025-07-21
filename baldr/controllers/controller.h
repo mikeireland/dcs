@@ -60,10 +60,10 @@ protected:
 };
 
 // PIDController (inherits Controller)
-class PIDController : public Controller {
+class PIDController_1 : public Controller {
 public:
-    PIDController(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt);
-    ~PIDController() override = default;
+    PIDController_1(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt);
+    ~PIDController_1() override = default;
 
     // Process the measurement and update the state, returning the control output
     Eigen::VectorXd process(const Eigen::VectorXd& measured) override;

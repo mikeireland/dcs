@@ -1,9 +1,12 @@
 #include "controller.h"
 #include <iostream>
 
+// on my mac: clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 -o controller_exec controller.cpp
+
+
 // PIDController Implementation
 // called it PIDController_1 due to conflicting name in baldr.cpp - this should eventually be overwritten by this abstract class version once stable!
-PIDController_1::PIDController(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt)
+PIDController_1::PIDController_1(const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki, const Eigen::VectorXd& Kd, double dt)
     : Kp(Kp), Ki(Ki), Kd(Kd), dt(dt) {
     output = Eigen::VectorXd::Zero(Kp.size());
     prev_errors = Eigen::VectorXd::Zero(Kp.size());
