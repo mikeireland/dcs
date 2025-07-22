@@ -595,6 +595,57 @@ void change_boxcar(int cmd) {
     }
 }
 
+// // test in TTR115.0035 (not tested yet)
+// std::optional<Eigen::VectorXd> poll_telem_vector(const std::string& name) {
+//     // get second last elemet (vector) from the baldr telemetry buffer
+//     // we only poll the second last element of the telemetry to avoid race conditions!
+//     static const std::unordered_map<std::string, boost::circular_buffer<Eigen::VectorXd> bdr_telem::*> telemetry_map = {
+//         {"img",     &bdr_telem::img},
+//         {"img_dm",  &bdr_telem::img_dm},
+//         {"signal",  &bdr_telem::signal},
+//         {"e_LO",    &bdr_telem::e_LO},
+//         {"u_LO",    &bdr_telem::u_LO},
+//         {"e_HO",    &bdr_telem::e_HO},
+//         {"u_HO",    &bdr_telem::u_HO},
+//         {"c_LO",    &bdr_telem::c_LO},
+//         {"c_HO",    &bdr_telem::c_HO}
+//     };
+
+//     auto it = telemetry_map.find(name);
+//     if (it == telemetry_map.end()) {
+//         return std::nullopt;  // invalid field name
+//     }
+
+//     const auto& buffer = telem.*(it->second);
+//     if (buffer.size() < 2) {
+//         return std::nullopt;  // not enough data to safely return the penultimate
+//     }
+
+//     return buffer[buffer.size() - 2];  // second-to-last element
+// }
+
+// // test in TTR115.0035 (not tested yet)
+// std::optional<double> poll_telem_scalar(const std::string& name) {
+//     // we don't poll LO or HO state (these returns ints and could be implemented in a seperate function)
+//     static const std::unordered_map<std::string, boost::circular_buffer<double> bdr_telem::*> scalar_map = {
+//         {"rmse_est", &bdr_telem::rmse_est},
+//         {"snr",      &bdr_telem::snr}
+//     };
+
+//     auto it = scalar_map.find(name);
+//     if (it == scalar_map.end()) {
+//         return std::nullopt;
+//     }
+
+//     const auto& buffer = telem.*(it->second);
+//     if (buffer.size() < 2) {
+//         return std::nullopt;
+//     }
+
+//     return buffer[buffer.size() - 2];
+// }
+
+
 
 void new_dark_and_bias() {
     try {
@@ -1548,6 +1599,19 @@ COMMANDER_REGISTER(m)
           "from the baldr calibration pipeline. Also assumes the same beam_id as is currently configured.\n"
           "Usage: reload_config [\"new_filename.toml\", \"new_mask\"]",
           "args"_arg);
+
+    // // test in TTR115.0035 (not tested yet)
+    // m.def("poll_telem_vector", poll_telem_vector,
+    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field (must be a vector).\n"
+    //     "Usage: poll_telem_vector u_HO\n",
+    //     "telem fields : img, img_dm, signal, e_LO, u_LO, e_HO, u_HO, c_LO, c_HO"
+    //     "args"_arg);
+
+    // // test in TTR115.0035 (not tested yet)
+    // m.def("poll_telem_scalar", poll_telem_scalar,
+    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
+    //     "Usage: poll_telem_vector snr",
+    //     "args"_arg);
 
 
  }
