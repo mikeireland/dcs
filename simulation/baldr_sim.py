@@ -84,7 +84,9 @@ with open(split_filename, 'r') as file:
     split_dict = json.load( file )
 
 # frame sizes
-global_frame_size = [256,320] # [nx,ny]
+#global_frame_size = [256,320] # [nx,ny]
+nrs = 200 # number of reads without reset 
+global_frame_size = [256, 320, nrs]  # e.g., nrs = 100
 baldr_frame_sizes = []
 baldr_frame_corners = []
 for i in [1,2,3,4]:
@@ -107,6 +109,8 @@ f_cred1_global = "/dev/shm/cred1.im.shm"
 #if os.path.exists(f_cred1_global):
 #    os.remove(f_cred1_global) 
 #global_frame_shm = shm(f_cred1_global, data = np.zeros(global_frame_size) , nosem=False) 
+
+
 
 
 global_frame_shm = shm(f_cred1_global,  nosem=False)  # do not pass data use ./shm_creator_sim!!! 
@@ -204,7 +208,11 @@ while True:
     # now do global frame (this is not necessary for the RTC but nice if we want to look at the shmview to get a sense of how things are working)
 
     # some random noise across the image 
-    global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size )
+    
+    
+    #### Baldr shm are 2D in og camera server, but global cred1 is 3D (nrs)
+    global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size[:-1] )
+    frame_index = global_frame_shm.mtdata['cnt1'] % global_frame_size[2]
     for i in range(len(dm_shms)):
         x0, y0    = baldr_frame_corners[i]
         xsz, ysz  = baldr_frame_sizes[i]
@@ -213,14 +221,35 @@ while True:
         global_im_tmp[y0:y0+ysz,x0:x0+xsz] = baldr_sub_shms[i].get_data().copy() 
 
 
-        
-    global_frame_shm.set_data( global_im_tmp.astype(np.uint16) )
+    gframe_now = global_frame_shm.get_data().copy() 
+    print( f"frame {frame_index}" ) 
+    gframe_now[frame_index,:,:] = global_im_tmp # set slice to the current one 
+    
+    global_frame_shm.set_data( gframe_now.astype(np.uint16) )
 
     global_frame_shm.post_sems(1)
 
-    sub_im = baldr_sub_shms[i].get_data()
+    #sub_im = baldr_sub_shms[i].get_data()
 
     time.sleep(1)
+    
+    # global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size )
+    # for i in range(len(dm_shms)):
+    #     x0, y0    = baldr_frame_corners[i]
+    #     xsz, ysz  = baldr_frame_sizes[i]
+
+    #     # add in the baldr subframe to the global frame 
+    #     global_im_tmp[y0:y0+ysz,x0:x0+xsz] = baldr_sub_shms[i].get_data().copy() 
+
+
+        
+    # global_frame_shm.set_data( global_im_tmp.astype(np.uint16) )
+
+    # global_frame_shm.post_sems(1)
+
+    # #sub_im = baldr_sub_shms[i].get_data()
+
+    # time.sleep(1)
 
 
 # python3 -m venv venv 

@@ -106,11 +106,51 @@ using json = nlohmann::json;
 /// compile
 // g++ shm_creator_sim.cpp -o shm_creator_sim -I/home/rtc/Documents/dcs/libImageStreamIO -L/home/rtc/Documents/dcs/libImageStreamIO -lImageStreamIO -I/usr/include/nlohmann -pthread
 
-int create_image(const std::string& name, int width, int height, int datatype, int nbsem) {
-    IMAGE* img = (IMAGE*) malloc(sizeof(IMAGE));
-    uint32_t dims[2] = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
 
-    errno_t ret = ImageStreamIO_createIm_gpu(img, name.c_str(), 2, dims, datatype, -1, 1, nbsem, 0, 0);
+
+int create_image(const std::string& name, int width, int height, int datatype, int nbsem) {
+    
+    IMAGE* img = (IMAGE*) malloc(sizeof(IMAGE));
+    
+    // Check if name includes "cred" (case-sensitive)
+    bool is_cred = name.find("cred") != std::string::npos;
+
+    errno_t ret;
+    if (is_cred) {
+        // 3D image: width x height x nrs
+        const int nrs = 200;  // or get this from a config/env
+        uint32_t dims[3] = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height),
+            static_cast<uint32_t>(nrs)
+        };
+
+        std::cout << "Creating 3D image: " << name << " with dims (" << dims[0] << ", " << dims[1] << ", " << dims[2] << ")" << std::endl;
+
+        ret = ImageStreamIO_createIm_gpu(img, name.c_str(), 3, dims, datatype, -1, 1, nbsem, 0, 0);
+    } else {
+        // 2D image
+        uint32_t dims[2] = {
+            static_cast<uint32_t>(width),
+            static_cast<uint32_t>(height)
+        };
+
+        std::cout << "Creating 2D image: " << name << " with dims (" << dims[0] << ", " << dims[1] << ")" << std::endl;
+
+        ret = ImageStreamIO_createIm_gpu(img, name.c_str(), 2, dims, datatype, -1, 1, nbsem, 0, 0);
+    }
+
+    if (ret != 0) {
+        std::cerr << "Error creating image " << name << ", error code: " << ret << std::endl;
+        free(img);
+        return EXIT_FAILURE;
+    }
+
+    //IMAGE* img = (IMAGE*) malloc(sizeof(IMAGE));
+    //uint32_t dims[2] = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
+
+    //errno_t ret = ImageStreamIO_createIm_gpu(img, name.c_str(), 2, dims, datatype, -1, 1, nbsem, 0, 0);
+    //ImageStreamIO_createIm_gpu(img, name.c_str(), 2, dims, datatype, -1, 1, nbsem, 0, 0);
 
     if (ret == 0) {
         // Zero initialize the array depending on datatype
