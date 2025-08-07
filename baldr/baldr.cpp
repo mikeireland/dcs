@@ -1697,19 +1697,6 @@ int main(int argc, char* argv[]) {
         cam_host_str = "tcp://192.168.100.2:6667";
         mds_host_str = "tcp://192.168.100.2:5555";
 
-        ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
-
-        std::string name = "dm" + std::to_string(beam_id) + "disp02";
-        std::string name0 = "dm" + std::to_string(beam_id);
-
-        if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
-            return 1;
-        }
-        if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
-            std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
-            return 1;
-        }
 
     } else {
         //std::cerr << "[ERROR] Simulation mode not implemented yet." << std::endl;
@@ -1733,6 +1720,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     //rtc_config.initDerivedParameters();
+
+
+    ImageStreamIO_openIm(&subarray, ("baldr" + std::to_string(beam_id)).c_str());
+
+    std::string name = "dm" + std::to_string(beam_id) + "disp02";
+    std::string name0 = "dm" + std::to_string(beam_id);
+
+    if (ImageStreamIO_openIm(&dm_rtc, name.c_str()) != IMAGESTREAMIO_SUCCESS) {
+        std::cerr << "[ERROR] Failed to open DM SHM: " << name << std::endl;
+        return 1;
+    }
+    if (ImageStreamIO_openIm(&dm_rtc0, name0.c_str()) != IMAGESTREAMIO_SUCCESS) {
+        std::cerr << "[ERROR] Failed to open DM master SHM: " << name0 << std::endl;
+        return 1;
+    }
 
 
     // Start RTC threads
