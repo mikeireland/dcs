@@ -174,6 +174,106 @@ void PIDController::reset() {
 }
 
 
+// // -- here we have (untested) inheritance from the base class Controller for the PID 
+// will need to update signature in baldr.h 
+//////////////////////////////////////////////////
+// #include "controller.h"
+
+// // PIDController Implementation
+
+// PIDController::PIDController(const Eigen::VectorXd& kp_in,
+//                              const Eigen::VectorXd& ki_in,
+//                              const Eigen::VectorXd& kd_in,
+//                              const Eigen::VectorXd& lower_limit_in,
+//                              const Eigen::VectorXd& upper_limit_in,
+//                              const Eigen::VectorXd& setpoint_in)
+//     : Kp(kp_in), Ki(ki_in), Kd(kd_in), lower_limits(lower_limit_in),
+//       upper_limits(upper_limit_in), set_point(setpoint_in) {
+//     int size = Kp.size();
+//     output = Eigen::VectorXd::Zero(size);
+//     integrals = Eigen::VectorXd::Zero(size);
+//     prev_errors = Eigen::VectorXd::Zero(size);
+// }
+
+// Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
+//     int size = set_point.size();
+//     for (int i = 0; i < size; ++i) {
+//         double error = set_point(i) - measured(i);
+//         integrals(i) += error;
+//         double derivative = error - prev_errors(i);
+//         output(i) = Kp(i) * error + Ki(i) * integrals(i) + Kd(i) * derivative;
+//         prev_errors(i) = error;
+//     }
+//     return output;
+// }
+
+// // Reset all states
+// void PIDController::reset() {
+//     prev_errors.setZero();
+//     integrals.setZero();
+//     output.setZero();
+// }
+
+// void PIDController::set_all_gains_to_zero() {
+//     Kp.setZero();
+//     Ki.setZero();
+//     Kd.setZero();
+// }
+
+// Eigen::VectorXd PIDController::get_state() const {
+//     return integrals;
+// }
+
+// Eigen::VectorXd PIDController::get_output() const {
+//     return output;
+// }
+
+// std::string PIDController::get_type() const {
+//     return "PID";
+// }
+
+// void PIDController::set_setpoint(const Eigen::VectorXd& new_setpoint) {
+//     set_point = new_setpoint;
+// }
+
+// Eigen::VectorXd PIDController::get_setpoint() const {
+//     return set_point;
+// }
+
+// // Set the parameter dynamically
+// void PIDController::set_parameter(const std::string& param_name, const std::variant<Eigen::VectorXd, Eigen::MatrixXd>& value) {
+//     if (param_name == "Kp") {
+//         Kp = std::get<Eigen::VectorXd>(value);
+//     } else if (param_name == "Ki") {
+//         Ki = std::get<Eigen::VectorXd>(value);
+//     } else if (param_name == "Kd") {
+//         Kd = std::get<Eigen::VectorXd>(value);
+//     } else {
+//         throw std::invalid_argument("Unknown parameter name");
+//     }
+// }
+
+// std::variant<Eigen::VectorXd, Eigen::MatrixXd> PIDController::get_parameter(const std::string& param_name) const {
+//     if (param_name == "Kp") {
+//         return Kp;
+//     } else if (param_name == "Ki") {
+//         return Ki;
+//     } else if (param_name == "Kd") {
+//         return Kd;
+//     } else {
+//         throw std::invalid_argument("Unknown parameter name");
+//     }
+// }
+
+// std::vector<std::pair<std::string, std::string>> PIDController::list_parameters() const {
+//     return {
+//         {"Kp", "Proportional gain vector"},
+//         {"Ki", "Integral gain vector"},
+//         {"Kd", "Derivative gain vector"}
+//     };
+// }
+//////////////////////////////////////////////////
+
 //----------helper functions from here---------------
 
 // Function to find the most recent config file for a given beam and mode (default = "bright")
