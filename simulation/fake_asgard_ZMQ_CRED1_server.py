@@ -3,23 +3,34 @@
 import zmq
 import threading
 import time
+import json
 
 # --- Shared State ---
 camera_state = {
     "fps": 1000.0,
     "gain": 1,
     "status": "operational",
-    "mode": "globalresetcds",
+    "mode": "globalresetburst",
     "resetwidth": 20,
-    "nbreadworeset": 1,
+    "nbreadworeset": 200,
     "cropping": False,
     "cropping rows": "0-255",
     "cropping columns": "0-319"
 }
 
-mds_state = {
-    "SBB": True
-}
+
+phasemask_positions = {}
+for beam in [1,2,3,4]:
+    with open(f"simulation/fake_configs/phase_positions_beam{beam}_2025-01-01T00-00-00.json") as f:
+        phasemask_positions[beam] = json.load( f ) 
+
+#/home/rtc/Documents/dcs/simulation/fake_configs/phase_positions_beam4_2025-07-11T15-04-05.json
+
+with open("simulation/fake_configs/mds_state.json") as f:
+    mds_state = json.load( f )
+
+motor_state = {d["name"]: d for d in mds_state}
+
 
 # --- Camera Command Handler ---
 def handle_camera_command(cmd: str) -> str:
@@ -95,16 +106,145 @@ def handle_camera_command(cmd: str) -> str:
     return f"Unknown or unsupported command: {cmd}"
 
 # --- MDS Command Handler ---
+
 def handle_mds_command(cmd: str) -> str:
-    cmd = cmd.strip().lower()
-    if cmd == "on sbb":
+    cmd = cmd.strip()
+    tokens = cmd.split()
+    
+    if cmd.lower() == "on sbb":
         mds_state["SBB"] = True
         return "OK"
-    elif cmd == "off sbb":
+    elif cmd.lower() == "off sbb":
         mds_state["SBB"] = False
         return "OK"
+
+    elif tokens[0].lower() == "read":
+        if len(tokens) != 2:
+            return "NACK: Usage is 'read <axis>'"
+        axis = tokens[1]
+        if axis in motor_state and motor_state[axis]["is_connected"]:
+            return f"{motor_state[axis]['position']:.6f}"
+        else:
+            return f"NACK: Axis '{axis}' not found or not connected"
+
+    elif tokens[0].lower() == "moverel":
+        if len(tokens) != 3:
+            return "NACK: Usage is 'moverel <axis> <delta>'"
+        axis, delta = tokens[1], tokens[2]
+        try:
+            delta = float(delta)
+            if axis in motor_state and motor_state[axis]["is_connected"]:
+                motor_state[axis]["position"] += delta
+                return "ACK"
+            else:
+                return f"NACK: Axis '{axis}' not found or not connected"
+        except Exception as e:
+            return f"NACK: {e}"
+
+    elif tokens[0].lower() == "moveabs":
+        if len(tokens) != 3:
+            return "NACK: Usage is 'moveabs <axis> <position>'"
+        axis, pos = tokens[1], tokens[2]
+        try:
+            pos = float(pos)
+            if axis in motor_state and motor_state[axis]["is_connected"]:
+                motor_state[axis]["position"] = pos
+                return "ACK"
+            else:
+                return f"NACK: Axis '{axis}' not found or not connected"
+        except Exception as e:
+            return f"NACK: {e}"
+
+    elif tokens[0].lower() == "connect":
+        if len(tokens) != 2:
+            return "NACK: Usage is 'connect <axis>'"
+        axis = tokens[1]
+        if axis in motor_state:
+            motor_state[axis]["is_connected"] = True
+            return "ACK"
+        else:
+            return f"NACK: Axis '{axis}' not found"
+
+    elif tokens[0].lower() == "disconnect":
+        if len(tokens) != 2:
+            return "NACK: Usage is 'disconnect <axis>'"
+        axis = tokens[1]
+        if axis in motor_state:
+            motor_state[axis]["is_connected"] = False
+            return "ACK"
+        else:
+            return f"NACK: Axis '{axis}' not found"
+
+    elif tokens[0].lower() == "state":
+        if len(tokens) != 2:
+            return "NACK: Usage is 'state <axis>'"
+        axis = tokens[1]
+        if axis in motor_state:
+            return "connected" if motor_state[axis]["is_connected"] else "disconnected"
+        else:
+            return f"NACK: Axis '{axis}' not found"
+    
+
+    elif tokens[0].lower() == "fpm_move":
+        # Usage: fpm_move <beam> <mask_name>
+        if len(tokens) != 3:
+            return "ERR Usage: fpm_move <beam> <mask_name>"
+        try:
+            beam = int(tokens[1])
+            mask_name = tokens[2].upper()
+
+            if beam not in phasemask_positions:
+                return f"ERR beam {beam} not in known phasemask positions"
+
+            x, y = phasemask_positions[beam][mask_name]
+            motor_state[f"BMX{beam}"]["position"] = x
+            motor_state[f"BMY{beam}"]["position"] = y
+            return f"ACK moved beam {beam} to mask {mask_name} at ({x:.2f}, {y:.2f})"
+        except KeyError:
+            return f"ERR mask '{mask_name}' or beam '{beam}' not found"
+        except Exception as e:
+            return f"ERR: {e}"
+
+    elif tokens[0].lower() == "fpm_whereami":
+        # Usage: fpm_whereami <beam>
+        if len(tokens) != 2:
+            return "ERR Usage: fpm_whereami <beam>"
+        try:
+            beam = int(tokens[1])
+            x_now = motor_state[f"BMX{beam}"]["position"]
+            y_now = motor_state[f"BMY{beam}"]["position"]
+            tol = 2.0
+
+            closest_mask = None
+            min_dist = float("inf")
+            for mask, (x_ref, y_ref) in phasemask_positions.get(beam, {}).items():
+                dist = ((x_ref - x_now) ** 2 + (y_ref - y_now) ** 2) ** 0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_mask = mask
+
+            if min_dist < tol:
+                return closest_mask
+            else:
+                return "" #"NONE"
+        except Exception as e:
+            return f"ERR: {e}"
+    
     else:
-        return "NOK"
+        return f"NACK: Unknown or unsupported command: {cmd}"
+
+# def handle_mds_command(cmd: str) -> str:
+#     cmd = cmd.strip().lower()
+#     if cmd == "on sbb":
+#         mds_state["SBB"] = True
+#         return "OK"
+#     elif cmd == "off sbb":
+#         mds_state["SBB"] = False
+#         return "OK"
+#     else:
+#         return "NOK"
+    
+
 
 # --- Camera ZMQ Thread ---
 def camera_server():

@@ -48,21 +48,28 @@ config_path = files("baldrapp.configurations") / "BALDR_UT_J3.ini"
 
 # initialize our ZWFS instrument
 wvl0=1.25e-6
-zwfs_ns = bldr.init_zwfs_from_config_ini( config_ini=config_path, wvl0=wvl0 )
-zwfs_ns.dm.actuator_coupling_factor = 0.9
 
+telescope = []
+#for beam in [1,2,3,4]:  
+if 1:
+    zwfs_ns = bldr.init_zwfs_from_config_ini( config_ini=config_path, wvl0=wvl0 )
+    zwfs_ns.dm.actuator_coupling_factor = 0.9
 
-dx = zwfs_ns.grid.D / zwfs_ns.grid.N
+    ## these things can just be defined equally for each telescope 
+    dx = zwfs_ns.grid.D / zwfs_ns.grid.N
 
-# input flux scaling (photons / s / wavespace_pixel / nm) 
-photon_flux_per_pixel_at_vlti = zwfs_ns.throughput.vlti_throughput * (np.pi * (zwfs_ns.grid.D/2)**2) / (np.pi * zwfs_ns.pyZelda.pupil_diameter/2)**2 * util.magnitude_to_photon_flux(magnitude=zwfs_ns.stellar.magnitude, band = zwfs_ns.stellar.waveband, wavelength= 1e9*wvl0)
+    # input flux scaling (photons / s / wavespace_pixel / nm) 
+    photon_flux_per_pixel_at_vlti = zwfs_ns.throughput.vlti_throughput * (np.pi * (zwfs_ns.grid.D/2)**2) / (np.pi * zwfs_ns.pyZelda.pupil_diameter/2)**2 * util.magnitude_to_photon_flux(magnitude=zwfs_ns.stellar.magnitude, band = zwfs_ns.stellar.waveband, wavelength= 1e9*wvl0)
 
-# internal aberrations (opd in meters)
-opd_internal = util.apply_parabolic_scratches(np.zeros( zwfs_ns.grid.pupil_mask.shape ) , dx=dx, dy=dx, list_a= [ 0.1], list_b = [0], list_c = [-2], width_list = [2*dx], depth_list = [100e-9])
+    # internal aberrations (opd in meters)
+    opd_internal = util.apply_parabolic_scratches(np.zeros( zwfs_ns.grid.pupil_mask.shape ) , dx=dx, dy=dx, list_a= [ 0.1], list_b = [0], list_c = [-2], width_list = [2*dx], depth_list = [100e-9])
 
-opd_flat_dm = bldr.get_dm_displacement( command_vector= zwfs_ns.dm.dm_flat  , gain=zwfs_ns.dm.opd_per_cmd, \
-                sigma= zwfs_ns.grid.dm_coord.act_sigma_wavesp, X=zwfs_ns.grid.wave_coord.X, Y=zwfs_ns.grid.wave_coord.Y,\
-                    x0=zwfs_ns.grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns.grid.dm_coord.act_y0_list_wavesp )
+    opd_flat_dm = bldr.get_dm_displacement( command_vector= zwfs_ns.dm.dm_flat  , gain=zwfs_ns.dm.opd_per_cmd, \
+                    sigma= zwfs_ns.grid.dm_coord.act_sigma_wavesp, X=zwfs_ns.grid.wave_coord.X, Y=zwfs_ns.grid.wave_coord.Y,\
+                        x0=zwfs_ns.grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns.grid.dm_coord.act_y0_list_wavesp )
+
+    #telescope.append( zwfs_ns )
+    #del zwfs_ns
 
 # # reference pupils 
 # I0 = bldr.get_I0( opd_input = 0 * zwfs_ns.pyZelda.pupil ,  amp_input = photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns.pyZelda.pupil, opd_internal=zwfs_ns.pyZelda.pupil * (opd_internal + opd_flat_dm), \
@@ -164,8 +171,60 @@ amp_input =  photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns.pyZelda.pupil
 use_pyZelda = True
 assert len(dm_shms) == len(baldr_sub_shms)
 
+
+#move to the configured phasemask in MDS state 
+for beam in [1,2,3,4]:
+    mds_socket.send_string(f"fpm_move {beam} J3")
+    print( mds_socket.recv_string() )
+
+# configured in phaseshift 
+theta_in = zwfs_ns.optics.theta # do i need to do this through zwfs_ns.pyZelda?
+mask_depth_in = zwfs_ns.pyZelda.mask_depth
+
+liveindex = global_frame_shm.mtdata['cnt0'] #0 # counter 
 while True:
 
+    # the simulator is responsible for checking the MDS and Camera server state and updating 
+    # the simulation accordinly 
+
+    # key baldr states are 
+    # source 
+    # phasemask position (mask name)
+    # collimator lens (bright / faint mode)
+
+    for beam in [1,2,3,4]:
+        mds_socket.send_string(f"fpm_whereami {beam}")
+        mask = mds_socket.recv_string()  # to respect zmq order 
+        # here we only check for mask out, and assume the phasemask doesnt swap to another one during the siumulatuon 
+        
+        ## this only properly works if we do zwfs_ns per beam!!! 
+        if mask == "": 
+            mask_out = True 
+            zwfs_ns.optics.theta = 0 # we have no phaseshift from mask 
+            if use_pyZelda:
+                zwfs_ns.pyZelda._mask_depth = 0
+
+            print("beam", beam, mask)
+            print("mask depth",zwfs_ns.pyZelda._mask_depth ,zwfs_ns.pyZelda.mask_depth )
+        # else:
+        #     mask_out = False 
+        #     zwfs_ns.optics.theta = theta_in # we use our configured phaseshift 
+        #     if use_pyZelda:
+        #         zwfs_ns.pyZelda._mask_depth = mask_depth_in
+
+    # the simulator is responsible for updating the SHM counters in a consistent way with the camera server
+    # live index is defined around line 613 in asgard-cred1-server/asgard_ZMQ_CRED1_server.c
+    #.   liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
+    #.    shm_img->md->cnt1 = liveindex;       // idem
+
+    #       shm_img->md->cnt0++;                 // increment internal counter
+
+
+    # we do similar here 
+
+    cnt0 = liveindex 
+    cnt1 = liveindex % global_frame_size[2]
+    
     for i in range(len(dm_shms)):
         # reads the combined channel of the DMs (no need to update here - this is done in the RTC )
         dmcmd_2d = dm_shms[i].get_data() 
@@ -198,6 +257,8 @@ while True:
 
         # update the shm 
         baldr_sub_shms[i].set_data( subim_tmp.astype(dtype=np.uint16) )
+        baldr_sub_shms[i].mtdata['cnt0'] = cnt0 
+        baldr_sub_shms[i].mtdata['cnt1'] = cnt1 
         # post semaphore 
         baldr_sub_shms[i].post_sems(1)
 
@@ -211,8 +272,11 @@ while True:
     
     
     #### Baldr shm are 2D in og camera server, but global cred1 is 3D (nrs)
+
+    global_frame_shm.mtdata['cnt0'] = cnt0
+    global_frame_shm.mtdata['cnt1'] = cnt1 
     global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size[:-1] )
-    frame_index = global_frame_shm.mtdata['cnt1'] % global_frame_size[2]
+    ###frame_index = global_frame_shm.mtdata['cnt1'] % global_frame_size[2]
     for i in range(len(dm_shms)):
         x0, y0    = baldr_frame_corners[i]
         xsz, ysz  = baldr_frame_sizes[i]
@@ -222,14 +286,16 @@ while True:
 
 
     gframe_now = global_frame_shm.get_data().copy() 
-    print( f"frame {frame_index}" ) 
-    gframe_now[frame_index,:,:] = global_im_tmp # set slice to the current one 
+    print( f"frame {cnt1}" ) 
+    gframe_now[cnt1,:,:] = global_im_tmp # set slice to the current one 
     
     global_frame_shm.set_data( gframe_now.astype(np.uint16) )
 
     global_frame_shm.post_sems(1)
 
     #sub_im = baldr_sub_shms[i].get_data()
+
+    liveindex += 1 # increment counter 
 
     time.sleep(1)
     
