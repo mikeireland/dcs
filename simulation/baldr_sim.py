@@ -49,34 +49,35 @@ config_path = files("baldrapp.configurations") / "BALDR_UT_J3.ini"
 # initialize our ZWFS instrument
 wvl0=1.25e-6
 
-telescope = []
-#for beam in [1,2,3,4]:  
-if 1:
-    zwfs_ns = bldr.init_zwfs_from_config_ini( config_ini=config_path, wvl0=wvl0 )
-    zwfs_ns.dm.actuator_coupling_factor = 0.9
+zwfs_ns = {i:None for i in [1,2,3,4]} #zwfs namespace per telescope 
+
+for i in [1,2,3,4]:  
+
+    zwfs_ns[i] = bldr.init_zwfs_from_config_ini( config_ini=config_path, wvl0=wvl0 )
+    zwfs_ns[i].dm.actuator_coupling_factor = 0.9
 
     ## these things can just be defined equally for each telescope 
-    dx = zwfs_ns.grid.D / zwfs_ns.grid.N
+    dx = zwfs_ns[i].grid.D / zwfs_ns[i].grid.N
 
     # input flux scaling (photons / s / wavespace_pixel / nm) 
-    photon_flux_per_pixel_at_vlti = zwfs_ns.throughput.vlti_throughput * (np.pi * (zwfs_ns.grid.D/2)**2) / (np.pi * zwfs_ns.pyZelda.pupil_diameter/2)**2 * util.magnitude_to_photon_flux(magnitude=zwfs_ns.stellar.magnitude, band = zwfs_ns.stellar.waveband, wavelength= 1e9*wvl0)
+    photon_flux_per_pixel_at_vlti = zwfs_ns[i].throughput.vlti_throughput * (np.pi * (zwfs_ns[i].grid.D/2)**2) / (np.pi * zwfs_ns[i].pyZelda.pupil_diameter/2)**2 * util.magnitude_to_photon_flux(magnitude=zwfs_ns[i].stellar.magnitude, band = zwfs_ns[i].stellar.waveband, wavelength= 1e9*wvl0)
 
     # internal aberrations (opd in meters)
-    opd_internal = util.apply_parabolic_scratches(np.zeros( zwfs_ns.grid.pupil_mask.shape ) , dx=dx, dy=dx, list_a= [ 0.1], list_b = [0], list_c = [-2], width_list = [2*dx], depth_list = [100e-9])
+    opd_internal = util.apply_parabolic_scratches(np.zeros( zwfs_ns[i].grid.pupil_mask.shape ) , dx=dx, dy=dx, list_a= [ 0.1], list_b = [0], list_c = [-2], width_list = [2*dx], depth_list = [100e-9])
 
-    opd_flat_dm = bldr.get_dm_displacement( command_vector= zwfs_ns.dm.dm_flat  , gain=zwfs_ns.dm.opd_per_cmd, \
-                    sigma= zwfs_ns.grid.dm_coord.act_sigma_wavesp, X=zwfs_ns.grid.wave_coord.X, Y=zwfs_ns.grid.wave_coord.Y,\
-                        x0=zwfs_ns.grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns.grid.dm_coord.act_y0_list_wavesp )
+    opd_flat_dm = bldr.get_dm_displacement( command_vector= zwfs_ns[i].dm.dm_flat  , gain=zwfs_ns[i].dm.opd_per_cmd, \
+                    sigma= zwfs_ns[i].grid.dm_coord.act_sigma_wavesp, X=zwfs_ns[i].grid.wave_coord.X, Y=zwfs_ns[i].grid.wave_coord.Y,\
+                        x0=zwfs_ns[i].grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns[i].grid.dm_coord.act_y0_list_wavesp )
 
-    #telescope.append( zwfs_ns )
-    #del zwfs_ns
+    #telescope.append( zwfs_ns[i] )
+    #del zwfs_ns[i]
 
 # # reference pupils 
-# I0 = bldr.get_I0( opd_input = 0 * zwfs_ns.pyZelda.pupil ,  amp_input = photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns.pyZelda.pupil, opd_internal=zwfs_ns.pyZelda.pupil * (opd_internal + opd_flat_dm), \
-#     zwfs_ns=zwfs_ns, detector=zwfs_ns.detector, include_shotnoise=True , use_pyZelda = True)
+# I0 = bldr.get_I0( opd_input = 0 * zwfs_ns[i].pyZelda.pupil ,  amp_input = photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns[i].pyZelda.pupil, opd_internal=zwfs_ns[i].pyZelda.pupil * (opd_internal + opd_flat_dm), \
+#     zwfs_ns[i]=zwfs_ns[i], detector=zwfs_ns[i].detector, include_shotnoise=True , use_pyZelda = True)
 
-# N0 = bldr.get_N0( opd_input = 0 * zwfs_ns.pyZelda.pupil ,  amp_input = photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns.pyZelda.pupil, opd_internal=zwfs_ns.pyZelda.pupil * (opd_internal + opd_flat_dm), \
-#     zwfs_ns=zwfs_ns, detector=zwfs_ns.detector, include_shotnoise=True , use_pyZelda = True)
+# N0 = bldr.get_N0( opd_input = 0 * zwfs_ns[i].pyZelda.pupil ,  amp_input = photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns[i].pyZelda.pupil, opd_internal=zwfs_ns[i].pyZelda.pupil * (opd_internal + opd_flat_dm), \
+#     zwfs_ns[i]=zwfs_ns[i], detector=zwfs_ns[i].detector, include_shotnoise=True , use_pyZelda = True)
 
 
 
@@ -108,8 +109,8 @@ for i in [1,2,3,4]:
 
 
 # init SHM object/lists
-baldr_sub_shms = [] #sorted(glob.glob(f"/dev/shm/baldr*.im.shm"))
-dm_shms = []
+baldr_sub_shms = {i:None for i in [1,2,3,4]} #sorted(glob.glob(f"/dev/shm/baldr*.im.shm"))
+dm_shms = {i:None for i in [1,2,3,4]}
 global_frame_shm = None 
 
 f_cred1_global = "/dev/shm/cred1.im.shm"
@@ -124,10 +125,10 @@ global_frame_shm = shm(f_cred1_global,  nosem=False)  # do not pass data use ./s
 global_frame_shm.set_data( np.zeros(global_frame_size)  )
 
 # create SHM
-for i in range(4):
+for ct, i in enumerate([1,2,3,4]):
 
-    f_baldr = f"/dev/shm/baldr{i+1}.im.shm"
-    f_dm = f"/dev/shm/dm{i+1}.im.shm"
+    f_baldr = f"/dev/shm/baldr{i}.im.shm"
+    f_dm = f"/dev/shm/dm{i}.im.shm"
 
 
     #_ = global_frame_shm.shape  # This triggers metadata parsing inside shmlib
@@ -135,12 +136,12 @@ for i in range(4):
     #    os.remove(f_baldr)  # force re-creation with correct semaphores
     
     ss = shm(f_baldr,  nosem=False) 
-    ss.set_data( np.zeros(baldr_frame_sizes[i]) )
+    ss.set_data( np.zeros(baldr_frame_sizes[ct]) )
     #baldr_sub_shms.append( shm(f_baldr, data= np.zeros(baldr_frame_sizes[i]), nosem=False) )
-    baldr_sub_shms.append( ss ) # do not pass data use ./shm_creator_sim!!! 
+    baldr_sub_shms[i] = ss  # do not pass data use ./shm_creator_sim!!! 
 
     # should be running sim_mdm_server, if not we need to initialise as follows: shm(f_dm, data=np.zeros([12,12]), nosem=False)
-    dm_shms.append( shm(f_dm,  nosem=False) )
+    dm_shms[i] = shm(f_dm,  nosem=False) 
 
 
 
@@ -165,9 +166,9 @@ print("MDS reply (off):", mds_socket.recv_string())
 
 
 # setup parameters 
-
+default_tel = 1 # default telescope to use to set up parameters that are common amgost all telescopes
 noise_std = 100
-amp_input =  photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns.pyZelda.pupil
+amp_input =  photon_flux_per_pixel_at_vlti**0.5 * zwfs_ns[default_tel].pyZelda.pupil
 use_pyZelda = True
 assert len(dm_shms) == len(baldr_sub_shms)
 
@@ -178,8 +179,8 @@ for beam in [1,2,3,4]:
     print( mds_socket.recv_string() )
 
 # configured in phaseshift 
-theta_in = zwfs_ns.optics.theta # do i need to do this through zwfs_ns.pyZelda?
-mask_depth_in = zwfs_ns.pyZelda.mask_depth
+theta_in = zwfs_ns[default_tel].optics.theta # do i need to do this through zwfs_ns[i].pyZelda?
+mask_depth_in = zwfs_ns[default_tel].pyZelda.mask_depth
 
 liveindex = global_frame_shm.mtdata['cnt0'] #0 # counter 
 while True:
@@ -192,25 +193,24 @@ while True:
     # phasemask position (mask name)
     # collimator lens (bright / faint mode)
 
-    for beam in [1,2,3,4]:
-        mds_socket.send_string(f"fpm_whereami {beam}")
+    for i in [1,2,3,4]:
+        mds_socket.send_string(f"fpm_whereami {i}")
         mask = mds_socket.recv_string()  # to respect zmq order 
         # here we only check for mask out, and assume the phasemask doesnt swap to another one during the siumulatuon 
         
         ## this only properly works if we do zwfs_ns per beam!!! 
         if mask == "": 
             mask_out = True 
-            zwfs_ns.optics.theta = 0 # we have no phaseshift from mask 
+            zwfs_ns[i].optics.theta = 0 # we have no phaseshift from mask 
             if use_pyZelda:
-                zwfs_ns.pyZelda._mask_depth = 0
+                zwfs_ns[i].pyZelda._mask_depth = 0
 
-            print("beam", beam, mask)
-            print("mask depth",zwfs_ns.pyZelda._mask_depth ,zwfs_ns.pyZelda.mask_depth )
-        # else:
-        #     mask_out = False 
-        #     zwfs_ns.optics.theta = theta_in # we use our configured phaseshift 
-        #     if use_pyZelda:
-        #         zwfs_ns.pyZelda._mask_depth = mask_depth_in
+
+        else:
+            mask_out = False 
+            zwfs_ns[i].optics.theta = theta_in # we use our configured phaseshift 
+            if use_pyZelda:
+                zwfs_ns[i].pyZelda._mask_depth = mask_depth_in
 
     # the simulator is responsible for updating the SHM counters in a consistent way with the camera server
     # live index is defined around line 613 in asgard-cred1-server/asgard_ZMQ_CRED1_server.c
@@ -225,29 +225,29 @@ while True:
     cnt0 = liveindex 
     cnt1 = liveindex % global_frame_size[2]
     
-    for i in range(len(dm_shms)):
+    for ct, i in enumerate([1,2,3,4]): #range(len(dm_shms)):
         # reads the combined channel of the DMs (no need to update here - this is done in the RTC )
         dmcmd_2d = dm_shms[i].get_data() 
         
         # update dm in simulation (2D function to 1D)
         dmcmd = convert_12x12_to_140( dmcmd_2d )
         
-        # rtc only returns ch2 , we can put the simulated flat (zwfs_ns.dm.dm_flat.copy()) on ch0 somewhere else
-        zwfs_ns.dm.current_cmd = dmcmd.copy()
+        # rtc only returns ch2 , we can put the simulated flat (zwfs_ns[i].dm.dm_flat.copy()) on ch0 somewhere else
+        zwfs_ns[i].dm.current_cmd = dmcmd.copy()
         
         # update opd space with current dm shape
-        opd_current_dm = bldr.get_dm_displacement( command_vector = zwfs_ns.dm.current_cmd   , gain=zwfs_ns.dm.opd_per_cmd, \
-                        sigma = zwfs_ns.grid.dm_coord.act_sigma_wavesp, X=zwfs_ns.grid.wave_coord.X, Y=zwfs_ns.grid.wave_coord.Y,\
-                            x0=zwfs_ns.grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns.grid.dm_coord.act_y0_list_wavesp )
+        opd_current_dm = bldr.get_dm_displacement( command_vector = zwfs_ns[i].dm.current_cmd   , gain=zwfs_ns[i].dm.opd_per_cmd, \
+                        sigma = zwfs_ns[i].grid.dm_coord.act_sigma_wavesp, X=zwfs_ns[i].grid.wave_coord.X, Y=zwfs_ns[i].grid.wave_coord.Y,\
+                            x0=zwfs_ns[i].grid.dm_coord.act_x0_list_wavesp, y0=zwfs_ns[i].grid.dm_coord.act_y0_list_wavesp )
             
             
         intensity = bldr.get_frame(  opd_input  = opd_current_dm,   amp_input = amp_input,\
-            opd_internal = opd_internal,  zwfs_ns= zwfs_ns , detector= zwfs_ns.detector, use_pyZelda = use_pyZelda )
+            opd_internal = opd_internal,  zwfs_ns= zwfs_ns[i] , detector= zwfs_ns[i].detector, use_pyZelda = use_pyZelda )
         
         #print( np.mean( dmcmd ) )
         # ---------------------------------------
         # tmp simulation (fill this section with my baldrApp)
-        subim_tmp =  adu_offset + noise_std * np.random.randn( *baldr_frame_sizes[i] )
+        subim_tmp =  adu_offset + noise_std * np.random.randn( *baldr_frame_sizes[ct] )
 
         # insert image
         simImg = util.insert_concentric(intensity , np.zeros_like( subim_tmp ) ) # insert 
@@ -277,9 +277,9 @@ while True:
     global_frame_shm.mtdata['cnt1'] = cnt1 
     global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size[:-1] )
     ###frame_index = global_frame_shm.mtdata['cnt1'] % global_frame_size[2]
-    for i in range(len(dm_shms)):
-        x0, y0    = baldr_frame_corners[i]
-        xsz, ysz  = baldr_frame_sizes[i]
+    for ct, i in enumerate([1,2,3,4]):#range(len(dm_shms)):
+        x0, y0    = baldr_frame_corners[ct]
+        xsz, ysz  = baldr_frame_sizes[ct]
 
         # add in the baldr subframe to the global frame 
         global_im_tmp[y0:y0+ysz,x0:x0+xsz] = baldr_sub_shms[i].get_data().copy() 
@@ -297,7 +297,7 @@ while True:
 
     liveindex += 1 # increment counter 
 
-    time.sleep(1)
+    #time.sleep(1)
     
     # global_im_tmp = adu_offset + noise_std * np.random.randn( *global_frame_size )
     # for i in range(len(dm_shms)):
