@@ -118,7 +118,7 @@ int create_image(const std::string& name, int width, int height, int datatype, i
     errno_t ret;
     if (is_cred) {
         // 3D image: width x height x nrs
-        const int nrs = 200;  // or get this from a config/env
+        const int nrs = 5; //200;  // or get this from a config/env
         uint32_t dims[3] = {
             static_cast<uint32_t>(width),
             static_cast<uint32_t>(height),

@@ -6,6 +6,8 @@ import zmq
 import time 
 import os
 from xaosim.shmlib import shm
+import subprocess
+from pathlib import Path
 
 
 ###### TESTING THE ACTUAL BALDR SIMULATION FROM BALDRAPP  
@@ -14,6 +16,12 @@ from xaosim.shmlib import shm
 from baldrapp.common import baldr_core as bldr
 from baldrapp.common import utilities as util
 from importlib.resources import files
+
+
+def get_git_root() -> Path:
+    return Path(
+        subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    )
 
 
 
@@ -41,7 +49,7 @@ def convert_12x12_to_140(arr):
     return vector
 
 
-
+root_path = get_git_root()
 
 # configuration file (pyZelda style)
 config_path = files("baldrapp.configurations") / "BALDR_UT_J3.ini"
@@ -84,8 +92,8 @@ for i in [1,2,3,4]:
 
 
 
-
-split_filename = "/home/rtc/Documents/dcs/asgard-cred1-server/cred1_split.json"
+# nrs should really be read from this file! 
+split_filename = root_path / "asgard-cred1-server/cred1_split.json"
 
 # subframe size definition from CRED 1 server input json
 with open(split_filename, 'r') as file:
@@ -93,7 +101,7 @@ with open(split_filename, 'r') as file:
 
 # frame sizes
 #global_frame_size = [256,320] # [nx,ny]
-nrs = 200 # number of reads without reset 
+nrs = 5#200 # number of reads without reset , make small for simulation mode for sake of time 
 global_frame_size = [256, 320, nrs]  # e.g., nrs = 100
 baldr_frame_sizes = []
 baldr_frame_corners = []
@@ -290,7 +298,7 @@ while True:
     gframe_now[cnt1,:,:] = global_im_tmp # set slice to the current one 
     
     global_frame_shm.set_data( gframe_now.astype(np.uint16) )
-
+    time.sleep(0.01) # just in case of write delays (bug shooting here, delete later)
     global_frame_shm.post_sems(1)
 
     #sub_im = baldr_sub_shms[i].get_data()

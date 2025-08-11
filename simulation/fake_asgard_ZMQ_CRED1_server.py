@@ -4,6 +4,15 @@ import zmq
 import threading
 import time
 import json
+import subprocess
+from pathlib import Path
+
+def get_git_root() -> Path:
+    return Path(
+        subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+    )
+
+root_path = get_git_root()
 
 # --- Shared State ---
 camera_state = {
@@ -21,12 +30,12 @@ camera_state = {
 
 phasemask_positions = {}
 for beam in [1,2,3,4]:
-    with open(f"simulation/fake_configs/phase_positions_beam{beam}_2025-01-01T00-00-00.json") as f:
+    with open(root_path / f"simulation/fake_configs/phase_positions_beam{beam}_2025-01-01T00-00-00.json") as f:
         phasemask_positions[beam] = json.load( f ) 
 
 #/home/rtc/Documents/dcs/simulation/fake_configs/phase_positions_beam4_2025-07-11T15-04-05.json
 
-with open("simulation/fake_configs/mds_state.json") as f:
+with open(root_path / "simulation/fake_configs/mds_state.json") as f:
     mds_state = json.load( f )
 
 motor_state = {d["name"]: d for d in mds_state}
@@ -41,7 +50,7 @@ def handle_camera_command(cmd: str) -> str:
         cmd = cmd[4:].strip().strip('"')
 
     if cmd in ("fps", "fps raw"):
-        return f"{camera_state['fps']:.2f} fps"
+        return f"{camera_state['fps']:.2f}"
     elif cmd in ("gain", "gain raw"):
         return f"{camera_state['gain']:.2f}"
     elif cmd in ("status", "status raw"):
