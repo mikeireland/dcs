@@ -431,17 +431,22 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
             auto ctrl_tbl = *ctrl_node.as_table();
 
             // state 
-            rtc.state.DM_flat = ctrl_tbl["DM_flat"] ? ctrl_tbl["DM_flat"].value_or(std::string("")) : "";
-            rtc.state.signal_space  =  ctrl_tbl["signal_space"] ? ctrl_tbl["signal_space"].value_or(std::string("")) : ""; 
-            rtc.state.LO = ctrl_tbl["LO"] ? ctrl_tbl["LO"].value_or(0) : 0;
-            rtc.state.controller_type = ctrl_tbl["controller_type"] ? ctrl_tbl["controller_type"].value_or(std::string("")) : "";
-            rtc.state.inverse_method_LO = ctrl_tbl["inverse_method_LO"] ? ctrl_tbl["inverse_method_LO"].value_or(std::string("")) : "";
-            rtc.state.inverse_method_HO = ctrl_tbl["inverse_method_HO"] ? ctrl_tbl["inverse_method_HO"].value_or(std::string("")) : "";
-            rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
-            rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
-            rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
-            rtc.state.simulation_mode = 1 ; 
-            
+            try{ 
+                rtc.state.DM_flat = ctrl_tbl["DM_flat"] ? ctrl_tbl["DM_flat"].value_or(std::string("")) : "";
+                rtc.state.signal_space  =  ctrl_tbl["signal_space"] ? ctrl_tbl["signal_space"].value_or(std::string("")) : ""; 
+                rtc.state.LO = ctrl_tbl["LO"] ? ctrl_tbl["LO"].value_or(0) : 0;
+                rtc.state.controller_type = ctrl_tbl["controller_type"] ? ctrl_tbl["controller_type"].value_or(std::string("")) : "";
+                rtc.state.inverse_method_LO = ctrl_tbl["inverse_method_LO"] ? ctrl_tbl["inverse_method_LO"].value_or(std::string("")) : "";
+                rtc.state.inverse_method_HO = ctrl_tbl["inverse_method_HO"] ? ctrl_tbl["inverse_method_HO"].value_or(std::string("")) : "";
+                rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
+                rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
+                rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
+                rtc.state.simulation_mode = 1 ; 
+            }catch (const std::exception& ex) {
+                std::cerr << "Error with state read-in: " << ex.what() << std::endl;
+                std::exit(1);
+            }
+            // pix
             // reduction products 
             try{ 
                 rtc.reduction.bias = convertTomlArrayToEigenMatrix(*ctrl_tbl["bias"].as_array(),rtc.reduction.bias,"bias");
@@ -484,7 +489,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.matrices.szp = ctrl_tbl["szp"].value_or(0.0);
             
                 rtc.matrices.I2A = convertTomlArrayToEigenMatrix(*ctrl_tbl["I2A"].as_array(),rtc.matrices.I2A,"I2A");
-                rtc.matrices.I2M = convertTomlArrayToEigenMatrix(*ctrl_tbl["I2M"].as_array(),rtc.matrices.I2M,"I2M");
+                //rtc.matrices.I2M = convertTomlArrayToEigenMatrix(*ctrl_tbl["I2M"].as_array(),rtc.matrices.I2M,"I2M");
                 rtc.matrices.I2M_LO = convertTomlArrayToEigenMatrix(*ctrl_tbl["I2M_LO"].as_array(),rtc.matrices.I2M_LO,"I2M_LO");
                 rtc.matrices.I2M_HO = convertTomlArrayToEigenMatrix(*ctrl_tbl["I2M_HO"].as_array(),rtc.matrices.I2M_HO,"I2M_HO");
                 rtc.matrices.M2C = convertTomlArrayToEigenMatrix(*ctrl_tbl["M2C"].as_array(),rtc.matrices.M2C,"M2C");
@@ -518,64 +523,88 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 std::exit(1);
             }
 
-            // limits float 
-            rtc.limits.close_on_strehl_limit = ctrl_tbl["close_on_strehl_limit"].value_or(0.0);
-            rtc.limits.open_on_strehl_limit = ctrl_tbl["open_on_strehl_limit"].value_or(0.0);
-            rtc.limits.open_on_flux_limit = ctrl_tbl["open_on_flux_limit"].value_or(0.0);
-            rtc.limits.open_on_dm_limit = ctrl_tbl["open_on_dm_limit"].value_or(0.0);
-            rtc.limits.LO_offload_limit = ctrl_tbl["LO_offload_limit"].value_or(0.0);
-
+            try{
+                // limits float 
+                rtc.limits.close_on_strehl_limit = ctrl_tbl["close_on_strehl_limit"].value_or(0.0);
+                rtc.limits.open_on_strehl_limit = ctrl_tbl["open_on_strehl_limit"].value_or(0.0);
+                rtc.limits.open_on_flux_limit = ctrl_tbl["open_on_flux_limit"].value_or(0.0);
+                rtc.limits.open_on_dm_limit = ctrl_tbl["open_on_dm_limit"].value_or(0.0);
+                rtc.limits.LO_offload_limit = ctrl_tbl["LO_offload_limit"].value_or(0.0);
+            }catch(const std::exception& ex) {
+                std::cerr << "Error with limits readin " << ex.what() << std::endl;
+                std::exit(1);
+            }
             // cam config when building interaction matrix 
-            if (auto cam_node = ctrl_tbl["camera_config"]; cam_node && cam_node.is_table()) {
-                auto cam_tbl = *cam_node.as_table();
+            try{
+                if (auto cam_node = ctrl_tbl["camera_config"]; cam_node && cam_node.is_table()) {
+                    auto cam_tbl = *cam_node.as_table();
 
-                rtc.cam.fps = cam_tbl["fps"].value_or(std::string(""));
-                rtc.cam.gain = cam_tbl["gain"].value_or(std::string(""));
-                rtc.cam.testpattern = cam_tbl["testpattern"].value_or(std::string(""));
+                    rtc.cam.fps = cam_tbl["fps"].value_or(std::string(""));
+                    rtc.cam.gain = cam_tbl["gain"].value_or(std::string(""));
+                    rtc.cam.testpattern = cam_tbl["testpattern"].value_or(std::string(""));
 
-                rtc.cam.fps  = cam_tbl["fps"].value_or(std::string(""));
-                rtc.cam.gain  = cam_tbl["gain"].value_or(std::string(""));
-                rtc.cam.testpattern = cam_tbl["testpattern"].value_or(std::string(""));
-                rtc.cam.bias = cam_tbl["bias"].value_or(std::string(""));
-                rtc.cam.flat = cam_tbl["flat"].value_or(std::string(""));
-                rtc.cam.imagetags = cam_tbl["imagetags"].value_or(std::string(""));
-                rtc.cam.led = cam_tbl["led"].value_or(std::string(""));
-                rtc.cam.events = cam_tbl["events"].value_or(std::string(""));
-                rtc.cam.extsynchro = cam_tbl["extsynchro"].value_or(std::string(""));
-                rtc.cam.rawimages = cam_tbl["rawimages"].value_or(std::string(""));
-                rtc.cam.cooling = cam_tbl["cooling"].value_or(std::string(""));
-                rtc.cam.mode = cam_tbl["mode"].value_or(std::string(""));
-                rtc.cam.resetwidth = cam_tbl["resetwidth"].value_or(std::string(""));
-                rtc.cam.nbreadworeset = cam_tbl["nbreadworeset"].value_or(std::string(""));
-                rtc.cam.cropping = cam_tbl["cropping"].value_or(std::string(""));
-                rtc.cam.cropping_columns = cam_tbl["cropping_columns"].value_or(std::string(""));
-                rtc.cam.cropping_rows = cam_tbl["cropping_rows"].value_or(std::string(""));
-                rtc.cam.aduoffset = cam_tbl["aduoffset"].value_or(std::string(""));
-
-        }
+                    rtc.cam.fps  = cam_tbl["fps"].value_or(std::string(""));
+                    rtc.cam.gain  = cam_tbl["gain"].value_or(std::string(""));
+                    rtc.cam.testpattern = cam_tbl["testpattern"].value_or(std::string(""));
+                    rtc.cam.bias = cam_tbl["bias"].value_or(std::string(""));
+                    rtc.cam.flat = cam_tbl["flat"].value_or(std::string(""));
+                    rtc.cam.imagetags = cam_tbl["imagetags"].value_or(std::string(""));
+                    rtc.cam.led = cam_tbl["led"].value_or(std::string(""));
+                    rtc.cam.events = cam_tbl["events"].value_or(std::string(""));
+                    rtc.cam.extsynchro = cam_tbl["extsynchro"].value_or(std::string(""));
+                    rtc.cam.rawimages = cam_tbl["rawimages"].value_or(std::string(""));
+                    rtc.cam.cooling = cam_tbl["cooling"].value_or(std::string(""));
+                    rtc.cam.mode = cam_tbl["mode"].value_or(std::string(""));
+                    rtc.cam.resetwidth = cam_tbl["resetwidth"].value_or(std::string(""));
+                    rtc.cam.nbreadworeset = cam_tbl["nbreadworeset"].value_or(std::string(""));
+                    rtc.cam.cropping = cam_tbl["cropping"].value_or(std::string(""));
+                    rtc.cam.cropping_columns = cam_tbl["cropping_columns"].value_or(std::string(""));
+                    rtc.cam.cropping_rows = cam_tbl["cropping_rows"].value_or(std::string(""));
+                    rtc.cam.aduoffset = cam_tbl["aduoffset"].value_or(std::string(""));
+                }
+            }
+            catch(const std::exception& ex) {
+                std::cerr << "Error with camera configuration readin" << ex.what() << std::endl;
+                std::exit(1);
+            }
+        
     }
     }
 
-    // init telemetry 
-    rtc.telem = bdr_telem();
+    std::cout << "here here" << std::endl;
 
-    // init contoller 
-    //// heree
-    //rtc.controller = bdr_controller(); 
-    //int LO_nRows = rtc.matrices.I2M_LO.cols();//rtc_config.matrices.I2M_LO.rows();
-    //int HO_nRows = rtc.matrices.I2M_HO.cols();//rtc_config.matrices.I2M_HO.rows();
-    //std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
-    rtc.ctrl_LO_config = bdr_controller( 2 ); //LO_nRows ); 
-    rtc.ctrl_HO_config = bdr_controller( 140 );//HO_nRows ); 
+    try{    
+        // init telemetry 
+        rtc.telem = bdr_telem();
 
-    std::cout << "in read in rtc.ctrl_LO_config.kp.size() = " << rtc.ctrl_LO_config.kp.size() << std::endl;
+        // init contoller 
+        //// heree
+        //rtc.controller = bdr_controller(); 
+        //int LO_nRows = rtc.matrices.I2M_LO.cols();//rtc_config.matrices.I2M_LO.rows();
+        //int HO_nRows = rtc.matrices.I2M_HO.cols();//rtc_config.matrices.I2M_HO.rows();
+        //std::cout << "LO_nRows = " << LO_nRows << ", HO_nRows = " << HO_nRows << std::endl;
+        rtc.ctrl_LO_config = bdr_controller( 2 ); //LO_nRows ); 
+        rtc.ctrl_HO_config = bdr_controller( 140 );//HO_nRows ); 
 
-            
-    // write method , back to toml, or json?
+        std::cout << "in read in rtc.ctrl_LO_config.kp.size() = " << rtc.ctrl_LO_config.kp.size() << std::endl;
+
+                
+        // write method , back to toml, or json?
 
 
-    // Validate the master configuration.
-    rtc.validate();
+    }catch (const std::exception& ex) {
+        std::cerr << "Error initializing telemetry or controller: " << ex.what() << std::endl;
+        std::exit(1);
+    }
+
+    try{
+        // Validate the master configuration.
+        rtc.validate();
+    }catch(const std::exception& ex) {
+        std::cerr << "Error validating RTC configuration: " << ex.what() << std::endl;
+        std::exit(1);
+    }
+
     return rtc;
 }
 
@@ -595,36 +624,85 @@ void change_boxcar(int cmd) {
     }
 }
 
+// test in TTR115.0035 (not tested yet)
+// JSON-returning version compatible with Commander
+nlohmann::json poll_telem_vector(std::string name) {
+    static const std::unordered_map<std::string,
+        boost::circular_buffer<Eigen::VectorXd> bdr_telem::*> telemetry_map = {
+        {"img",    &bdr_telem::img},
+        {"img_dm", &bdr_telem::img_dm},
+        {"signal", &bdr_telem::signal},
+        {"e_LO",   &bdr_telem::e_LO},
+        {"u_LO",   &bdr_telem::u_LO},
+        {"e_HO",   &bdr_telem::e_HO},
+        {"u_HO",   &bdr_telem::u_HO},
+        {"c_LO",   &bdr_telem::c_LO},
+        {"c_HO",   &bdr_telem::c_HO}
+    };
+
+    nlohmann::json j;
+
+    auto it = telemetry_map.find(name);
+    if (it == telemetry_map.end()) {
+        // consistent, explicit error payload
+        return nlohmann::json{{"ok", false}, {"error", "unknown field"}, {"field", name}};
+    }
+
+    std::lock_guard<std::mutex> lk(telemetry_mutex);
+
+    const auto& buffer = rtc_config.telem.*(it->second);
+    const auto n = buffer.size();
+    if (n < 2) {
+        // “no data yet” -> null data with ok=false
+        return nlohmann::json{{"ok", false}, {"error", "insufficient data"}, {"size", n}};
+    }
+
+    const Eigen::VectorXd& v = buffer[n - 2];
+    // Convert Eigen -> std::vector<double> -> JSON array
+    std::vector<double> out(v.data(), v.data() + v.size());
+
+    j = nlohmann::json{
+        {"ok",   true},
+        {"name", name},
+        {"size", v.size()},
+        {"data", out}
+    };
+    return j;
+}
+
+
 // // test in TTR115.0035 (not tested yet)
-// std::optional<Eigen::VectorXd> poll_telem_vector(const std::string& name) {
-//     // get second last elemet (vector) from the baldr telemetry buffer
-//     // we only poll the second last element of the telemetry to avoid race conditions!
-//     static const std::unordered_map<std::string, boost::circular_buffer<Eigen::VectorXd> bdr_telem::*> telemetry_map = {
-//         {"img",     &bdr_telem::img},
-//         {"img_dm",  &bdr_telem::img_dm},
-//         {"signal",  &bdr_telem::signal},
-//         {"e_LO",    &bdr_telem::e_LO},
-//         {"u_LO",    &bdr_telem::u_LO},
-//         {"e_HO",    &bdr_telem::e_HO},
-//         {"u_HO",    &bdr_telem::u_HO},
-//         {"c_LO",    &bdr_telem::c_LO},
-//         {"c_HO",    &bdr_telem::c_HO}
-//     };
+// JSON-returning scalar poll (Commander-friendly)
+nlohmann::json poll_telem_scalar(std::string name) {
+    // Only true scalars here. (LO/HO states are ints—expose via a separate command if needed.)
+    static const std::unordered_map<std::string,
+        boost::circular_buffer<double> bdr_telem::*> scalar_map = {
+        {"rmse_est", &bdr_telem::rmse_est},
+        {"snr",      &bdr_telem::snr},
+        // add more scalar fields here if you have them
+    };
 
-//     auto it = telemetry_map.find(name);
-//     if (it == telemetry_map.end()) {
-//         return std::nullopt;  // invalid field name
-//     }
+    auto it = scalar_map.find(name);
+    if (it == scalar_map.end()) {
+        return nlohmann::json{{"ok", false}, {"error", "unknown field"}, {"field", name}};
+    }
 
-//     const auto& buffer = telem.*(it->second);
-//     if (buffer.size() < 2) {
-//         return std::nullopt;  // not enough data to safely return the penultimate
-//     }
+    std::lock_guard<std::mutex> lk(telemetry_mutex);
 
-//     return buffer[buffer.size() - 2];  // second-to-last element
-// }
+    const auto& buffer = rtc_config.telem.*(it->second);
+    const auto n = buffer.size();
+    if (n < 2) {
+        return nlohmann::json{{"ok", false}, {"error", "insufficient data"}, {"size", n}};
+    }
 
-// // test in TTR115.0035 (not tested yet)
+    const double val = buffer[n - 2];
+    return nlohmann::json{
+        {"ok",   true},
+        {"name", name},
+        {"data", val}
+    };
+}
+//old version
 // std::optional<double> poll_telem_scalar(const std::string& name) {
 //     // we don't poll LO or HO state (these returns ints and could be implemented in a seperate function)
 //     static const std::unordered_map<std::string, boost::circular_buffer<double> bdr_telem::*> scalar_map = {
@@ -1600,18 +1678,18 @@ COMMANDER_REGISTER(m)
           "Usage: reload_config [\"new_filename.toml\", \"new_mask\"]",
           "args"_arg);
 
-    // // test in TTR115.0035 (not tested yet)
-    // m.def("poll_telem_vector", poll_telem_vector,
-    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field (must be a vector).\n"
-    //     "Usage: poll_telem_vector u_HO\n",
-    //     "telem fields : img, img_dm, signal, e_LO, u_LO, e_HO, u_HO, c_LO, c_HO"
-    //     "args"_arg);
+    //test in TTR115.0035 (not tested yet)
+    m.def("poll_telem_vector", poll_telem_vector,
+        "poll the second last entry to baldr's rolling telemetry buffers for the given field (must be a vector).\n"
+        "Usage: poll_telem_vector u_HO\n",
+        "telem fields : img, img_dm, signal, e_LO, u_LO, e_HO, u_HO, c_LO, c_HO"
+        "args"_arg);
 
-    // // test in TTR115.0035 (not tested yet)
-    // m.def("poll_telem_scalar", poll_telem_scalar,
-    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
-    //     "Usage: poll_telem_vector snr",
-    //     "args"_arg);
+    // test in TTR115.0035 (not tested yet)
+    m.def("poll_telem_scalar", poll_telem_scalar,
+        "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
+        "Usage: poll_telem_vector snr",
+        "args"_arg);
 
 
  }
@@ -1675,12 +1753,16 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error parsing file " << filename << ": " << e.what() << std::endl;
         return 1;
     }
-
+    
     // Now set up rtc_config
     std::string beamKey = "beam" + std::to_string(beam_id);
+    
+    
     try {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
-        
+
+        std::cout << "here " << std::endl;
+
         std::cout << "[INFO] RTC configuration initialized for beam " << beam_id << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Error initializing RTC config: " << e.what() << std::endl;
