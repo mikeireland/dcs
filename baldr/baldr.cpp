@@ -595,55 +595,86 @@ void change_boxcar(int cmd) {
     }
 }
 
+
+// test in TTR115.0035 (not tested yet)
+// JSON-returning version compatible with Commander
+nlohmann::json poll_telem_vector(std::string name) {
+    static const std::unordered_map<std::string,
+        boost::circular_buffer<Eigen::VectorXd> bdr_telem::*> telemetry_map = {
+        {"img",    &bdr_telem::img},
+        {"img_dm", &bdr_telem::img_dm},
+        {"signal", &bdr_telem::signal},
+        {"e_LO",   &bdr_telem::e_LO},
+        {"u_LO",   &bdr_telem::u_LO},
+        {"e_HO",   &bdr_telem::e_HO},
+        {"u_HO",   &bdr_telem::u_HO},
+        {"c_LO",   &bdr_telem::c_LO},
+        {"c_HO",   &bdr_telem::c_HO}
+    };
+
+    nlohmann::json j;
+
+    auto it = telemetry_map.find(name);
+    if (it == telemetry_map.end()) {
+        // consistent, explicit error payload
+        return nlohmann::json{{"ok", false}, {"error", "unknown field"}, {"field", name}};
+    }
+
+    std::lock_guard<std::mutex> lk(telemetry_mutex);
+
+    const auto& buffer = rtc_config.telem.*(it->second);
+    const auto n = buffer.size();
+    if (n < 2) {
+        // “no data yet” -> null data with ok=false
+        return nlohmann::json{{"ok", false}, {"error", "insufficient data"}, {"size", n}};
+    }
+
+    const Eigen::VectorXd& v = buffer[n - 2];
+    // Convert Eigen -> std::vector<double> -> JSON array
+    std::vector<double> out(v.data(), v.data() + v.size());
+
+    j = nlohmann::json{
+        {"ok",   true},
+        {"name", name},
+        {"size", v.size()},
+        {"data", out}
+    };
+    return j;
+}
+
+
 // // test in TTR115.0035 (not tested yet)
-// std::optional<Eigen::VectorXd> poll_telem_vector(const std::string& name) {
-//     // get second last elemet (vector) from the baldr telemetry buffer
-//     // we only poll the second last element of the telemetry to avoid race conditions!
-//     static const std::unordered_map<std::string, boost::circular_buffer<Eigen::VectorXd> bdr_telem::*> telemetry_map = {
-//         {"img",     &bdr_telem::img},
-//         {"img_dm",  &bdr_telem::img_dm},
-//         {"signal",  &bdr_telem::signal},
-//         {"e_LO",    &bdr_telem::e_LO},
-//         {"u_LO",    &bdr_telem::u_LO},
-//         {"e_HO",    &bdr_telem::e_HO},
-//         {"u_HO",    &bdr_telem::u_HO},
-//         {"c_LO",    &bdr_telem::c_LO},
-//         {"c_HO",    &bdr_telem::c_HO}
-//     };
+// JSON-returning scalar poll (Commander-friendly)
+nlohmann::json poll_telem_scalar(std::string name) {
+    // Only true scalars here. (LO/HO states are ints—expose via a separate command if needed.)
+    static const std::unordered_map<std::string,
+        boost::circular_buffer<double> bdr_telem::*> scalar_map = {
+        {"rmse_est", &bdr_telem::rmse_est},
+        {"snr",      &bdr_telem::snr},
+        // add more scalar fields here if you have them
+    };
 
-//     auto it = telemetry_map.find(name);
-//     if (it == telemetry_map.end()) {
-//         return std::nullopt;  // invalid field name
-//     }
+    auto it = scalar_map.find(name);
+    if (it == scalar_map.end()) {
+        return nlohmann::json{{"ok", false}, {"error", "unknown field"}, {"field", name}};
+    }
 
-//     const auto& buffer = telem.*(it->second);
-//     if (buffer.size() < 2) {
-//         return std::nullopt;  // not enough data to safely return the penultimate
-//     }
+    std::lock_guard<std::mutex> lk(telemetry_mutex);
 
-//     return buffer[buffer.size() - 2];  // second-to-last element
-// }
+    const auto& buffer = rtc_config.telem.*(it->second);
+    const auto n = buffer.size();
+    if (n < 2) {
+        return nlohmann::json{{"ok", false}, {"error", "insufficient data"}, {"size", n}};
+    }
 
-// // test in TTR115.0035 (not tested yet)
-// std::optional<double> poll_telem_scalar(const std::string& name) {
-//     // we don't poll LO or HO state (these returns ints and could be implemented in a seperate function)
-//     static const std::unordered_map<std::string, boost::circular_buffer<double> bdr_telem::*> scalar_map = {
-//         {"rmse_est", &bdr_telem::rmse_est},
-//         {"snr",      &bdr_telem::snr}
-//     };
+    const double val = buffer[n - 2];
+    return nlohmann::json{
+        {"ok",   true},
+        {"name", name},
+        {"data", val}
+    };
+}
 
-//     auto it = scalar_map.find(name);
-//     if (it == scalar_map.end()) {
-//         return std::nullopt;
-//     }
-
-//     const auto& buffer = telem.*(it->second);
-//     if (buffer.size() < 2) {
-//         return std::nullopt;
-//     }
-
-//     return buffer[buffer.size() - 2];
-// }
 
 
 
@@ -1600,18 +1631,18 @@ COMMANDER_REGISTER(m)
           "Usage: reload_config [\"new_filename.toml\", \"new_mask\"]",
           "args"_arg);
 
-    // // test in TTR115.0035 (not tested yet)
-    // m.def("poll_telem_vector", poll_telem_vector,
-    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field (must be a vector).\n"
-    //     "Usage: poll_telem_vector u_HO\n",
-    //     "telem fields : img, img_dm, signal, e_LO, u_LO, e_HO, u_HO, c_LO, c_HO"
-    //     "args"_arg);
+    // test in TTR115.0035 (not tested yet)
+    m.def("poll_telem_vector", poll_telem_vector,
+        "poll the second last entry to baldr's rolling telemetry buffers for the given field (must be a vector).\n"
+        "Usage: poll_telem_vector 'u_HO'\n",
+        "telem fields : img, img_dm, signal, e_LO, u_LO, e_HO, u_HO, c_LO, c_HO"
+        "args"_arg);
 
-    // // test in TTR115.0035 (not tested yet)
-    // m.def("poll_telem_scalar", poll_telem_scalar,
-    //     "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
-    //     "Usage: poll_telem_vector snr",
-    //     "args"_arg);
+    // test in TTR115.0035 (not tested yet)
+    m.def("poll_telem_scalar", poll_telem_scalar,
+        "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
+        "Usage: poll_telem_vector 'snr'",
+        "args"_arg);
 
 
  }
