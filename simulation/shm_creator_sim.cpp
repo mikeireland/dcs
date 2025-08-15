@@ -233,7 +233,9 @@ int main() {
     file >> j;
 
     int NBsem = 10;
-    int datatype = _DATATYPE_UINT16;
+    // cross check these data types with real CRED 1 server : asgard-cred1-server/asgard_ZMQ_CRED1_server.c
+    int datatype_subframe = _DATATYPE_INT32;//_DATATYPE_UINT16;
+    int datatype_global = _DATATYPE_UINT16; 
 
     for (int i = 1; i <= 4; ++i) {
         std::string key = "baldr" + std::to_string(i);
@@ -245,7 +247,7 @@ int main() {
         int ysz = j[key]["ysz"];
         //std::string shm_name = key + ".im.shm";  // FIXED: no "/dev/shm/"
         std::string shm_name = "baldr" + std::to_string(i); // dont nee the .im.shm extention - this is created automatically 
-        if (create_image(shm_name, xsz, ysz, datatype, NBsem) == 0) {
+        if (create_image(shm_name, xsz, ysz, datatype_subframe, NBsem) == 0) {
             std::cout << "Created " << shm_name << " OK.\n";
         } else {
             std::cerr << "ERROR: Could not create " << shm_name << "\n";
@@ -256,7 +258,7 @@ int main() {
     }
 
     // Also create global SHM
-    if (create_image("cred1", 320, 256, datatype, NBsem) == 0) {\
+    if (create_image("cred1", 320, 256, datatype_global, NBsem) == 0) {\
         std::cout << "Created " << "cred1" << " OK.\n";
     } else{
         std::cerr << "ERROR: Could not create cred1.im.shm\n";

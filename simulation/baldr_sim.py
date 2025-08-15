@@ -130,7 +130,7 @@ f_cred1_global = "/dev/shm/cred1.im.shm"
 
 
 global_frame_shm = shm(f_cred1_global,  nosem=False)  # do not pass data use ./shm_creator_sim!!! 
-global_frame_shm.set_data( np.zeros(global_frame_size)  )
+global_frame_shm.set_data( np.zeros(global_frame_size).astype(dtype=np.uint16) )  # create empty global frame shm)
 
 # create SHM
 for ct, i in enumerate([1,2,3,4]):
@@ -264,7 +264,7 @@ while True:
         # ---------------------------------------
 
         # update the shm 
-        baldr_sub_shms[i].set_data( subim_tmp.astype(dtype=np.uint16) )
+        baldr_sub_shms[i].set_data( subim_tmp.astype(dtype=np.int32) )
         baldr_sub_shms[i].mtdata['cnt0'] = cnt0 
         baldr_sub_shms[i].mtdata['cnt1'] = cnt1 
         # post semaphore 
@@ -290,7 +290,7 @@ while True:
         xsz, ysz  = baldr_frame_sizes[ct]
 
         # add in the baldr subframe to the global frame 
-        global_im_tmp[y0:y0+ysz,x0:x0+xsz] = baldr_sub_shms[i].get_data().copy() 
+        global_im_tmp[y0:y0+ysz,x0:x0+xsz] = baldr_sub_shms[i].get_data().copy()
 
 
     gframe_now = global_frame_shm.get_data().copy() 
@@ -317,7 +317,7 @@ while True:
 
 
         
-    # global_frame_shm.set_data( global_im_tmp.astype(np.uint16) )
+    # global_frame_shm.set_data( global_im_tmp.astype(np.int32) )
 
     # global_frame_shm.post_sems(1)
 
@@ -380,7 +380,7 @@ while True:
 # dm.shm0.get_data()
 
 # # set data on ch 1
-# dm.shms[1].set_data( np.eye(12, dtype=np.uint16) )
+# dm.shms[1].set_data( np.eye(12, dtype=np.int32) )
 
 # # post semaphore to update it on combined ch 
 # dm.shm0.post_sems(1)
