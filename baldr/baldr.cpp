@@ -702,26 +702,6 @@ nlohmann::json poll_telem_scalar(std::string name) {
         {"data", val}
     };
 }
-//old version
-// std::optional<double> poll_telem_scalar(const std::string& name) {
-//     // we don't poll LO or HO state (these returns ints and could be implemented in a seperate function)
-//     static const std::unordered_map<std::string, boost::circular_buffer<double> bdr_telem::*> scalar_map = {
-//         {"rmse_est", &bdr_telem::rmse_est},
-//         {"snr",      &bdr_telem::snr}
-//     };
-
-//     auto it = scalar_map.find(name);
-//     if (it == scalar_map.end()) {
-//         return std::nullopt;
-//     }
-
-//     const auto& buffer = telem.*(it->second);
-//     if (buffer.size() < 2) {
-//         return std::nullopt;
-//     }
-
-//     return buffer[buffer.size() - 2];
-// }
 
 
 
@@ -819,6 +799,7 @@ void new_dark_and_bias() {
 }
 
 
+
 void capture_dark_and_bias() {
     try {
         pauseRTC();  // Pause RTC while capturing frames
@@ -834,6 +815,353 @@ void capture_dark_and_bias() {
         resumeRTC(); // Try to resume even on error
     }
 }
+
+
+
+
+//// rtc config file getter and setters ! 
+// // test in TTR115.0035 (not tested yet)
+
+// A handler for a single exposed field on rtc_config.
+// We only USE .get() now; .set() is reserved for later.
+struct FieldHandle {
+    std::string type;                             // "double", "int", "bool", "string", "vector<double>", ...
+    std::function<nlohmann::json()> get;          // returns current value as JSON
+    std::function<bool(const nlohmann::json&)> set;  // optional; unused for now
+};
+
+// --- Helper factories: GETTER ONLY now; set = nullptr for expansion later ---
+
+template<typename T>
+static FieldHandle make_scalar_field_getter(T bdr_rtc_config::* ptr, const char* type_name) {
+    return FieldHandle{
+        type_name,
+        // getter
+        [ptr]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return rtc_config.*ptr;               // nlohmann::json supports numbers/bools/strings directly
+        },
+        /*set*/ nullptr
+    };
+}
+
+template<typename Sub, typename T>
+static FieldHandle make_nested_scalar_getter(Sub bdr_rtc_config::* sub, T Sub::* mem, const char* type_name) {
+    return FieldHandle{
+        type_name,
+        [sub, mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return (rtc_config.*sub).*mem;
+        },
+        /*set*/ nullptr
+    };
+}
+
+template<typename T>
+static FieldHandle make_vector_field_getter(std::vector<T> bdr_rtc_config::* ptr, const char* type_name) {
+    return FieldHandle{
+        type_name,
+        [ptr]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return rtc_config.*ptr;               // std::vector<T> -> JSON array
+        },
+        /*set*/ nullptr
+    };
+}
+
+// Helper for nested Eigen::VectorXd -> JSON array
+template<typename Sub>
+static FieldHandle make_nested_eigenvec_getter(Sub bdr_rtc_config::* sub,
+                                               Eigen::VectorXd Sub::* mem,
+                                               const char* type_name = "vector<double>") {
+    return FieldHandle{
+        type_name,
+        [sub, mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            const Eigen::VectorXd& v = (rtc_config.*sub).*mem;
+            return std::vector<double>(v.data(), v.data() + v.size());
+        },
+        /*set*/ nullptr
+    };
+}
+
+// ---------- Generic Eigen -> JSON helpers (vectors & matrices) ----------
+template<typename EigenVec>
+static nlohmann::json eigen_vector_to_json(const EigenVec& v) {
+    using S = typename EigenVec::Scalar;
+    // Avoid char-like JSON by widening integral scalars
+    if constexpr (std::is_integral_v<S>) {
+        std::vector<long long> out(v.size());
+        for (Eigen::Index i = 0; i < v.size(); ++i) out[i] = static_cast<long long>(v(i));
+        return out;
+    } else {
+        std::vector<double> out(v.size());
+        for (Eigen::Index i = 0; i < v.size(); ++i) out[i] = static_cast<double>(v(i));
+        return out;
+    }
+}
+
+template<typename EigenMat>
+static nlohmann::json eigen_matrix_to_json(const EigenMat& M) {
+    using S = typename EigenMat::Scalar;
+    nlohmann::json rows = nlohmann::json::array();
+    for (Eigen::Index r = 0; r < M.rows(); ++r) {
+        if constexpr (std::is_integral_v<S>) {
+            std::vector<long long> row(M.cols());
+            for (Eigen::Index c = 0; c < M.cols(); ++c) row[c] = static_cast<long long>(M(r,c));
+            rows.push_back(row);
+        } else {
+            std::vector<double> row(M.cols());
+            for (Eigen::Index c = 0; c < M.cols(); ++c) row[c] = static_cast<double>(M(r,c));
+            rows.push_back(row);
+        }
+    }
+    return rows;
+}
+
+// ---------- FieldHandle factories for Eigen (nested and top-level) ----------
+template<typename Sub, typename EigenVec>
+static FieldHandle make_nested_eigen_vector_getter(Sub bdr_rtc_config::* sub,
+                                                   EigenVec Sub::* mem,
+                                                   const char* type_name = "vector") {
+    return FieldHandle{
+        type_name,
+        [sub, mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_vector_to_json((rtc_config.*sub).*mem);
+        },
+        /*set*/ nullptr
+    };
+}
+
+template<typename Sub, typename EigenMat>
+static FieldHandle make_nested_eigen_matrix_getter(Sub bdr_rtc_config::* sub,
+                                                   EigenMat Sub::* mem,
+                                                   const char* type_name = "matrix") {
+    return FieldHandle{
+        type_name,
+        [sub, mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_matrix_to_json((rtc_config.*sub).*mem);
+        },
+        /*set*/ nullptr
+    };
+}
+
+template<typename EigenVec>
+static FieldHandle make_eigen_vector_field_getter(EigenVec bdr_rtc_config::* mem,
+                                                  const char* type_name = "vector") {
+    return FieldHandle{
+        type_name,
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_vector_to_json(rtc_config.*mem);
+        },
+        /*set*/ nullptr
+    };
+}
+
+template<typename EigenMat>
+static FieldHandle make_eigen_matrix_field_getter(EigenMat bdr_rtc_config::* mem,
+                                                  const char* type_name = "matrix") {
+    return FieldHandle{
+        type_name,
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_matrix_to_json(rtc_config.*mem);
+        },
+        /*set*/ nullptr
+    };
+}
+
+// // ---------------- Register ONLY the fields we want visible ----------------
+// // Start empty; add lines like the commented examples below when ready.
+// // NOTE: Update names to match your actual bdr_rtc_config definition.
+// static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
+//     // Example top-level scalars:
+//     // {"fps_override",      make_scalar_field_getter(&bdr_rtc_config::fps_override, "double")},
+//     // {"gain_override",     make_scalar_field_getter(&bdr_rtc_config::gain_override, "double")},
+//     // {"override_gain_fps", make_scalar_field_getter(&bdr_rtc_config::override_gain_fps, "bool")},
+
+//     // Example nested (replace 'CtrlType' and members with your real types):
+//     // {"ctrl_LO.kp", make_nested_scalar_getter(&bdr_rtc_config::ctrl_LO, &CtrlType::kp, "double")},
+//     { "ctrl_LO.ki",make_nested_eigenvec_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ki) },
+//     // {"ctrl_HO.rho", make_nested_scalar_getter(&bdr_rtc_config::ctrl_HO, &LeakyIntegrator::rho, "double")},
+
+//     // Example vector:
+//     // {"modal_gains_LO", make_vector_field_getter(&bdr_rtc_config::modal_gains_LO, "vector<double>")},
+// };
+static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
+    // ----- state -----
+    {"state.DM_flat",            make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::DM_flat, "string")},
+    {"state.signal_space",       make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::signal_space, "string")},
+    {"state.LO",                 make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::LO, "int")},
+    {"state.controller_type",    make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::controller_type, "string")},
+    {"state.inverse_method_LO",  make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::inverse_method_LO, "string")},
+    {"state.inverse_method_HO",  make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::inverse_method_HO, "string")},
+    {"state.phasemask",          make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::phasemask, "string")},
+    {"state.auto_close",         make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::auto_close, "int")},
+    {"state.auto_open",          make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::auto_open, "int")},
+    {"state.auto_tune",          make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::auto_tune, "int")},
+    {"state.take_telemetry",     make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::take_telemetry, "int")},
+    {"state.simulation_mode",    make_nested_scalar_getter(&bdr_rtc_config::state, &bdr_state::simulation_mode, "int")},
+
+    // ----- reduction (Eigen::VectorXd) -----
+    {"reduction.bias",           make_nested_eigen_vector_getter(&bdr_rtc_config::reduction, &bdr_reduction::bias, "vector<double>")},
+    {"reduction.bias_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reduction, &bdr_reduction::bias_dm, "vector<double>")},
+    {"reduction.dark",           make_nested_eigen_vector_getter(&bdr_rtc_config::reduction, &bdr_reduction::dark, "vector<double>")},
+    {"reduction.dark_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reduction, &bdr_reduction::dark_dm, "vector<double>")},
+
+    // ----- pixels (integer Eigen vectors) -----
+    {"pixels.crop_pixels",       make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::crop_pixels, "vector<int16>")},
+    {"pixels.bad_pixels",        make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::bad_pixels, "vector<int32>")},
+    {"pixels.pupil_pixels",      make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::pupil_pixels, "vector<int32>")},
+    {"pixels.interior_pixels",   make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::interior_pixels, "vector<int32>")},
+    {"pixels.secondary_pixels",  make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::secondary_pixels, "vector<int32>")},
+    {"pixels.exterior_pixels",   make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::exterior_pixels, "vector<int32>")},
+
+    // ----- reference_pupils (Eigen::VectorXd) -----
+    {"reference_pupils.I0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0, "vector<double>")},
+    {"reference_pupils.N0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::N0, "vector<double>")},
+    {"reference_pupils.norm_pupil",   make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil, "vector<double>")},
+    {"reference_pupils.norm_pupil_dm",make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil_dm, "vector<double>")},
+    {"reference_pupils.I0_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm, "vector<double>")},
+
+    // ----- matrices (Eigen::MatrixXd) + sizes -----
+    {"matrices.I2A",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2A, "matrix<double>")},
+    {"matrices.I2M",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M, "matrix<double>")},
+    {"matrices.I2M_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_LO, "matrix<double>")},
+    {"matrices.I2M_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_HO, "matrix<double>")},
+    {"matrices.M2C",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C, "matrix<double>")},
+    {"matrices.M2C_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_LO, "matrix<double>")},
+    {"matrices.M2C_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_HO, "matrix<double>")},
+    {"matrices.I2rms_sec",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_sec, "matrix<double>")},
+    {"matrices.I2rms_ext",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_ext, "matrix<double>")},
+    {"matrices.szm",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szm, "int")},
+    {"matrices.sza",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::sza, "int")},
+    {"matrices.szp",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szp, "int")},
+
+    // ----- LO/HO controller configs (bdr_controller) -----
+    {"ctrl_LO_config.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kp, "vector<double>")},
+    {"ctrl_LO_config.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::ki, "vector<double>")},
+    {"ctrl_LO_config.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kd, "vector<double>")},
+    {"ctrl_LO_config.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::lower_limits, "vector<double>")},
+    {"ctrl_LO_config.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::upper_limits, "vector<double>")},
+    {"ctrl_LO_config.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::set_point, "vector<double>")},
+
+    {"ctrl_HO_config.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kp, "vector<double>")},
+    {"ctrl_HO_config.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::ki, "vector<double>")},
+    {"ctrl_HO_config.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kd, "vector<double>")},
+    {"ctrl_HO_config.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::lower_limits, "vector<double>")},
+    {"ctrl_HO_config.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::upper_limits, "vector<double>")},
+    {"ctrl_HO_config.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::set_point, "vector<double>")},
+
+    // ----- loop limits -----
+    {"limits.close_on_strehl_limit", make_nested_scalar_getter(&bdr_rtc_config::limits, &bdr_limits::close_on_strehl_limit, "float")},
+    {"limits.open_on_strehl_limit",  make_nested_scalar_getter(&bdr_rtc_config::limits, &bdr_limits::open_on_strehl_limit, "float")},
+    {"limits.open_on_flux_limit",    make_nested_scalar_getter(&bdr_rtc_config::limits, &bdr_limits::open_on_flux_limit, "float")},
+    {"limits.open_on_dm_limit",      make_nested_scalar_getter(&bdr_rtc_config::limits, &bdr_limits::open_on_dm_limit, "float")},
+    {"limits.LO_offload_limit",      make_nested_scalar_getter(&bdr_rtc_config::limits, &bdr_limits::LO_offload_limit, "float")},
+
+    // ----- camera (strings) -----
+    {"cam.fps",               make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::fps, "string")},
+    {"cam.gain",              make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::gain, "string")},
+    {"cam.testpattern",       make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::testpattern, "string")},
+    {"cam.bias",              make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::bias, "string")},
+    {"cam.flat",              make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::flat, "string")},
+    {"cam.imagetags",         make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::imagetags, "string")},
+    {"cam.led",               make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::led, "string")},
+    {"cam.events",            make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::events, "string")},
+    {"cam.extsynchro",        make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::extsynchro, "string")},
+    {"cam.rawimages",         make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::rawimages, "string")},
+    {"cam.cooling",           make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::cooling, "string")},
+    {"cam.mode",              make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::mode, "string")},
+    {"cam.resetwidth",        make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::resetwidth, "string")},
+    {"cam.nbreadworeset",     make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::nbreadworeset, "string")},
+    {"cam.cropping",          make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::cropping, "string")},
+    {"cam.cropping_columns",  make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::cropping_columns, "string")},
+    {"cam.cropping_rows",     make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::cropping_rows, "string")},
+    {"cam.aduoffset",         make_nested_scalar_getter(&bdr_rtc_config::cam, &bdr_cam::aduoffset, "string")},
+
+    // ----- filters (uint8 masks + VectorXf DM projections) -----
+    {"filters.bad_pixel_mask",   make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::bad_pixel_mask, "vector<uint8>")},
+    {"filters.bad_pixel_mask_dm",make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::bad_pixel_mask_dm, "vector<float>")},
+    {"filters.pupil",            make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::pupil, "vector<uint8>")},
+    {"filters.pupil_dm",         make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::pupil_dm, "vector<float>")},
+    {"filters.secondary",        make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::secondary, "vector<uint8>")},
+    {"filters.secondary_dm",     make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::secondary_dm, "vector<float>")},
+    {"filters.exterior",         make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::exterior, "vector<uint8>")},
+    {"filters.exterior_dm",      make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::exterior_dm, "vector<float>")},
+    {"filters.inner_pupil_filt", make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::inner_pupil_filt, "vector<uint8>")},
+    {"filters.inner_pupil_filt_dm", make_nested_eigen_vector_getter(&bdr_rtc_config::filters, &bdr_filters::inner_pupil_filt_dm, "vector<float>")},
+
+    // ================= Derived/runtime (top-level) =================
+    {"zeroCmd",              make_eigen_vector_field_getter(&bdr_rtc_config::zeroCmd, "vector<double>")},
+    {"fps",                  make_scalar_field_getter(&bdr_rtc_config::fps, "double")},
+    {"gain",                 make_scalar_field_getter(&bdr_rtc_config::gain, "double")},
+    {"scale",                make_scalar_field_getter(&bdr_rtc_config::scale, "double")},
+    {"I2M_LO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},
+    {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
+    {"N0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
+    {"I0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
+    {"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
+    {"sec_idx",              make_scalar_field_getter(&bdr_rtc_config::sec_idx, "int")},
+    {"m_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::m_s_runtime, "double")},
+    {"b_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::b_s_runtime, "double")},
+
+    // ----- runtime controllers (PIDController) -----
+    {"ctrl_LO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ctrl_type, "string")},
+    {"ctrl_LO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kp, "vector<double>")},
+    {"ctrl_LO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ki, "vector<double>")},
+    {"ctrl_LO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kd, "vector<double>")},
+    {"ctrl_LO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::lower_limits, "vector<double>")},
+    {"ctrl_LO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::upper_limits, "vector<double>")},
+    {"ctrl_LO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::set_point, "vector<double>")},
+    {"ctrl_LO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::output, "vector<double>")},
+    {"ctrl_LO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::integrals, "vector<double>")},
+    {"ctrl_LO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::prev_errors, "vector<double>")},
+
+    {"ctrl_HO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ctrl_type, "string")},
+    {"ctrl_HO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kp, "vector<double>")},
+    {"ctrl_HO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ki, "vector<double>")},
+    {"ctrl_HO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kd, "vector<double>")},
+    {"ctrl_HO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::lower_limits, "vector<double>")},
+    {"ctrl_HO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::upper_limits, "vector<double>")},
+    {"ctrl_HO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::set_point, "vector<double>")},
+    {"ctrl_HO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::output, "vector<double>")},
+    {"ctrl_HO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::integrals, "vector<double>")},
+    {"ctrl_HO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::prev_errors, "vector<double>")}
+    // --- NOTE: telemetry ring-buffers (telem.*) deliberately not exposed here ---
+};
+// --------------- Commander handlers: list + get (getter-only) ---------------
+
+nlohmann::json list_rtc_fields() {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& kv : RTC_FIELDS) {
+        arr.push_back({{"field", kv.first}, {"type", kv.second.type}});
+    }
+    return {{"ok", true}, {"fields", arr}};
+}
+
+// GET one field by "path" (e.g. "fps_override" or "ctrl_LO.kp")
+nlohmann::json get_rtc_field(std::string path) {
+    auto it = RTC_FIELDS.find(path);
+    if (it == RTC_FIELDS.end()) {
+        nlohmann::json keys = nlohmann::json::array();
+        for (const auto& kv : RTC_FIELDS) keys.push_back(kv.first);
+        return {{"ok", false}, {"error", "unknown field"}, {"field", path}, {"available", keys}};
+    }
+    const auto& fh = it->second;
+    return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
+}
+
+//// END rtc config file getter and setters ! 
+
+
+
+
+
+
 
 
 void stop_baldr() {
@@ -1689,6 +2017,13 @@ COMMANDER_REGISTER(m)
     m.def("poll_telem_scalar", poll_telem_scalar,
         "poll the second last entry to baldr's rolling telemetry buffers for the given field \n"
         "Usage: poll_telem_vector snr",
+        "args"_arg);
+
+    m.def("list_rtc_fields", list_rtc_fields,
+      "List exposed runtime config fields and types.");
+
+    m.def("get_rtc_field", get_rtc_field,
+        "Get one runtime config field by path (string).",
         "args"_arg);
 
 
