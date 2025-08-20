@@ -1,260 +1,287 @@
+// #define CATCH_CONFIG_MAIN
+// #include "catch.hpp"
+// #include "controller.h"
+// #include <Eigen/Dense>
+
+// from this directory (on mac)
+//clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 -I../../catch2 test_controllers.cpp controller.cpp -o test_controllers
+// or on ubuntu: g++ -std=c++17 -Wall -I/usr/include/eigen3 -I../../catch2 test_controllers.cpp controller.cpp -o test_controllers
+
+// test_controllers.cpp
+
 #define CATCH_CONFIG_MAIN
+#include "controller.h"
+#include <cmath>
 #include "catch.hpp"
 #include "controller.h"
 #include <Eigen/Dense>
 
-// from this directory (on mac)
-//clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 -I../../catch2 test_controllers.cpp controller.cpp -o test_controllers
 
-TEST_CASE("PIDController_1 reset and gain change", "[PID]") {
-    Eigen::VectorXd Kp = Eigen::VectorXd::Constant(2, 1.0);
-    Eigen::VectorXd Ki = Eigen::VectorXd::Constant(2, 0.1);
-    Eigen::VectorXd Kd = Eigen::VectorXd::Constant(2, 0.05);
-    double dt = 0.1;
+// ---------- helpers ----------
+static inline Eigen::VectorXd V(std::initializer_list<double> xs) {
+    Eigen::VectorXd v(xs.size());
+    int i = 0; for (double x : xs) v[i++] = x;
+    return v;
+}
 
+static inline void approx_vec(const Eigen::VectorXd& a, const Eigen::VectorXd& b, double eps=1e-9) {
+    REQUIRE(a.size() == b.size());
+    for (Eigen::Index i = 0; i < a.size(); ++i) {
+        INFO("i=" << i << " a=" << a[i] << " b=" << b[i]);
+        REQUIRE(std::abs(a[i] - b[i]) <= eps);
+    }
+}
 
+// ============================================================================
+//                                   PID
+// ============================================================================
+TEST_CASE("PIDController_1: digital step, anti-windup, soft clamp", "[pid]") {
+    // 3 channels
+    const Eigen::VectorXd kp = V({1.0, 2.0, 3.0});
+    const Eigen::VectorXd ki = V({0.5, 0.0, 0.1});
+    const Eigen::VectorXd kd = V({0.2, 0.3, 0.0});
 
-    PIDController_1 pid(Kp, Ki, Kd, dt);
-    pid.set_setpoint(Eigen::VectorXd::Zero(2));
+    // Tight limits to exercise clamps
+    const Eigen::VectorXd lo = V({-0.5, -0.2, -0.05});
+    const Eigen::VectorXd hi = V({ +0.5, +0.2, +0.05});
 
-    Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-    Eigen::VectorXd out1 = pid.process(meas);
-    REQUIRE(out1[0] < 0);
+    Eigen::VectorXd sp = V({1.0, -1.0, 0.1});
+    PIDController_1 pid(kp, ki, kd, lo, hi, sp);
 
-    pid.reset();
-    Eigen::VectorXd out2 = pid.process(meas);
-    REQUIRE(out2[0] < 0);
-    REQUIRE(out2[0] == Approx(out1[0])); // should behave same after reset
+    Eigen::VectorXd y = V({0.0, 0.0, 0.0}); // measured
 
+    // Step 1 math (digital):
+    // e=[1,-1,0.1], I+=Ki∘e, D=Kd∘(e-0), P=Kp∘e, clamp output to [lo,hi]
+    Eigen::VectorXd u1 = pid.process(y);
+    approx_vec(u1, V({0.5, -0.2, 0.05}));
+
+    // Step 2: same error; D=0; integral accumulates and clamps; output stays clamped
+    Eigen::VectorXd u2 = pid.process(y);
+    approx_vec(u2, V({0.5, -0.2, 0.05}));
+
+    // State exposure
+    const auto integ = std::get<Eigen::VectorXd>(pid.get_parameter("integrals"));
+    const auto prev  = std::get<Eigen::VectorXd>(pid.get_parameter("prev_errors"));
+    REQUIRE(integ.size() == 3);
+    REQUIRE(prev.size() == 3);
+    REQUIRE(integ[0] == Approx(0.5));
+    REQUIRE(integ[1] == Approx(0.0));
+    REQUIRE(integ[2] == Approx(0.02).epsilon(1e-12));
+    approx_vec(prev, V({1.0, -1.0, 0.1}));
+
+    // Zero gains: output equals (clamped) integrals
     pid.set_all_gains_to_zero();
-    Eigen::VectorXd out3 = pid.process(meas);
-    REQUIRE(out3.norm() == Approx(0.0));
+    Eigen::VectorXd u3 = pid.process(y);
+    approx_vec(u3, integ);
 }
 
-TEST_CASE("PIDController_1 parameter interface", "[PID]") {
-    Eigen::VectorXd Kp = Eigen::VectorXd::Constant(2, 1.0);
-    Eigen::VectorXd Ki = Eigen::VectorXd::Zero(2);
-    Eigen::VectorXd Kd = Eigen::VectorXd::Zero(2);
-    double dt = 0.1;
+TEST_CASE("PIDController_1: parameter API and setpoint wiring (consistent size)", "[pid]") {
+    PIDController_1 pid(
+        V({1,2,3,4}),          // kp
+        V({0,0,0,0}),          // ki
+        V({0,0,0,0}),          // kd
+        V({-1,-1,-1,-1}),      // lower_limits
+        V({+1,+1,+1,+1}),      // upper_limits
+        V({1,1,1,1})           // set_point
+    );
 
-    PIDController_1 pid(Kp, Ki, Kd, dt);
+    // Make sure output won’t clamp for this proportional-only check
+    pid.set_parameter("lower_limits", V({-10, -10, -10, -10}));
+    pid.set_parameter("upper_limits", V({+10, +10, +10, +10}));
 
-    Eigen::VectorXd newKp = Eigen::VectorXd::Constant(2, 0.5);
-    pid.set_parameter("Kp", newKp);
+    // Now mutate via parameter API (still size 4)
+    pid.set_parameter("kp", V({1,2,3,4}));
+    pid.set_parameter("ki", V({0,0,0,0}));
+    pid.set_parameter("kd", V({0,0,0,0}));
 
-    auto value = std::get<Eigen::VectorXd>(pid.get_parameter("Kp"));
-    REQUIRE(value[0] == Approx(0.5));
-}
+    Eigen::VectorXd m = V({0,0,0,0});
+    Eigen::VectorXd u = pid.process(m);
+    approx_vec(u, V({1,2,3,4})); // pure proportional, no clamping now
 
-TEST_CASE("LeakyIntegratorController basic functionality", "[Leaky]") {
-    Eigen::VectorXd K = Eigen::VectorXd::Constant(2, 0.5);
-    Eigen::VectorXd alpha = Eigen::VectorXd::Constant(2, 0.1);
-    double dt = 0.1;
-
-    LeakyIntegratorController li(K, alpha, dt);
-    li.set_setpoint(Eigen::VectorXd::Zero(2));
-
-    Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-    Eigen::VectorXd out = li.process(meas);
-
-    REQUIRE(out.size() == 2);
-    REQUIRE(out[0] < 0);
-    REQUIRE(out[1] < 0);
-}
-
-TEST_CASE("LeakyIntegratorController basic behavior", "[Leaky]") {
-    Eigen::VectorXd K = Eigen::VectorXd::Constant(2, 0.5);
-    Eigen::VectorXd alpha = Eigen::VectorXd::Constant(2, 0.1);
-    double dt = 0.1;
-
-    LeakyIntegratorController ctrl(K, alpha, dt);
-    ctrl.set_setpoint(Eigen::VectorXd::Zero(2));
-
-    SECTION("Produces nonzero output for constant error") {
-        Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-        Eigen::VectorXd out = ctrl.process(meas);
-        REQUIRE(out.norm() > 0.0);
-    }
-
-    SECTION("Reset clears internal state") {
-        Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-        ctrl.process(meas);  // accumulate some state
-        ctrl.reset();        // now clear it
-
-        Eigen::VectorXd out = ctrl.process(meas);  // should match fresh output
-        REQUIRE(out.norm() > 0.0);  // not zero, but fresh
-    }
-
-    SECTION("Zero gains without reset does NOT guarantee zero output") {
-        Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-        ctrl.process(meas);  // accumulate state
-
-        ctrl.set_all_gains_to_zero();  // only sets K and alpha = 0
-        Eigen::VectorXd out = ctrl.process(meas);
-        REQUIRE(out.norm() > 0.0);  // previous state still present
-    }
-
-    SECTION("Zero gains AND reset leads to zero output") {
-        Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-        ctrl.process(meas);  // accumulate state
-
-        ctrl.set_all_gains_to_zero();
-        ctrl.reset();  // clear state too
-
-        Eigen::VectorXd out = ctrl.process(meas);
-        REQUIRE(out.norm() == Approx(0.0));
-    }
-
-    SECTION("Parameter interface round-trip for K") {
-        Eigen::VectorXd newK = Eigen::VectorXd::Constant(2, 0.25);
-        ctrl.set_parameter("K", newK);
-        auto roundtripK = std::get<Eigen::VectorXd>(ctrl.get_parameter("K"));
-        REQUIRE(roundtripK.isApprox(newK));
-    }
-
-    SECTION("Parameter interface round-trip for alpha") {
-        Eigen::VectorXd newAlpha = Eigen::VectorXd::Constant(2, 0.75);
-        ctrl.set_parameter("alpha", newAlpha);
-        auto roundtripAlpha = std::get<Eigen::VectorXd>(ctrl.get_parameter("alpha"));
-        REQUIRE(roundtripAlpha.isApprox(newAlpha));
-    }
+    auto got_kp = std::get<Eigen::VectorXd>(pid.get_parameter("kp"));
+    approx_vec(got_kp, V({1,2,3,4}));
+    REQUIRE(pid.get_type() == "PID");
 }
 
 
-TEST_CASE("KalmanController interface and reset", "[Kalman]") {
-    KalmanController kc(2, 2, 0.1);
-    kc.set_setpoint(Eigen::VectorXd::Zero(2));
+// ============================================================================
+//                               Leaky Integrator
+// ============================================================================
+TEST_CASE("LeakyIntegratorController: leaky accumulation", "[leaky]") {
+    const Eigen::VectorXd K = V({0.2, 0.5});
+    const Eigen::VectorXd A = V({0.9, 0.8}); // alpha
+    LeakyIntegratorController L(K, A, /*dt=*/1.0);
 
-    Eigen::VectorXd meas = Eigen::VectorXd::Constant(2, 1.0);
-    Eigen::VectorXd out1 = kc.process(meas);
-    REQUIRE(out1.size() == 2);
+    L.set_setpoint(V({1.0, -1.0}));
+    Eigen::VectorXd y = V({0.0, 0.0});
 
-    kc.reset();
-    Eigen::VectorXd out2 = kc.process(meas);
-    REQUIRE(out2.size() == 2);
+    // step1: integral = A∘0 + K∘e = [0.2, -0.5]
+    Eigen::VectorXd u1 = L.process(y);
+    approx_vec(u1, V({0.2, -0.5}));
 
-    kc.set_all_gains_to_zero();  // No-op but should not crash
+    // step2: integral = A∘[0.2,-0.5] + K∘e = [0.38, -0.9]
+    Eigen::VectorXd u2 = L.process(y);
+    approx_vec(u2, V({0.38, -0.9}));
 
-    Eigen::MatrixXd Q = Eigen::MatrixXd::Identity(2, 2);
-    kc.set_parameter("Q", Q);
-
-    auto Q_result = std::get<Eigen::MatrixXd>(kc.get_parameter("Q"));
-    REQUIRE(Q_result == Q);
+    L.set_all_gains_to_zero();
+    Eigen::VectorXd u3 = L.process(y); // pure leak
+    REQUIRE(u3[0] == Approx(0.9 * 0.38));
+    REQUIRE(u3[1] == Approx(0.8 * -0.9));
+    L.reset();
+    approx_vec(L.get_state(), V({0.0, 0.0}));
 }
 
-// #include "controller.h"
-// #include <iostream>
-// #include <Eigen/Dense>
+// ============================================================================
+//                                   Kalman
+// ============================================================================
+TEST_CASE("KalmanController: dimensions and update sanity", "[kalman]") {
+    const int nx = 3, nz = 3;
+    KalmanController KF(nx, nz, /*dt=*/1.0);
+    KF.set_setpoint(Eigen::VectorXd::Zero(nz)); // optional
+
+    Eigen::VectorXd z = V({1.0, -2.0, 0.5});
+    Eigen::VectorXd u = KF.process(z);
+
+    REQUIRE(u.size() == nx);
+    for (int i = 0; i < nx; ++i) REQUIRE(std::isfinite(u[i]));
+
+    // Matrix parameter roundtrip
+    Eigen::MatrixXd Anew = 2.0 * Eigen::MatrixXd::Identity(nx, nx);
+    KF.set_parameter("A", Anew);
+    auto Aret = std::get<Eigen::MatrixXd>(KF.get_parameter("A"));
+    REQUIRE((Aret - Anew).norm() == Approx(0.0));
+}
 
 
-// // // clang++ -std=c++17 -Wall -I/opt/homebrew/opt/eigen/include/eigen3 test_controllers.cpp controller.cpp -o test_controllers
+// // ---------- small helpers ----------
+// static inline Eigen::VectorXd V(std::initializer_list<double> xs) {
+//     Eigen::VectorXd v(xs.size());
+//     int i = 0; for (double x : xs) v[i++] = x;
+//     return v;
+// }
 
-
-// #include "controller.h"
-// #include <iostream>
-// #include <Eigen/Dense>
-
-// void test_pid_2d() {
-//     std::cout << "--- Testing PIDController_1 (2D) ---\n";
-//     Eigen::VectorXd Kp = Eigen::VectorXd::Constant(2, 1.0);
-//     Eigen::VectorXd Ki = Eigen::VectorXd::Constant(2, 0.1);
-//     Eigen::VectorXd Kd = Eigen::VectorXd::Constant(2, 0.05);
-//     double dt = 0.1;
-
-//     PIDController_1 pid(Kp, Ki, Kd, dt);
-//     pid.set_setpoint(Eigen::VectorXd::Zero(2));
-
-//     for (int i = 0; i < 10; ++i) {
-//         Eigen::VectorXd measured = Eigen::VectorXd::Constant(2, 1.0);
-//         Eigen::VectorXd output = pid.process(measured);
-//         std::cout << "Step " << i << ", output = " << output.transpose() << "\n";
+// static inline void approx_vec(const Eigen::VectorXd& a, const Eigen::VectorXd& b, double eps=1e-9) {
+//     REQUIRE(a.size() == b.size());
+//     for (Eigen::Index i = 0; i < a.size(); ++i) {
+//         INFO("i=" << i << " a=" << a[i] << " b=" << b[i]);
+//         REQUIRE(std::abs(a[i] - b[i]) <= eps);
 //     }
 // }
 
-// void test_leaky_2d() {
-//     std::cout << "--- Testing LeakyIntegratorController (2D) ---\n";
-//     Eigen::VectorXd K = Eigen::VectorXd::Constant(2, 0.5);
-//     Eigen::VectorXd alpha = Eigen::VectorXd::Constant(2, 0.1);
-//     double dt = 0.1;
+// // ============================================================================
+// //                                   PID
+// // ============================================================================
+// TEST_CASE("PIDController_1: digital step, anti-windup, soft clamp", "[pid]") {
+//     // 3 channels
+//     const Eigen::VectorXd kp = V({1.0, 2.0, 3.0});
+//     const Eigen::VectorXd ki = V({0.5, 0.0, 0.1});
+//     const Eigen::VectorXd kd = V({0.2, 0.3, 0.0});
 
-//     LeakyIntegratorController li(K, alpha, dt);
-//     li.set_setpoint(Eigen::VectorXd::Zero(2));
+//     // Tight limits to exercise clamps
+//     const Eigen::VectorXd lo = V({-0.5, -0.2, -0.05});
+//     const Eigen::VectorXd hi = V({ +0.5, +0.2, +0.05});
 
-//     for (int i = 0; i < 10; ++i) {
-//         Eigen::VectorXd measured = Eigen::VectorXd::Constant(2, 1.0);
-//         Eigen::VectorXd output = li.process(measured);
-//         std::cout << "Step " << i << ", output = " << output.transpose() << "\n";
-//     }
+//     Eigen::VectorXd sp = V({1.0, -1.0, 0.1});
+//     PIDController_1 pid(kp, ki, kd, lo, hi, sp);
+
+//     Eigen::VectorXd y = V({0.0, 0.0, 0.0}); // measured
+
+//     // Step 1 math (digital):
+//     // e = [1, -1, 0.1]
+//     // I += Ki∘e = [0.5, 0, 0.01]  (no clamp yet)
+//     // D = Kd∘(e-0) = [0.2, -0.3, 0]
+//     // P = Kp∘e = [1, -2, 0.3]
+//     // u_raw = [1.7, -2.3, 0.31]  -> clamp to [0.5, -0.2, 0.05]
+//     Eigen::VectorXd u1 = pid.process(y);
+//     approx_vec(u1, V({0.5, -0.2, 0.05}));
+
+//     // Step 2: same error; D=0 now; integral accumulates and clamps
+//     Eigen::VectorXd u2 = pid.process(y);
+//     approx_vec(u2, V({0.5, -0.2, 0.05}));
+
+//     // State exposure
+//     const auto integ = std::get<Eigen::VectorXd>(pid.get_parameter("integrals"));
+//     const auto prev  = std::get<Eigen::VectorXd>(pid.get_parameter("prev_errors"));
+//     REQUIRE(integ.size() == 3);
+//     REQUIRE(prev.size() == 3);
+//     // ch0 integral should be clamped to +0.5, ch1 0, ch2 small
+//     REQUIRE(integ[0] == Approx(0.5));
+//     REQUIRE(integ[1] == Approx(0.0));
+//     REQUIRE(integ[2] == Approx(0.02).epsilon(1e-12));
+//     approx_vec(prev, V({1.0, -1.0, 0.1}));
+
+//     // Zero gains: now output should stay equal to (clamped) integrals (Ki=0 so no further growth)
+//     pid.set_all_gains_to_zero();
+//     Eigen::VectorXd u3 = pid.process(y);
+//     approx_vec(u3, integ);
 // }
 
-// void test_kalman_2d() {
-//     std::cout << "--- Testing KalmanController (2D stub) ---\n";
-//     KalmanController kc(2, 2, 0.1);
-//     kc.set_setpoint(Eigen::VectorXd::Zero(2));
+// TEST_CASE("PIDController_1: parameter API and setpoint wiring", "[pid]") {
+//     PIDController_1 pid; // default 140 channels
+//     // Resize & set via parameter API
+//     pid.set_parameter("kp", V({1,2,3,4}));
+//     pid.set_parameter("ki", V({0,0,0,0}));
+//     pid.set_parameter("kd", V({0,0,0,0}));
+//     pid.set_parameter("lower_limits", V({-1,-1,-1,-1}));
+//     pid.set_parameter("upper_limits", V({+1,+1,+1,+1}));
+//     pid.set_parameter("set_point", V({1,1,1,1}));
 
-//     for (int i = 0; i < 10; ++i) {
-//         Eigen::VectorXd measured = Eigen::VectorXd::Constant(2, 1.0);
-//         Eigen::VectorXd output = kc.process(measured);
-//         std::cout << "Step " << i << ", output = " << output.transpose() << "\n";
-//     }
+//     Eigen::VectorXd m = V({0,0,0,0});
+//     Eigen::VectorXd u = pid.process(m);
+//     approx_vec(u, V({1,2,3,4})); // pure proportional
+
+//     auto got_kp = std::get<Eigen::VectorXd>(pid.get_parameter("kp"));
+//     approx_vec(got_kp, V({1,2,3,4}));
+//     REQUIRE(pid.get_type() == "PID");
 // }
 
-// int main() {
-//     test_pid_2d();
-//     test_leaky_2d();
-//     test_kalman_2d();
-//     return 0;
+// // ============================================================================
+// //                               Leaky Integrator
+// // ============================================================================
+// TEST_CASE("LeakyIntegratorController: leaky accumulation", "[leaky]") {
+//     const Eigen::VectorXd K = V({0.2, 0.5});
+//     const Eigen::VectorXd A = V({0.9, 0.8}); // alpha
+//     LeakyIntegratorController L(K, A, /*dt=*/1.0);
+
+//     L.set_setpoint(V({1.0, -1.0}));
+//     Eigen::VectorXd y = V({0.0, 0.0});
+
+//     // step1: integral = A∘0 + K∘e = [0.2, -0.5]
+//     Eigen::VectorXd u1 = L.process(y);
+//     approx_vec(u1, V({0.2, -0.5}));
+
+//     // step2: integral = A∘[0.2,-0.5] + K∘e = [0.38, -0.9]
+//     Eigen::VectorXd u2 = L.process(y);
+//     approx_vec(u2, V({0.38, -0.9}));
+
+//     L.set_all_gains_to_zero();
+//     Eigen::VectorXd u3 = L.process(y); // pure leak
+//     REQUIRE(u3[0] == Approx(0.9 * 0.38));
+//     REQUIRE(u3[1] == Approx(0.8 * -0.9));
+//     L.reset();
+//     approx_vec(L.get_state(), V({0.0, 0.0}));
 // }
 
-// // void test_pid() {
-// //     std::cout << "--- Testing PIDController_1 ---\n";
-// //     Eigen::VectorXd Kp = Eigen::VectorXd::Constant(1, 1.0);
-// //     Eigen::VectorXd Ki = Eigen::VectorXd::Constant(1, 0.1);
-// //     Eigen::VectorXd Kd = Eigen::VectorXd::Constant(1, 0.01);
-// //     double dt = 0.1;
+// // ============================================================================
+// //                                   Kalman
+// // ============================================================================
+// TEST_CASE("KalmanController: dimensions and update sanity", "[kalman]") {
+//     const int nx = 3, nz = 3;
+//     KalmanController KF(nx, nz, /*dt=*/1.0);
+//     KF.set_setpoint(Eigen::VectorXd::Zero(nz)); // optional, not used in simple policy
 
-// //     PIDController_1 pid(Kp, Ki, Kd, dt);
-// //     pid.set_setpoint(Eigen::VectorXd::Zero(1));
+//     Eigen::VectorXd z = V({1.0, -2.0, 0.5});
+//     Eigen::VectorXd u = KF.process(z);
 
-// //     for (int i = 0; i < 10; ++i) {
-// //         Eigen::VectorXd meas = Eigen::VectorXd::Constant(1, 1.0);  // constant error
-// //         Eigen::VectorXd out = pid.process(meas);
-// //         std::cout << "Step " << i << ", output = " << out.transpose() << "\n";
-// //     }
-// // }
+//     REQUIRE(u.size() == nx);
+//     for (int i = 0; i < nx; ++i) REQUIRE(std::isfinite(u[i]));
 
-// // void test_leaky() {
-// //     std::cout << "--- Testing LeakyIntegratorController ---\n";
-// //     Eigen::VectorXd K = Eigen::VectorXd::Constant(1, 0.5);
-// //     Eigen::VectorXd alpha = Eigen::VectorXd::Constant(1, 0.1);
-// //     double dt = 0.1;
+//     // Matrix parameter roundtrip
+//     Eigen::MatrixXd Anew = 2.0 * Eigen::MatrixXd::Identity(nx, nx);
+//     KF.set_parameter("A", Anew);
+//     auto Aret = std::get<Eigen::MatrixXd>(KF.get_parameter("A"));
+//     REQUIRE((Aret - Anew).norm() == Approx(0.0));
+// }
 
-// //     LeakyIntegratorController li(K, alpha, dt);
-// //     li.set_setpoint(Eigen::VectorXd::Zero(1));
 
-// //     for (int i = 0; i < 10; ++i) {
-// //         Eigen::VectorXd meas = Eigen::VectorXd::Constant(1, 1.0);
-// //         Eigen::VectorXd out = li.process(meas);
-// //         std::cout << "Step " << i << ", output = " << out.transpose() << "\n";
-// //     }
-// // }
 
-// // // Stub test for Kalman until details are verified
-// // void test_kalman() {
-// //     std::cout << "--- Testing KalmanController (stub) ---\n";
-// //     KalmanController kc(2, 1, 0.1);
-// //     kc.set_setpoint(Eigen::VectorXd::Zero(1));
-
-// //     for (int i = 0; i < 10; ++i) {
-// //         Eigen::VectorXd meas = Eigen::VectorXd::Constant(1, 1.0);
-// //         Eigen::VectorXd out = kc.process(meas);
-// //         std::cout << "Step " << i << ", output = " << out.transpose() << "\n";
-// //     }
-// // }
-
-// // int main() {
-// //     test_pid();
-// //     test_leaky();
-// //     test_kalman();
-// //     return 0;
-// // }

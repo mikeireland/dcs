@@ -1,11 +1,11 @@
 CC=g++
 
 # -ggdb and -g  for debugging
-CFLAGS  = -std=c++17 -Wall -Wextra -O3 -march=native -I/Documents/dcs/libImageStreamIO -I/usr/include/eigen3
+CFLAGS  = -std=c++17 -Wall -Wextra -O3 -march=native -I/Documents/dcs/libImageStreamIO -I/usr/include/eigen3 -Icontrollers
 #pthread is only needed for ImageStreamIO
 LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lb64 -lboost_program_options -lfmt -lpthread -lcfitsio
 EXEC    = baldr
-OBJECTS = baldr.o rtc.o telemetry.o
+OBJECTS = baldr.o rtc.o telemetry.o controllers/controller.o
 
 # PREFIX is environment variable, but if it is not set, then set default value
 ifeq ($(PREFIX),)

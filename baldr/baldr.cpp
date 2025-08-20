@@ -7,7 +7,10 @@
 #include <fitsio.h>
 #include <string>
 #include <regex>
+#include <unordered_set>
+#include <cctype>   // (for std::tolower used in update_ctrl_parameter)
 #include <filesystem> //C++ 17
+
 // Commander struct definitions for json. This is in a separate file to keep the main code clean.
 #include "commander_structs.h"
 #include <atomic>
@@ -17,6 +20,7 @@
 #include <unordered_map>
 #include <functional>
 #include <type_traits>
+
 
 using json = nlohmann::json;
 //----------Globals-------------------
@@ -30,6 +34,7 @@ bdr_rtc_config rtc_config;
 std::string observing_mode = "bright"; // bright - 12x12 (default) or faint - 6x6 pixels
 std::string user_config_filename = "";
 bool user_provided_config = false;      // true if user gives a manual toml file
+
 
 
 // loop time , not nessary when using semaphores for frames - but can be useful for testing 
@@ -90,96 +95,114 @@ std::string mds_host_str = "tcp://192.168.100.2:5555";
 bool mds_zmq_initialized = false;
 
 
-// Parameterized constructor.
-PIDController::PIDController(const Eigen::VectorXd& kp_in,
-                             const Eigen::VectorXd& ki_in,
-                             const Eigen::VectorXd& kd_in,
-                             const Eigen::VectorXd& lower_limit_in,
-                             const Eigen::VectorXd& upper_limit_in,
-                             const Eigen::VectorXd& setpoint_in)
-    : kp(kp_in),
-      ki(ki_in),
-      kd(kd_in),
-      lower_limits(lower_limit_in),
-      upper_limits(upper_limit_in),
-      set_point(setpoint_in),
-      ctrl_type("PID")
-{
-    int size = kp.size();
-    if (ki.size() != size || kd.size() != size ||
-        lower_limits.size() != size || upper_limits.size() != size ||
-        set_point.size() != size) {
-        throw std::invalid_argument("All input vectors must have the same size.");
+// 20-8-25
+std::unique_ptr<Controller>
+make_controller(const std::string& type, const bdr_controller& cfg) {
+    if (type == "PID") {
+        return std::make_unique<PIDController_1>(
+            cfg.kp, cfg.ki, cfg.kd,
+            cfg.lower_limits, cfg.upper_limits,
+            cfg.set_point
+        );
     }
-    output = Eigen::VectorXd::Zero(size);
-    integrals = Eigen::VectorXd::Zero(size);
-    prev_errors = Eigen::VectorXd::Zero(size);
+    // extend this mapping later:
+    // else if (type == "LEAKY")   return std::make_unique<LeakyIntegratorController>(cfg.kp /*K*/, cfg.ki /*alpha*/, /*dt=*/1.0);
+    // else if (type == "KALMAN")  return std::make_unique<KalmanController>(/* sizes */, /* dt */);
+
+    throw std::runtime_error("Unknown controller_type: " + type);
 }
 
-// constructor that accepts a bdr_controller struct.
-PIDController::PIDController(const bdr_controller& config_in)
-    : PIDController(config_in.kp, config_in.ki, config_in.kd, config_in.lower_limits, config_in.upper_limits, config_in.set_point)
-{
-}
 
-// Default constructor.
-PIDController::PIDController()
-    : kp(Eigen::VectorXd::Zero(140)),
-      ki(Eigen::VectorXd::Zero(140)),
-      kd(Eigen::VectorXd::Zero(140)),
-      lower_limits(-Eigen::VectorXd::Ones(140)),
-      upper_limits(Eigen::VectorXd::Ones(140)),
-      set_point(Eigen::VectorXd::Zero(140)),
-      ctrl_type("PID")
-{
-    int size = kp.size();
-    output = Eigen::VectorXd::Zero(size);
-    integrals = Eigen::VectorXd::Zero(size);
-    prev_errors = Eigen::VectorXd::Zero(size);
-}
+// // Parameterized constructor.
+// PIDController::PIDController(const Eigen::VectorXd& kp_in,
+//                              const Eigen::VectorXd& ki_in,
+//                              const Eigen::VectorXd& kd_in,
+//                              const Eigen::VectorXd& lower_limit_in,
+//                              const Eigen::VectorXd& upper_limit_in,
+//                              const Eigen::VectorXd& setpoint_in)
+//     : kp(kp_in),
+//       ki(ki_in),
+//       kd(kd_in),
+//       lower_limits(lower_limit_in),
+//       upper_limits(upper_limit_in),
+//       set_point(setpoint_in),
+//       ctrl_type("PID")
+// {
+//     int size = kp.size();
+//     if (ki.size() != size || kd.size() != size ||
+//         lower_limits.size() != size || upper_limits.size() != size ||
+//         set_point.size() != size) {
+//         throw std::invalid_argument("All input vectors must have the same size.");
+//     }
+//     output = Eigen::VectorXd::Zero(size);
+//     integrals = Eigen::VectorXd::Zero(size);
+//     prev_errors = Eigen::VectorXd::Zero(size);
+// }
 
-Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
-    int size = set_point.size();
-    if (measured.size() != size) {
-        throw std::invalid_argument("Input vector size must match setpoint size.");
-    }
-    if (kp.size() != size || ki.size() != size || kd.size() != size ||
-        lower_limits.size() != size || upper_limits.size() != size) {
-        throw std::invalid_argument("Input vectors of incorrect size.");
-    }
-    if (integrals.size() != size) {
-        std::cout << "Reinitializing integrals, prev_errors, and output to zero with correct size.\n";
-        integrals = Eigen::VectorXd::Zero(size);
-        prev_errors = Eigen::VectorXd::Zero(size);
-        output = Eigen::VectorXd::Zero(size);
-    }
-    for (int i = 0; i < size; ++i) {
-        double error = measured(i) - set_point(i);
-        if (ki(i) != 0.0) {
-            integrals(i) += error;
-            if (integrals(i) < lower_limits(i))
-                integrals(i) = lower_limits(i);
-            if (integrals(i) > upper_limits(i))
-                integrals(i) = upper_limits(i);
-        }
-        double derivative = error - prev_errors(i); // if error bigger than previous error you want to dampen output
-        output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
-        prev_errors(i) = error;
-    }
-    return output;
-}
+// // constructor that accepts a bdr_controller struct.
+// PIDController::PIDController(const bdr_controller& config_in)
+//     : PIDController(config_in.kp, config_in.ki, config_in.kd, config_in.lower_limits, config_in.upper_limits, config_in.set_point)
+// {
+// }
 
-void PIDController::set_all_gains_to_zero() {
-    kp = Eigen::VectorXd::Zero(kp.size());
-    ki = Eigen::VectorXd::Zero(ki.size());
-    kd = Eigen::VectorXd::Zero(kd.size());
-}
+// // Default constructor.
+// PIDController::PIDController()
+//     : kp(Eigen::VectorXd::Zero(140)),
+//       ki(Eigen::VectorXd::Zero(140)),
+//       kd(Eigen::VectorXd::Zero(140)),
+//       lower_limits(-Eigen::VectorXd::Ones(140)),
+//       upper_limits(Eigen::VectorXd::Ones(140)),
+//       set_point(Eigen::VectorXd::Zero(140)),
+//       ctrl_type("PID")
+// {
+//     int size = kp.size();
+//     output = Eigen::VectorXd::Zero(size);
+//     integrals = Eigen::VectorXd::Zero(size);
+//     prev_errors = Eigen::VectorXd::Zero(size);
+// }
 
-void PIDController::reset() {
-    integrals.setZero();
-    prev_errors.setZero();
-    output.setZero();
-}
+// Eigen::VectorXd PIDController::process(const Eigen::VectorXd& measured) {
+//     int size = set_point.size();
+//     if (measured.size() != size) {
+//         throw std::invalid_argument("Input vector size must match setpoint size.");
+//     }
+//     if (kp.size() != size || ki.size() != size || kd.size() != size ||
+//         lower_limits.size() != size || upper_limits.size() != size) {
+//         throw std::invalid_argument("Input vectors of incorrect size.");
+//     }
+//     if (integrals.size() != size) {
+//         std::cout << "Reinitializing integrals, prev_errors, and output to zero with correct size.\n";
+//         integrals = Eigen::VectorXd::Zero(size);
+//         prev_errors = Eigen::VectorXd::Zero(size);
+//         output = Eigen::VectorXd::Zero(size);
+//     }
+//     for (int i = 0; i < size; ++i) {
+//         double error = measured(i) - set_point(i);
+//         if (ki(i) != 0.0) {
+//             integrals(i) += error;
+//             if (integrals(i) < lower_limits(i))
+//                 integrals(i) = lower_limits(i);
+//             if (integrals(i) > upper_limits(i))
+//                 integrals(i) = upper_limits(i);
+//         }
+//         double derivative = error - prev_errors(i); // if error bigger than previous error you want to dampen output
+//         output(i) = kp(i) * error + ki(i) * integrals(i) + kd(i) * derivative;
+//         prev_errors(i) = error;
+//     }
+//     return output;
+// }
+
+// void PIDController::set_all_gains_to_zero() {
+//     kp = Eigen::VectorXd::Zero(kp.size());
+//     ki = Eigen::VectorXd::Zero(ki.size());
+//     kd = Eigen::VectorXd::Zero(kd.size());
+// }
+
+// void PIDController::reset() {
+//     integrals.setZero();
+//     prev_errors.setZero();
+//     output.setZero();
+// }
 
 
 //----------helper functions from here---------------
@@ -728,7 +751,7 @@ void clear_openloop_offsets() {
 // branch: "LO" or "HO" (case-insensitive)
 // idx: 0-based actuator index
 // Commander entrypoint: set one actuator open-loop offset (LO/HO) in-place.
-// Accepts: ["HO", 65, 0.1]  or  {"branch":"HO","idx":65,"value":0.1}  or  "HO 65 0.1"
+// Accepts: ["HO", 65, 0.1]  
 json ol_set_actuator(json args) {
     try {
         std::string branch;
@@ -1044,6 +1067,78 @@ struct FieldHandle {
     std::function<bool(const nlohmann::json&)> set; // nullptr => read-only
 };
 
+// static inline bool starts_with(std::string_view s, std::string_view p) {
+//     return s.size() >= p.size() && 0 == s.compare(0, p.size(), p);
+// }
+// static inline std::string after_prefix(std::string_view s, std::string_view p) {
+//     return std::string(s.substr(p.size()));
+// }
+
+// struct CtrlRef {
+//     std::unique_ptr<Controller>* ptr;  // rtc_config.ctrl_LO / ctrl_HO
+//     std::string name;                  // parameter name after the prefix
+// };
+
+// static std::optional<CtrlRef> parse_ctrl_field(std::string_view field) {
+//     if (starts_with(field, "ctrl_LO."))
+//         return CtrlRef{ &rtc_config.ctrl_LO, after_prefix(field, "ctrl_LO.") };
+//     if (starts_with(field, "ctrl_HO."))
+//         return CtrlRef{ &rtc_config.ctrl_HO, after_prefix(field, "ctrl_HO.") };
+//     return std::nullopt;
+// }
+
+// static json ctrl_get_field(const CtrlRef& ref) {
+//     std::lock_guard<std::mutex> lk(ctrl_mutex);
+//     if (!*ref.ptr) return json{{"error","controller not initialized"}};
+
+//     if (ref.name == "ctrl_type") {
+//         return (*ref.ptr)->get_type();
+//     }
+
+//     Controller::Param p;
+//     try {
+//         p = (*ref.ptr)->get_parameter(ref.name);
+//     } catch (const std::exception& e) {
+//         json names = json::array();
+//         for (const auto& kv : (*ref.ptr)->list_parameters()) names.push_back(kv.first);
+//         return json{{"error", std::string("unknown parameter: ")+ref.name}, {"available", names}};
+//     }
+
+//     if (std::holds_alternative<Eigen::VectorXd>(p)) {
+//         return eigen_vector_to_json(std::get<Eigen::VectorXd>(p));
+//     }
+//     if (std::holds_alternative<Eigen::MatrixXd>(p)) {
+//         return eigen_matrix_to_json(std::get<Eigen::MatrixXd>(p));
+//     }
+//     return json{{"error","unsupported parameter kind"}};
+// }
+
+// static json ctrl_set_field(const CtrlRef& ref, const json& value) {
+//     std::lock_guard<std::mutex> lk(ctrl_mutex);
+//     if (!*ref.ptr) return json{{"error","controller not initialized"}};
+//     if (ref.name == "ctrl_type") return json{{"error","ctrl_type is read-only"}};
+
+//     // Try vector
+//     {
+//         Eigen::VectorXd v;
+//         if (json_to_eigen_vector(value, v)) {
+//             try { (*ref.ptr)->set_parameter(ref.name, v); return json{{"status","ok"}}; }
+//             catch (const std::exception& e) { return json{{"error", e.what()}}; }
+//         }
+//     }
+//     // Try matrix
+//     {
+//         Eigen::MatrixXd M;
+//         if (json_to_eigen_matrix(value, M)) {
+//             try { (*ref.ptr)->set_parameter(ref.name, M); return json{{"status","ok"}}; }
+//             catch (const std::exception& e) { return json{{"error", e.what()}}; }
+//         }
+//     }
+//     return json{{"error","value is neither vector nor matrix"}};
+// }
+
+
+
 // ---- Eigen <-> JSON helpers ----
 template<typename EigenVec>
 static nlohmann::json eigen_vector_to_json(const EigenVec& v) {
@@ -1104,6 +1199,17 @@ static bool json_to_eigen_matrix(const nlohmann::json& j, EigenMat& out) {
         return true;
     } catch (...) { return false; }
 }
+
+
+static Controller* pick_ctrl(const bdr_rtc_config* cfg, const char* which) {
+    if (!which) return nullptr;
+    const bool lo = (which[0]=='L'||which[0]=='l') && (which[1]=='O'||which[1]=='o');
+    const bool ho = (which[0]=='H'||which[0]=='h') && (which[1]=='O'||which[1]=='o');
+    if (lo) return cfg->ctrl_LO ? cfg->ctrl_LO.get() : nullptr;
+    if (ho) return cfg->ctrl_HO ? cfg->ctrl_HO.get() : nullptr;
+    return nullptr;
+}
+
 
 // ---- Getter-only factories ----
 template<typename T>
@@ -1291,19 +1397,20 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"matrices.szp",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szp, "int")},
 
     // ===== controller configs (RW ) =====
-    {"ctrl_LO_config.kp",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kp)},
-    {"ctrl_LO_config.ki",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::ki)},
-    {"ctrl_LO_config.kd",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kd)},
-    {"ctrl_LO_config.lower_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::lower_limits)},
-    {"ctrl_LO_config.upper_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::upper_limits)},
-    {"ctrl_LO_config.set_point",    make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::set_point)},
+    //// uncomment / fix after controller class upgrade verified 20-8-25
+    // {"ctrl_LO_config.kp",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kp)},
+    // {"ctrl_LO_config.ki",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::ki)},
+    // {"ctrl_LO_config.kd",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::kd)},
+    // {"ctrl_LO_config.lower_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::lower_limits)},
+    // {"ctrl_LO_config.upper_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::upper_limits)},
+    // {"ctrl_LO_config.set_point",    make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_LO_config, &bdr_controller::set_point)},
 
-    {"ctrl_HO_config.kp",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kp)},
-    {"ctrl_HO_config.ki",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::ki)},
-    {"ctrl_HO_config.kd",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kd)},
-    {"ctrl_HO_config.lower_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::lower_limits)},
-    {"ctrl_HO_config.upper_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::upper_limits)},
-    {"ctrl_HO_config.set_point",    make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::set_point)},
+    // {"ctrl_HO_config.kp",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kp)},
+    // {"ctrl_HO_config.ki",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::ki)},
+    // {"ctrl_HO_config.kd",           make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::kd)},
+    // {"ctrl_HO_config.lower_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::lower_limits)},
+    // {"ctrl_HO_config.upper_limits", make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::upper_limits)},
+    // {"ctrl_HO_config.set_point",    make_nested_eigen_vector_rw(&bdr_rtc_config::ctrl_HO_config, &bdr_controller::set_point)},
 
     // ===== limits (RW ) =====
     {"limits.close_on_strehl_limit", make_nested_scalar_rw(&bdr_rtc_config::limits, &bdr_limits::close_on_strehl_limit, "float")},
@@ -1358,37 +1465,74 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"m_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::m_s_runtime, "double")},
     {"b_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::b_s_runtime, "double")},
 
-    // ===== runtime controllers (RO unless you explicitly want to poke internals) =====
-    {"ctrl_LO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ctrl_type, "string")},
-    {"ctrl_LO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kp)},
-    {"ctrl_LO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ki)},
-    {"ctrl_LO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kd)},
-    {"ctrl_LO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::lower_limits)},
-    {"ctrl_LO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::upper_limits)},
-    {"ctrl_LO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::set_point)},
-    {"ctrl_LO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::output)},
-    {"ctrl_LO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::integrals)},
-    {"ctrl_LO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::prev_errors)},
+    //// ===== runtime controllers (RO unless you explicitly want to poke internals) =====
+    //// uncomment / fix after controller class upgrade verified 20-8-25
+    // {"ctrl_LO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ctrl_type, "string")},
+    // {"ctrl_LO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kp)},
+    // {"ctrl_LO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::ki)},
+    // {"ctrl_LO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::kd)},
+    // {"ctrl_LO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::lower_limits)},
+    // {"ctrl_LO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::upper_limits)},
+    // {"ctrl_LO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::set_point)},
+    // {"ctrl_LO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::output)},
+    // {"ctrl_LO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::integrals)},
+    // {"ctrl_LO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_LO, &PIDController::prev_errors)},
 
-    {"ctrl_HO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ctrl_type, "string")},
-    {"ctrl_HO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kp)},
-    {"ctrl_HO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ki)},
-    {"ctrl_HO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kd)},
-    {"ctrl_HO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::lower_limits)},
-    {"ctrl_HO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::upper_limits)},
-    {"ctrl_HO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::set_point)},
-    {"ctrl_HO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::output)},
-    {"ctrl_HO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::integrals)},
-    {"ctrl_HO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::prev_errors)}
+    // {"ctrl_HO.ctrl_type",    make_nested_scalar_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ctrl_type, "string")},
+    // {"ctrl_HO.kp",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kp)},
+    // {"ctrl_HO.ki",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::ki)},
+    // {"ctrl_HO.kd",           make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::kd)},
+    // {"ctrl_HO.lower_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::lower_limits)},
+    // {"ctrl_HO.upper_limits", make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::upper_limits)},
+    // {"ctrl_HO.set_point",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::set_point)},
+    // {"ctrl_HO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::output)},
+    // {"ctrl_HO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::integrals)},
+    // {"ctrl_HO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::prev_errors)}
 };
+
+
+/*
+We use a philosphy that more dynamic things like the controller (which can have different class implementations / rapidly varying values ) 
+have list, get, set methods different to more static things in the rtc_config_struct. This is also due pointer impelmentation of the controller class.
+*/
 
 nlohmann::json list_rtc_fields() {
     nlohmann::json arr = nlohmann::json::array();
+
     for (const auto& kv : RTC_FIELDS) {
         arr.push_back({{"field", kv.first}, {"type", kv.second.type}});
     }
     return {{"ok", true}, {"fields", arr}};
 }
+
+// list dynamic controller parameters (can depend on what controller class you implement!)
+nlohmann::json ctrl_list(nlohmann::json args) {
+    using json = nlohmann::json;
+    if (!args.is_array() || args.size() != 1) {
+        return json{{"ok", false}, {"error","Expected [\"LO\"|\"HO\"]"}};
+    }
+    std::string which = args.at(0).get<std::string>();
+
+    json arr = json::array();
+    std::lock_guard<std::mutex> lk(ctrl_mutex);
+    Controller* c = pick_ctrl(&rtc_config, which.c_str());
+    if (!c) return json{{"ok", false}, {"error","controller not initialized"}, {"which", which}};
+
+    // always show controller type
+    arr.push_back({{"name","ctrl_type"}, {"type","string"}});
+
+    for (const auto& [name, desc] : c->list_parameters()) {
+        Controller::Param p;
+        try { p = c->get_parameter(name); } catch (...) { continue; }
+        const char* ty =
+            std::holds_alternative<Eigen::VectorXd>(p) ? "vector<double>" :
+            std::holds_alternative<Eigen::MatrixXd>(p) ? "matrix<double>" :
+                                                         "unknown";
+        arr.push_back({{"name",name}, {"type",ty}});
+    }
+    return json{{"ok", true}, {"which", which}, {"params", arr}};
+}
+
 
 nlohmann::json get_rtc_field(std::string path) {
     auto it = RTC_FIELDS.find(path);
@@ -1399,6 +1543,41 @@ nlohmann::json get_rtc_field(std::string path) {
     }
     const auto& fh = it->second;
     return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
+}
+
+// Usage: ctrl_get ["LO","kp"]      or  ctrl_get ["HO","ctrl_type"]
+nlohmann::json ctrl_get(nlohmann::json args) {
+    using json = nlohmann::json;
+    if (!args.is_array() || args.size() != 2) {
+        return json{{"ok", false}, {"error","Expected [\"LO\"|\"HO\", \"name\"]"}};
+    }
+    std::string which = args.at(0).get<std::string>();
+    std::string name  = args.at(1).get<std::string>();
+
+    std::lock_guard<std::mutex> lk(ctrl_mutex);
+    Controller* c = pick_ctrl(&rtc_config, which.c_str());
+    if (!c) return json{{"ok", false}, {"error","controller not initialized"}, {"which", which}};
+
+    if (name == "ctrl_type") {
+        return json{{"ok", true}, {"which", which}, {"name","ctrl_type"}, {"type","string"}, {"value", c->get_type()}};
+    }
+
+    try {
+        Controller::Param p = c->get_parameter(name);
+        if (std::holds_alternative<Eigen::VectorXd>(p)) {
+            return json{{"ok", true}, {"which", which}, {"name", name}, {"type","vector<double>"},
+                        {"value", eigen_vector_to_json(std::get<Eigen::VectorXd>(p))}};
+        }
+        if (std::holds_alternative<Eigen::MatrixXd>(p)) {
+            return json{{"ok", true}, {"which", which}, {"name", name}, {"type","matrix<double>"},
+                        {"value", eigen_matrix_to_json(std::get<Eigen::MatrixXd>(p))}};
+        }
+        return json{{"ok", false}, {"error","unsupported parameter kind"}, {"which", which}, {"name", name}};
+    } catch (const std::exception& e) {
+        json names = json::array();
+        for (const auto& kv : c->list_parameters()) names.push_back(kv.first);
+        return json{{"ok", false}, {"error", e.what()}, {"which", which}, {"name", name}, {"available", names}};
+    }
 }
 
 nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
@@ -1415,6 +1594,59 @@ nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
     // Side-effects hook (recompute derived state) — add as needed, e.g.:
     // if (path.rfind("ctrl_", 0) == 0) { std::lock_guard<std::mutex> lk(rtc_mutex); /* rebuild controllers */ }
     return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
+}
+
+// could be used to replace the set_ctrl_param function... 
+// Usage: ctrl_set ["LO","kp", [0.1,0.1,...]]
+//        ctrl_set ["HO","upper_limits", [2,2,...]]
+//        ctrl_set ["LO","M", [[...], [...]]]   // if a controller exposes a matrix param
+nlohmann::json ctrl_set(nlohmann::json args) {
+    using json = nlohmann::json;
+    if (!args.is_array() || args.size() != 3) {
+        return json{{"ok", false}, {"error","Expected [\"LO\"|\"HO\", \"name\", value]"}};
+    }
+    std::string which = args.at(0).get<std::string>();
+    std::string name  = args.at(1).get<std::string>();
+    const json  value = args.at(2);
+
+    if (name == "ctrl_type") {
+        return json{{"ok", false}, {"error","ctrl_type is read-only"}, {"which", which}};
+    }
+
+    // We'll fill these and return after releasing the lock:
+    std::string type  = "unknown";
+    json        echo  = json::object();
+
+    {
+        std::lock_guard<std::mutex> lk(ctrl_mutex);
+        Controller* c = pick_ctrl(&rtc_config, which.c_str());
+        if (!c) return json{{"ok", false}, {"error","controller not initialized"}, {"which", which}};
+
+        // vector?
+        Eigen::VectorXd v;
+        if (json_to_eigen_vector(value, v)) {
+            c->set_parameter(name, v);
+            // fetch back to echo
+            Controller::Param p = c->get_parameter(name);
+            type = "vector<double>";
+            echo = eigen_vector_to_json(std::get<Eigen::VectorXd>(p));
+        }
+        // matrix?
+        else {
+            Eigen::MatrixXd M;
+            if (json_to_eigen_matrix(value, M)) {
+                c->set_parameter(name, M);
+                Controller::Param p = c->get_parameter(name);
+                type = "matrix<double>";
+                echo = eigen_matrix_to_json(std::get<Eigen::MatrixXd>(p));
+            } else {
+                return json{{"ok", false}, {"error","value is neither vector nor matrix"},
+                            {"which", which}, {"name", name}};
+            }
+        }
+    } // lock released here
+
+    return json{{"ok", true}, {"which", which}, {"name", name}, {"type", type}, {"value", echo}};
 }
 
 
@@ -2016,188 +2248,362 @@ json set_telem_save_format(json args) {
     }
 }
 
-
+// comment out pid dependancies to try first compile, re-incorporate later 20-8-25
 // This Commander function accepts one JSON parameter: an array of three items:
 // [ gain_type, indices, value ]
 // e.g. in interactive shell : > update_pid_param ["LO","kp", "all", 0.0] or  ["HO","ki","all",0.2] or update_pid_param ["HO","ki","1,3,5",0.2] to update gains of modes 1,3,5 
-json update_pid_param(json args) {
-    // Expect an array with exactly 4 elements:
-    // [controller, parameter_type, indices, value]
+// json update_pid_param(json args) {
+//     // Expect an array with exactly 4 elements:
+//     // [controller, parameter_type, indices, value]
+//     if (!args.is_array() || args.size() != 4) {
+//         return json{{"error", "Expected an array with four elements: [controller, parameter_type, indices, value]"}};
+//     }
+//     try {
+//         std::string controller_str = args.at(0).get<std::string>();
+//         std::string parameter_type = args.at(1).get<std::string>();
+//         std::string indices_str = args.at(2).get<std::string>();
+//         double value = args.at(3).get<double>();
+
+//         // Lock the PID mutex to protect concurrent access.
+//         std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+//         // Select the appropriate PID controller from rtc_config.
+//         PIDController* pid_ctrl = nullptr;
+//         if (controller_str == "LO") {
+//             pid_ctrl = &rtc_config.ctrl_LO;
+//         } else if (controller_str == "HO") {
+//             pid_ctrl = &rtc_config.ctrl_HO;
+//         } else {
+//             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+//         }
+        
+//         // Choose the target parameter vector.
+//         Eigen::VectorXd* target_vector = nullptr;
+//         if (parameter_type == "kp") {
+//             target_vector = &pid_ctrl->kp;
+//         } else if (parameter_type == "ki") {
+//             target_vector = &pid_ctrl->ki;
+//         } else if (parameter_type == "kd") {
+//             target_vector = &pid_ctrl->kd;
+//         } else if (parameter_type == "set_point") {
+//             target_vector = &pid_ctrl->set_point;
+//         } else if (parameter_type == "lower_limits") {
+//             target_vector = &pid_ctrl->lower_limits;
+//         } else if (parameter_type == "upper_limits") {
+//             target_vector = &pid_ctrl->upper_limits;
+//         } else {
+//             return json{{"error", "Invalid parameter type: " + parameter_type +
+//                                      ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
+//         }
+        
+//         int n = target_vector->size();
+//         if (indices_str == "all") {
+//             target_vector->setConstant(value);
+//             std::cout << "Updated all elements of " << parameter_type << " in controller " << controller_str 
+//                       << " to " << value << std::endl;
+//         } else {
+//             // Use your split_indices helper function to split indices_str by commas.
+//             std::vector<int> idxs = split_indices(indices_str);
+//             if (idxs.empty()) {
+//                 return json{{"error", "No valid indices provided"}};
+//             }
+//             for (int idx : idxs) {
+//                 if (idx < 0 || idx >= n) {
+//                     return json{{"error", "Index " + std::to_string(idx) + " out of range for " + parameter_type 
+//                                         + " vector of size " + std::to_string(n)}};
+//                 }
+//                 (*target_vector)(idx) = value;
+//             }
+//             std::cout << "Updated indices (" << indices_str << ") of " << parameter_type << " in controller " 
+//                       << controller_str << " with value " << value << std::endl;
+//         }
+//         return json{{"status", "success"}};
+//     }
+//     catch (const std::exception &ex) {
+//         return json{{"error", ex.what()}};
+//     }
+// }
+// Rename of your former update_pid_param; now works with unique_ptr<Controller>.
+// Expected args: [ "LO" | "HO", param_name, "all" | "i,j,k", value ]
+// param_name supported: kp, ki, kd, set_point (also accepts "setpoint"), lower_limits, upper_limits
+nlohmann::json update_ctrl_param(nlohmann::json args) {
+    using json = nlohmann::json;
+
+    // Validate args shape
     if (!args.is_array() || args.size() != 4) {
-        return json{{"error", "Expected an array with four elements: [controller, parameter_type, indices, value]"}};
+        return json{{"error", "Expected [controller, parameter_type, indices, value]"}};
     }
+
     try {
         std::string controller_str = args.at(0).get<std::string>();
         std::string parameter_type = args.at(1).get<std::string>();
-        std::string indices_str = args.at(2).get<std::string>();
-        double value = args.at(3).get<double>();
+        std::string indices_str    = args.at(2).get<std::string>();
+        double value               = args.at(3).get<double>();
 
-        // Lock the PID mutex to protect concurrent access.
+        // normalize
+        auto to_lower = [](std::string s){
+            for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return s;
+        };
+        controller_str = to_lower(controller_str);
+        parameter_type = to_lower(parameter_type);
+        if (parameter_type == "setpoint") parameter_type = "set_point";
+
+        // choose controller
+        std::unique_ptr<Controller>* which = nullptr;
+        if (controller_str == "lo")      which = &rtc_config.ctrl_LO;
+        else if (controller_str == "ho") which = &rtc_config.ctrl_HO;
+        else return json{{"error", "Invalid controller: use \"LO\" or \"HO\""}};
+
+        if (!(*which)) return json{{"error", "Controller is not initialized"}};
+
+        // allow only vector params
+        static const std::unordered_set<std::string> allowed = {
+            "kp","ki","kd","set_point","lower_limits","upper_limits",
+            // uncomment if you want to allow state edits via commander:
+            // "integrals","prev_errors","output"
+        };
+        if (!allowed.count(parameter_type)) {
+            return json{{"error", "Invalid parameter: " + parameter_type}};
+        }
+
         std::lock_guard<std::mutex> lock(ctrl_mutex);
 
-        // Select the appropriate PID controller from rtc_config.
-        PIDController* pid_ctrl = nullptr;
-        if (controller_str == "LO") {
-            pid_ctrl = &rtc_config.ctrl_LO;
-        } else if (controller_str == "HO") {
-            pid_ctrl = &rtc_config.ctrl_HO;
-        } else {
-            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+        // fetch vector, edit, write back
+        Controller::Param p = (*which)->get_parameter(parameter_type);
+        if (!std::holds_alternative<Eigen::VectorXd>(p)) {
+            return json{{"error", "Parameter is not a vector: " + parameter_type}};
         }
-        
-        // Choose the target parameter vector.
-        Eigen::VectorXd* target_vector = nullptr;
-        if (parameter_type == "kp") {
-            target_vector = &pid_ctrl->kp;
-        } else if (parameter_type == "ki") {
-            target_vector = &pid_ctrl->ki;
-        } else if (parameter_type == "kd") {
-            target_vector = &pid_ctrl->kd;
-        } else if (parameter_type == "set_point") {
-            target_vector = &pid_ctrl->set_point;
-        } else if (parameter_type == "lower_limits") {
-            target_vector = &pid_ctrl->lower_limits;
-        } else if (parameter_type == "upper_limits") {
-            target_vector = &pid_ctrl->upper_limits;
-        } else {
-            return json{{"error", "Invalid parameter type: " + parameter_type +
-                                     ". Use one of \"kp\", \"ki\", \"kd\", \"set_point\", \"lower_limits\", or \"upper_limits\"."}};
-        }
-        
-        int n = target_vector->size();
+        Eigen::VectorXd v = std::get<Eigen::VectorXd>(p);
+        const int n = static_cast<int>(v.size());
+
         if (indices_str == "all") {
-            target_vector->setConstant(value);
-            std::cout << "Updated all elements of " << parameter_type << " in controller " << controller_str 
-                      << " to " << value << std::endl;
+            v.setConstant(value);
         } else {
-            // Use your split_indices helper function to split indices_str by commas.
+            // use your existing helper
             std::vector<int> idxs = split_indices(indices_str);
             if (idxs.empty()) {
                 return json{{"error", "No valid indices provided"}};
             }
             for (int idx : idxs) {
                 if (idx < 0 || idx >= n) {
-                    return json{{"error", "Index " + std::to_string(idx) + " out of range for " + parameter_type 
-                                        + " vector of size " + std::to_string(n)}};
+                    return json{{"error", "Index " + std::to_string(idx) +
+                                             " out of range for " + parameter_type +
+                                             " (size " + std::to_string(n) + ")"}};
                 }
-                (*target_vector)(idx) = value;
+                v(idx) = value;
             }
-            std::cout << "Updated indices (" << indices_str << ") of " << parameter_type << " in controller " 
-                      << controller_str << " with value " << value << std::endl;
         }
-        return json{{"status", "success"}};
-    }
-    catch (const std::exception &ex) {
+
+        (*which)->set_parameter(parameter_type, v);
+
+        return json{
+            {"status", "success"},
+            {"controller", controller_str},
+            {"parameter", parameter_type},
+            {"size", n},
+            {"indices", indices_str},
+            {"value", value}
+        };
+    } catch (const std::exception& ex) {
         return json{{"error", ex.what()}};
     }
 }
 
-// relative incrememnt of gains 
-json dg(json args) {
-    // Expect an array with exactly 3 elements: [controller, parameter_type, increment]
-    if (!args.is_array() || args.size() != 3) {
-        return json{{"error", "Expected an array with three elements: [controller, parameter_type, increment]"}};
+// // relative incrememnt of gains 
+// json dg(json args) {
+//     // Expect an array with exactly 3 elements: [controller, parameter_type, increment]
+//     if (!args.is_array() || args.size() != 3) {
+//         return json{{"error", "Expected an array with three elements: [controller, parameter_type, increment]"}};
+//     }
+//     try {
+//         std::string controller_str = args.at(0).get<std::string>();
+//         std::string parameter_type = args.at(1).get<std::string>();
+//         double increment_value = args.at(2).get<double>();
+
+//         // Lock the PID mutex to protect concurrent access
+//         std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+//         // Select appropriate PID controller
+//         PIDController* pid_ctrl = nullptr;
+//         if (controller_str == "LO") {
+//             pid_ctrl = &rtc_config.ctrl_LO;
+//         } else if (controller_str == "HO") {
+//             pid_ctrl = &rtc_config.ctrl_HO;
+//         } else {
+//             return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
+//         }
+
+//         // Choose the target parameter vector
+//         Eigen::VectorXd* target_vector = nullptr;
+//         if (parameter_type == "kp") {
+//             target_vector = &pid_ctrl->kp;
+//         } else if (parameter_type == "ki") {
+//             target_vector = &pid_ctrl->ki;
+//         } else if (parameter_type == "kd") {
+//             target_vector = &pid_ctrl->kd;
+//         } else {
+//             return json{{"error", "Invalid parameter type: " + parameter_type +
+//                                      ". Must be \"kp\", \"ki\", or \"kd\"."}};
+//         }
+
+//         // Increment all elements
+//         *target_vector += Eigen::VectorXd::Constant(target_vector->size(), increment_value);
+
+//         std::cout << "[increment_pid_param] Incremented " << parameter_type
+//                   << " in controller " << controller_str
+//                   << " by " << increment_value << std::endl;
+
+//         return json{{"status", "Increment applied successfully"}};
+//     }
+//     catch (const std::exception& ex) {
+//         return json{{"error", ex.what()}};
+//     }
+// }
+nlohmann::json dg(nlohmann::json args) {
+    using json = nlohmann::json;
+
+    // Accept 3 or 4 arguments
+    if (!args.is_array() || (args.size() != 3 && args.size() != 4)) {
+        return json{{"error", "Expected [controller, parameter_type, increment] or [controller, parameter_type, indices, increment]"}};
     }
+
     try {
+        // Parse required fields
         std::string controller_str = args.at(0).get<std::string>();
         std::string parameter_type = args.at(1).get<std::string>();
-        double increment_value = args.at(2).get<double>();
 
-        // Lock the PID mutex to protect concurrent access
-        std::lock_guard<std::mutex> lock(ctrl_mutex);
-
-        // Select appropriate PID controller
-        PIDController* pid_ctrl = nullptr;
-        if (controller_str == "LO") {
-            pid_ctrl = &rtc_config.ctrl_LO;
-        } else if (controller_str == "HO") {
-            pid_ctrl = &rtc_config.ctrl_HO;
-        } else {
-            return json{{"error", "Invalid controller type: " + controller_str + ". Must be \"LO\" or \"HO\"."}};
-        }
-
-        // Choose the target parameter vector
-        Eigen::VectorXd* target_vector = nullptr;
-        if (parameter_type == "kp") {
-            target_vector = &pid_ctrl->kp;
-        } else if (parameter_type == "ki") {
-            target_vector = &pid_ctrl->ki;
-        } else if (parameter_type == "kd") {
-            target_vector = &pid_ctrl->kd;
-        } else {
-            return json{{"error", "Invalid parameter type: " + parameter_type +
-                                     ". Must be \"kp\", \"ki\", or \"kd\"."}};
-        }
-
-        // Increment all elements
-        *target_vector += Eigen::VectorXd::Constant(target_vector->size(), increment_value);
-
-        std::cout << "[increment_pid_param] Incremented " << parameter_type
-                  << " in controller " << controller_str
-                  << " by " << increment_value << std::endl;
-
-        return json{{"status", "Increment applied successfully"}};
-    }
-    catch (const std::exception& ex) {
-        return json{{"error", ex.what()}};
-    }
-}
-
-json print_pid_attribute(json args) {
-    // Expect exactly two elements: [controller, attribute]
-    if (!args.is_array() || args.size() != 2) {
-        return json{{"error", "Expected an array with two elements: [controller, attribute]"}};
-    }
-    
-    try {
-        std::string controller_str = args.at(0).get<std::string>();
-        std::string attribute = args.at(1).get<std::string>();
-        
-        // Select the appropriate PID controller from rtc_config.
-        PIDController* ctrl = nullptr;
-        if (controller_str == "LO") {
-            ctrl = &rtc_config.ctrl_LO;
-        } else if (controller_str == "HO") {
-            ctrl = &rtc_config.ctrl_HO;
-        } else {
-            return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
-        }
-
-        // lock it while we read 
-        std::lock_guard<std::mutex> lock(ctrl_mutex);
-
-
-        // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>.
-        auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
-            return std::vector<double>(v.data(), v.data() + v.size());
+        // Normalize
+        auto to_lower = [](std::string s){
+            for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return s;
         };
-        
+        controller_str = to_lower(controller_str);
+        parameter_type = to_lower(parameter_type);
 
-        if (attribute == "kp") {
-            return json{{"kp", eigen_to_vector(ctrl->kp)}};
-        } else if (attribute == "ki") {
-            return json{{"ki", eigen_to_vector(ctrl->ki)}};
-        } else if (attribute == "kd") {
-            return json{{"kd", eigen_to_vector(ctrl->kd)}};
-        } else if (attribute == "lower_limits") {
-            return json{{"lower_limits", eigen_to_vector(ctrl->lower_limits)}};
-        } else if (attribute == "upper_limits") {
-            return json{{"upper_limits", eigen_to_vector(ctrl->upper_limits)}};
-        } else if (attribute == "set_point") {
-            return json{{"set_point", eigen_to_vector(ctrl->set_point)}};
-        } else if (attribute == "output") {
-            return json{{"output", eigen_to_vector(ctrl->output)}};
-        } else if (attribute == "integrals") {
-            return json{{"integrals", eigen_to_vector(ctrl->integrals)}};
-        } else if (attribute == "prev_errors") {
-            return json{{"prev_errors", eigen_to_vector(ctrl->prev_errors)}};
-        } else {
-            return json{{"error", "Unknown attribute: " + attribute}};
+        // Controller pointer (polymorphic)
+        std::unique_ptr<Controller>* which = nullptr;
+        if (controller_str == "lo")      which = &rtc_config.ctrl_LO;
+        else if (controller_str == "ho") which = &rtc_config.ctrl_HO;
+        else return json{{"error", "Invalid controller: use \"LO\" or \"HO\""}};
+
+        if (!(*which)) return json{{"error", "Controller is not initialized"}};
+
+        // Only gains for dg
+        static const std::unordered_set<std::string> allowed = {"kp","ki","kd"};
+        if (!allowed.count(parameter_type)) {
+            return json{{"error", "Invalid parameter for dg: " + parameter_type + " (use kp|ki|kd)"}};
         }
-    } catch (const std::exception &ex) {
+
+        // Parse indices/increment depending on arity
+        std::string indices_str = "all";
+        double delta = 0.0;
+        if (args.size() == 3) {
+            // ["LO","kp", 0.02]
+            delta = args.at(2).get<double>();
+        } else {
+            // ["LO","kp","1,3,5", 0.02]  or  ["LO","kp","all", 0.02]
+            indices_str = args.at(2).get<std::string>();
+            delta       = args.at(3).get<double>();
+        }
+
+        std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+        // Fetch, modify, write back
+        Controller::Param p = (*which)->get_parameter(parameter_type);
+        if (!std::holds_alternative<Eigen::VectorXd>(p)) {
+            return json{{"error", "Parameter is not a vector: " + parameter_type}};
+        }
+        Eigen::VectorXd v = std::get<Eigen::VectorXd>(p);
+        const int n = static_cast<int>(v.size());
+
+        if (indices_str == "all") {
+            v.array() += delta;
+        } else {
+            std::vector<int> idxs = split_indices(indices_str); // your helper: "1,3,5" -> {1,3,5}
+            if (idxs.empty()) return json{{"error", "No valid indices provided"}};
+            for (int idx : idxs) {
+                if (idx < 0 || idx >= n) {
+                    return json{{"error", "Index " + std::to_string(idx) +
+                                         " out of range for " + parameter_type +
+                                         " (size " + std::to_string(n) + ")"}};
+                }
+                v(idx) += delta;
+            }
+        }
+
+        (*which)->set_parameter(parameter_type, v);
+
+        return json{
+            {"status", "success"},
+            {"controller", controller_str},
+            {"parameter", parameter_type},
+            {"indices", indices_str},
+            {"delta", delta},
+            {"size", n}
+        };
+    } catch (const std::exception& ex) {
         return json{{"error", ex.what()}};
     }
 }
+
+
+
+// json print_pid_attribute(json args) {
+//     // Expect exactly two elements: [controller, attribute]
+//     if (!args.is_array() || args.size() != 2) {
+//         return json{{"error", "Expected an array with two elements: [controller, attribute]"}};
+//     }
+    
+//     try {
+//         std::string controller_str = args.at(0).get<std::string>();
+//         std::string attribute = args.at(1).get<std::string>();
+        
+//         // Select the appropriate PID controller from rtc_config.
+//         PIDController* ctrl = nullptr;
+//         if (controller_str == "LO") {
+//             ctrl = &rtc_config.ctrl_LO;
+//         } else if (controller_str == "HO") {
+//             ctrl = &rtc_config.ctrl_HO;
+//         } else {
+//             return json{{"error", "Invalid controller specified. Must be \"LO\" or \"HO\""}};
+//         }
+
+//         // lock it while we read 
+//         std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+
+//         // Helper lambda to convert an Eigen::VectorXd to a std::vector<double>.
+//         auto eigen_to_vector = [](const Eigen::VectorXd &v) -> std::vector<double> {
+//             return std::vector<double>(v.data(), v.data() + v.size());
+//         };
+        
+
+//         if (attribute == "kp") {
+//             return json{{"kp", eigen_to_vector(ctrl->kp)}};
+//         } else if (attribute == "ki") {
+//             return json{{"ki", eigen_to_vector(ctrl->ki)}};
+//         } else if (attribute == "kd") {
+//             return json{{"kd", eigen_to_vector(ctrl->kd)}};
+//         } else if (attribute == "lower_limits") {
+//             return json{{"lower_limits", eigen_to_vector(ctrl->lower_limits)}};
+//         } else if (attribute == "upper_limits") {
+//             return json{{"upper_limits", eigen_to_vector(ctrl->upper_limits)}};
+//         } else if (attribute == "set_point") {
+//             return json{{"set_point", eigen_to_vector(ctrl->set_point)}};
+//         } else if (attribute == "output") {
+//             return json{{"output", eigen_to_vector(ctrl->output)}};
+//         } else if (attribute == "integrals") {
+//             return json{{"integrals", eigen_to_vector(ctrl->integrals)}};
+//         } else if (attribute == "prev_errors") {
+//             return json{{"prev_errors", eigen_to_vector(ctrl->prev_errors)}};
+//         } else {
+//             return json{{"error", "Unknown attribute: " + attribute}};
+//         }
+//     } catch (const std::exception &ex) {
+//         return json{{"error", ex.what()}};
+//     }
+// }
 
 Eigen::VectorXd expand_to_144(const Eigen::VectorXd& input140) {
     if (input140.size() != 140) {
@@ -2553,31 +2959,28 @@ COMMANDER_REGISTER(m)
     }, "Resume the RTC loop.\n\n");
 
 
-    //update_pid_param ["LO","kp", "all",0.1] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
-    m.def("update_pid_param", update_pid_param,
-          "Update a PID gain vector or set_point, upper_limit or lower_limit. Parameters: [mode, parameter, indices, value].\n"
-          "  - mode: LO or HO"
-          "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
-          "  - indices: a comma-separated list of indices or \"all\"\n"
-          "  - value: the new gain value (number)\n"
-          "e.g. (use double quotation) update_pid_param [''LO'',''kp'',''all'', 0.0] or update_pid_param [''HO'',''kp'',''1,3,5,42'',0.1] or ",
-          "args"_arg);
-
-    //e.g: dg ["LO","ki",0.1] 
-    m.def("dg", dg,
-        "Increment all elements of kp, ki, or kd of the specified controller by a given increment.\n"
-        "Usage: increment_pid_param [\"LO\" or \"HO\", \"kp\" or \"ki\" or \"kd\", increment]",
-        "args"_arg);
+    // commented out while upgrading controller class 20-8-25
+    // //update_pid_param ["LO","kp", "all",0.1] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
+    // m.def("update_pid_param", update_pid_param,
+    //       "Update a PID gain vector or set_point, upper_limit or lower_limit. Parameters: [mode, parameter, indices, value].\n"
+    //       "  - mode: LO or HO"
+    //       "  - gain_type: \"kp\", \"ki\", or \"kd\"\n"
+    //       "  - indices: a comma-separated list of indices or \"all\"\n"
+    //       "  - value: the new gain value (number)\n"
+    //       "e.g. (use double quotation) update_pid_param [''LO'',''kp'',''all'', 0.0] or update_pid_param [''HO'',''kp'',''1,3,5,42'',0.1] or ",
+    //       "args"_arg);
 
 
-    //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
-    m.def("print_pid_attribute", print_pid_attribute,
-          "Print the specified attribute of a PID controller.\n"
-          "Usage: print_pid_attribute [controller, attribute]\n"
-          "  - controller: \"LO\" or \"HO\"\n"
-          "  - attribute: one of \"kp\", \"ki\", \"kd\", \"lower_limits\", \"upper_limits\", \"set_point\", "
-          "\"output\", \"integrals\", or \"prev_errors\"",
-          "args"_arg);
+
+
+    // //print_pid_attribute ["HO","ki"], print_pid_attribute ["LO","kp"]
+    // m.def("print_pid_attribute", print_pid_attribute,
+    //       "Print the specified attribute of a PID controller.\n"
+    //       "Usage: print_pid_attribute [controller, attribute]\n"
+    //       "  - controller: \"LO\" or \"HO\"\n"
+    //       "  - attribute: one of \"kp\", \"ki\", \"kd\", \"lower_limits\", \"upper_limits\", \"set_point\", "
+    //       "\"output\", \"integrals\", or \"prev_errors\"",
+    //       "args"_arg);
 
     //build_interaction_matrix [0.05, 10, 0.1, "dm", "/home/asg/Music/IM_test.fits"]
     m.def("build_interaction_matrix",
@@ -2620,12 +3023,11 @@ COMMANDER_REGISTER(m)
         "Usage: poll_telem_vector snr",
         "args"_arg);
 
-    // m.def("list_rtc_fields", list_rtc_fields,
-    //   "List exposed runtime config fields and types.");
+    m.def("ol_set_actuator", ol_set_actuator,
+        "set an open loop DM offset on one actuator.  Branch is HO|LO, idx is index in vector and value to set. e.g. ol_set_actuator [\"HO\", 65, 0.1] ",
+        "branch"_arg, "idx"_arg, "value"_arg);
+        
 
-    // m.def("get_rtc_field", get_rtc_field,
-    //     "Get one runtime config field by path (string).",
-    //     "args"_arg);
     m.def("list_rtc_fields", list_rtc_fields,
         "List exposed runtime config fields and types.",
         "args"_arg);
@@ -2635,14 +3037,41 @@ COMMANDER_REGISTER(m)
         "args"_arg);
 
     m.def("set_rtc_field", set_rtc_field,
-        "Set one runtime config field by path and JSON value. Usage: set_rtc_field [\"ctrl_LO_config.kp\", [0.1,0.1,0.1]]",
+        "Set one runtime config field by path and JSON value. Usage: set_rtc_field set_rtc_field \"gain\",2",
+        "args"_arg);
+
+    m.def("ctrl_list", ctrl_list,
+        "List controller parameters and types (LO|HO)",
+        "args"_arg);
+
+    m.def("ctrl_get", ctrl_get,
+        "Get a controller parameter (vector/matrix/string)",
+        "args"_arg);
+
+    m.def("ctrl_set", ctrl_set,
+        "Set a controller parameter (vector or matrix). eg. ctrl_set [\"LO\",\"set_point\",[0,0.15]]",
+        "args"_arg);
+
+    /////    
+    // below are utils that allow relative moves and/or updating all or multiple parameters at once 
+    /////
+    //update_pid_param ["LO","kp", "all",0.1] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
+    m.def("update_ctrl_param", update_ctrl_param,
+          "Update a controller (e.g. PID) gain vector or set_point, upper_limit or lower_limit. Parameters: [mode, parameter, indices, value].\n"
+          "  - mode: LO or HO"
+          "  - parameter: \"kp\", \"set_point\", etc"
+          "  - indices: a comma-separated list of indices or \"all\"\n"
+          "  - value: the new parameter(s) value (number)\n"
+          "e.g. (use double quotation) update_pid_param [''LO'',''kp'',''all'', 0.0] or update_pid_param [''HO'',''kp'',''1,3,5,42'',0.1] or ",
+          "args"_arg);
+
+    //e.g: dg ["LO","ki",0.1] 
+    m.def("dg", dg,
+        "Increment all elements of kp, ki, or kd of the specified controller by a given increment.\n"
+        "Usage: increment_pid_param [\"LO\" or \"HO\", \"kp\" or \"ki\" or \"kd\", increment]",
         "args"_arg);
 
 
-    m.def("ol_set_actuator", ol_set_actuator,
-        "set an open loop DM offset on one actuator",
-        "branch"_arg, "idx"_arg, "value"_arg);
-        
 
  }
 

@@ -290,14 +290,15 @@ void rtc(){
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_LO.size() << std::endl;
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_HO.size() << std::endl;
 
-    std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // comment out while upgrading controller class 20-8-25. Uncomment later after verified (may need to change some things)
+    // std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
+    // std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
+    // std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
+    // std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
+    // std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
+    // std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
-    std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
-    std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
-    std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
-    std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
-    std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
     std::cout << "secondary pixels size: " << rtc_config.pixels.secondary_pixels.size() << std::endl;
@@ -647,7 +648,7 @@ void rtc(){
 
             //std::cout << "HERE NOW, LO IN CLOSED LOOP" << std::endl;
 
-            u_LO = rtc_config.ctrl_LO.process( e_LO );
+            u_LO = rtc_config.ctrl_LO->process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
 
@@ -660,7 +661,7 @@ void rtc(){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting LO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_LO.reset();
+                rtc_config.ctrl_LO->reset();
             }
   
 
@@ -688,7 +689,7 @@ void rtc(){
 
             }
 
-            u_HO = rtc_config.ctrl_HO.process( e_HO );
+            u_HO = rtc_config.ctrl_HO->process( e_HO );
             
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
@@ -700,7 +701,7 @@ void rtc(){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_HO.reset();
+                rtc_config.ctrl_HO->reset();
             }
   
 
@@ -729,10 +730,18 @@ void rtc(){
             for (int i = 0; i < u_HO.size(); ++i) {
                 if (std::abs(u_HO(i)) > ho_threshold) {
                     //std::cout << "[SAFETY] HO actuator " << i << " exceeded threshold with value " << u_HO(i) << std::endl;
-
-                    // Reset controller state
-                    rtc_config.ctrl_HO.integrals(i) = 0.0;
-                    rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    //// 20-8-25
+                    // // Reset controller state
+                    // rtc_config.ctrl_HO.integrals(i) = 0.0;
+                    // rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    {
+                    auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("integrals"));
+                    auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("prev_errors"));
+                    I(i) = 0.0;
+                    E(i) = 0.0;
+                    rtc_config.ctrl_HO->set_parameter("integrals", I);
+                    rtc_config.ctrl_HO->set_parameter("prev_errors", E);
+                    }
 
                     // Track misbehavior
                     naughty_list[i]++;
@@ -740,9 +749,21 @@ void rtc(){
                     // Disable gains only once when crossing threshold
                     if (naughty_list[i] == 100) {
                         std::cout << "[SAFETY] Disabling gains for actuator " << i << " after 100 violations" << std::endl;
-                        rtc_config.ctrl_HO.kp(i) = 0.0;
-                        rtc_config.ctrl_HO.ki(i) = 0.0;
-                        rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        //// 20-8-25
+                        // rtc_config.ctrl_HO.kp(i) = 0.0;
+                        // rtc_config.ctrl_HO.ki(i) = 0.0;
+                        // rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        {
+                        auto kp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kp"));
+                        auto ki = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("ki"));
+                        auto kd = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kd"));
+                        kp(i) = ki(i) = kd(i) = 0.0;
+                        rtc_config.ctrl_HO->set_parameter("kp", kp);
+                        rtc_config.ctrl_HO->set_parameter("ki", ki);
+                        rtc_config.ctrl_HO->set_parameter("kd", kd);
+                        }
 
                         disabled_this_frame = true;
                     }
@@ -760,11 +781,21 @@ void rtc(){
 
         
         if (c_LO.cwiseAbs().maxCoeff() > 0.2) {
+            // 20-8-25
             // Reset controller state
-            for (int i = 0; i < u_LO.size(); ++i) {
-                rtc_config.ctrl_LO.integrals(i) = 0.0;
-                rtc_config.ctrl_LO.prev_errors(i) = 0.0;
-            }
+            // for (int i = 0; i < u_LO.size(); ++i) {
+            //     rtc_config.ctrl_LO.integrals(i) = 0.0;
+            //     rtc_config.ctrl_LO.prev_errors(i) = 0.0;
+            // }
+            std::lock_guard<std::mutex> lk(ctrl_mutex);  // if you already guard controller access
+            auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("integrals"));
+            auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("prev_errors"));
+            I.setZero();
+            E.setZero();
+            rtc_config.ctrl_LO->set_parameter("integrals", I);
+            rtc_config.ctrl_LO->set_parameter("prev_errors", E);
+        
+
 
             updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
             ImageStreamIO_sempost(&dm_rtc0, 1);

@@ -16,6 +16,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+//20-8-25
+#include <memory>
+#include "controllers/controller.h"
+
+
 #include "burst_window.h"
 
 //#include <ImageStreamIO/ImageStreamIO.h>
@@ -31,6 +36,10 @@
 #define SERVO_STOP -1
 #define SERVO_CLOSE 1
 #define SERVO_OPEN 0
+
+// add this prototype BEFORE bdr_rtc_config definition
+std::unique_ptr<Controller>
+make_controller(const std::string& type, const bdr_controller& cfg);
 
 //----------Constant Arrays-----------
 
@@ -320,65 +329,100 @@ struct bdr_matricies {
 
 //-----------------------------------------------------
 // bdr_controller: AO controller settings.
+// 20-8-25
 struct bdr_controller {
-    // For now, only gains. In a complete system you might add anti-windup limits, etc.
-    Eigen::VectorXd kp;
-    Eigen::VectorXd ki;
-    Eigen::VectorXd kd;
-    Eigen::VectorXd lower_limits;
-	Eigen::VectorXd upper_limits;
-	Eigen::VectorXd set_point;
-    void validate() const {
-        if (kp.size() == 0 || ki.size() == 0 || kd.size() == 0)
-            throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
-        if ( (kp.size() != ki.size()) || (kp.size() != kd.size()))
-            throw std::runtime_error("bdr_controller: gain vector sizes mismatch.");
-    }
-    // Constructor with default vector size of 5.
-    bdr_controller(int vsize = 140)
-        : kp(Eigen::VectorXd::Zero(vsize)),
-          ki(Eigen::VectorXd::Zero(vsize)),
-          kd(Eigen::VectorXd::Zero(vsize)),
-          lower_limits(Eigen::VectorXd::Constant(vsize, -2)),
-          upper_limits(Eigen::VectorXd::Constant(vsize, 2)),
-          set_point(Eigen::VectorXd::Zero(vsize))
-        {}
-};
-
-
-
-// Declaration of the PIDController class. needs to be after bdr_controller struct since it uses it in the constructor
-class PIDController {
-public:
-    // Constructors.
-    PIDController(const Eigen::VectorXd& kp_in,
-                  const Eigen::VectorXd& ki_in,
-                  const Eigen::VectorXd& kd_in,
-                  const Eigen::VectorXd& lower_limit_in,
-                  const Eigen::VectorXd& upper_limit_in,
-                  const Eigen::VectorXd& setpoint_in);
-    PIDController(const bdr_controller& config_in);
-    PIDController();
-
-    // Process the measured input to produce control output.
-    Eigen::VectorXd process(const Eigen::VectorXd& measured);
-
-    // Utility functions.
-    void set_all_gains_to_zero();
-    void reset();
-
-    // Public members 
     Eigen::VectorXd kp;
     Eigen::VectorXd ki;
     Eigen::VectorXd kd;
     Eigen::VectorXd lower_limits;
     Eigen::VectorXd upper_limits;
     Eigen::VectorXd set_point;
-    std::string ctrl_type;
-    Eigen::VectorXd output;
-    Eigen::VectorXd integrals;
-    Eigen::VectorXd prev_errors;
+
+    bdr_controller(int vsize = 140)
+        : kp(Eigen::VectorXd::Zero(vsize)),
+          ki(Eigen::VectorXd::Zero(vsize)),
+          kd(Eigen::VectorXd::Zero(vsize)),
+          lower_limits(Eigen::VectorXd::Constant(vsize, -2.0)),
+          upper_limits(Eigen::VectorXd::Constant(vsize, +2.0)),
+          set_point(Eigen::VectorXd::Zero(vsize)) {}
+
+    void validate() const {
+        const auto n = kp.size();
+        if (n == 0 || ki.size() == 0 || kd.size() == 0)
+            throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
+
+        // All vectors must be same size
+        if (ki.size()!=n || kd.size()!=n ||
+            lower_limits.size()!=n || upper_limits.size()!=n || set_point.size()!=n)
+            throw std::runtime_error("bdr_controller: vector size mismatch.");
+
+        // Ensure lower <= upper elementwise
+        for (Eigen::Index i=0;i<n;++i) {
+            if (lower_limits[i] > upper_limits[i])
+                throw std::runtime_error("bdr_controller: lower_limits > upper_limits at index " + std::to_string(i));
+        }
+    }
 };
+
+// struct bdr_controller {
+//     // For now, only gains. In a complete system you might add anti-windup limits, etc.
+//     Eigen::VectorXd kp;
+//     Eigen::VectorXd ki;
+//     Eigen::VectorXd kd;
+//     Eigen::VectorXd lower_limits;
+// 	Eigen::VectorXd upper_limits;
+// 	Eigen::VectorXd set_point;
+//     void validate() const {
+//         if (kp.size() == 0 || ki.size() == 0 || kd.size() == 0)
+//             throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
+//         if ( (kp.size() != ki.size()) || (kp.size() != kd.size()))
+//             throw std::runtime_error("bdr_controller: gain vector sizes mismatch.");
+//     }
+//     // Constructor with default vector size of 5.
+//     bdr_controller(int vsize = 140)
+//         : kp(Eigen::VectorXd::Zero(vsize)),
+//           ki(Eigen::VectorXd::Zero(vsize)),
+//           kd(Eigen::VectorXd::Zero(vsize)),
+//           lower_limits(Eigen::VectorXd::Constant(vsize, -2)),
+//           upper_limits(Eigen::VectorXd::Constant(vsize, 2)),
+//           set_point(Eigen::VectorXd::Zero(vsize))
+//         {}
+// };
+
+
+//20-8-25
+// // Declaration of the PIDController class. needs to be after bdr_controller struct since it uses it in the constructor
+// class PIDController {
+// public:
+//     // Constructors.
+//     PIDController(const Eigen::VectorXd& kp_in,
+//                   const Eigen::VectorXd& ki_in,
+//                   const Eigen::VectorXd& kd_in,
+//                   const Eigen::VectorXd& lower_limit_in,
+//                   const Eigen::VectorXd& upper_limit_in,
+//                   const Eigen::VectorXd& setpoint_in);
+//     PIDController(const bdr_controller& config_in);
+//     PIDController();
+
+//     // Process the measured input to produce control output.
+//     Eigen::VectorXd process(const Eigen::VectorXd& measured);
+
+//     // Utility functions.
+//     void set_all_gains_to_zero();
+//     void reset();
+
+//     // Public members 
+//     Eigen::VectorXd kp;
+//     Eigen::VectorXd ki;
+//     Eigen::VectorXd kd;
+//     Eigen::VectorXd lower_limits;
+//     Eigen::VectorXd upper_limits;
+//     Eigen::VectorXd set_point;
+//     std::string ctrl_type;
+//     Eigen::VectorXd output;
+//     Eigen::VectorXd integrals;
+//     Eigen::VectorXd prev_errors;
+// };
 
 
 //-----------------------------------------------------
@@ -543,9 +587,11 @@ struct bdr_rtc_config {
     bdr_filters filters;
 
     // // Derived run time parameters (need to be re-calculated if we reload a config)
-    PIDController ctrl_LO ;
-    PIDController ctrl_HO ;
-
+    //PIDController ctrl_LO ;
+    //PIDController ctrl_HO ;
+    // NEW 20-8-25:
+    std::unique_ptr<Controller> ctrl_LO;
+    std::unique_ptr<Controller> ctrl_HO;
 
     // some pre inits
     //Eigen::VectorXd img ; // image from SHM (size could change)
@@ -581,12 +627,18 @@ struct bdr_rtc_config {
 
 
     void initDerivedParameters() {
-        if (state.controller_type == "PID") {
-            ctrl_LO = PIDController(ctrl_LO_config);
-            ctrl_HO = PIDController(ctrl_HO_config);
-        } else {
-            throw std::runtime_error("Invalid controller_type");
-        }
+
+        // 20-8-25: Initialize controllers based on the state.
+        ctrl_LO_config.validate();
+        ctrl_HO_config.validate();
+        ctrl_LO = make_controller(state.controller_type, ctrl_LO_config);
+        ctrl_HO = make_controller(state.controller_type, ctrl_HO_config);
+        // if (state.controller_type == "PID") {
+        //     ctrl_LO = PIDController(ctrl_LO_config);
+        //     ctrl_HO = PIDController(ctrl_HO_config);
+        // } else {
+        //     throw std::runtime_error("Invalid controller_type");
+        // }
 
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
 
@@ -743,6 +795,10 @@ struct EncodedImage
 };
 
 
+//20-8-25
+// Make a concrete controller from type string and PID-like config.
+std::unique_ptr<Controller>
+make_controller(const std::string& type, const bdr_controller& cfg);
 
 
 //-------End of Commander structs------
