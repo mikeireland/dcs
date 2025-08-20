@@ -41,6 +41,11 @@ std::atomic<int> servo_mode;
 std::atomic<int> servo_mode_LO;
 std::atomic<int> servo_mode_HO;
 
+/////// new stuff for onsky interactions (19/8/25)
+// Definition of the extern declared in baldr.h 
+// to hold baldr (DM channel 2) open loop offsets 
+std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
+
 
 std::string telemFormat = "fits";//"json";
 std::string telem_save_path = "/home/asg/Music/";
@@ -613,6 +618,216 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
     return rtc;
 }
 
+
+// stuff for on sky interaction data aquisition (19/8/25)
+// Returns the current DM command vector length from SHM metadata.
+
+// Returns the current DM command vector length from SHM metadata.
+static inline int dm_cmd_len_unsafe() {
+    return (dm_rtc.md ? static_cast<int>(dm_rtc.md->nelement) : 0);
+}
+
+// Initialize g_ol_offsets to zero vectors of length N (idempotent).
+static bool ol_init_if_needed(int N_hint = -1) {
+    auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+    if (cur) return true;
+
+    int N = (N_hint > 0) ? N_hint : dm_cmd_len_unsafe();
+    if (N <= 0) {
+        static bool warned = false;
+        if (!warned) {
+            std::cerr << "[OL] init: DM command length unknown (N<=0). "
+                         "Offsets remain null until DM SHM is attached.\n";
+            warned = true;
+        }
+        return false;
+    }
+
+    // Build mutable, then publish as const
+    auto z_mut = std::make_shared<OLOffsets>();
+    z_mut->lo = Eigen::VectorXd::Zero(N);
+    z_mut->ho = Eigen::VectorXd::Zero(N);
+    std::shared_ptr<const OLOffsets> z_const = z_mut;
+    std::atomic_store_explicit(&g_ol_offsets, z_const, std::memory_order_release);
+    std::cerr << "[OL] init: initialized open-loop offsets with length " << N << ".\n";
+    return true;
+}
+
+// Publish a new snapshot (single atomic store)
+static inline void ol_publish(std::shared_ptr<const OLOffsets> nv_const) {
+    std::atomic_store_explicit(&g_ol_offsets, std::move(nv_const), std::memory_order_release);
+}
+
+// Call once after DM SHM attach when DM command length is known.
+void init_openloop_offsets(int dm_cmd_len) {
+    (void)ol_init_if_needed(dm_cmd_len);
+}
+
+// // Replace ONLY the LO offset (size must match DM length)
+// void set_openloop_offset_LO(const Eigen::Ref<const Eigen::VectorXd>& lo) {
+//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_lo: not initialized.\n"; return; }
+//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+//     const int N = cur->lo.size();
+//     if (lo.size() != N) {
+//         std::cerr << "[OL] set_lo: size mismatch (got " << lo.size()
+//                   << ", expected " << N << ").\n";
+//         return;
+//     }
+//     auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy HO, replace LO
+//     nv_mut->lo = lo;
+//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+//     ol_publish(std::move(nv_const));
+// }
+
+// // Replace ONLY the HO offset (size must match DM length)
+// void set_openloop_offset_HO(const Eigen::Ref<const Eigen::VectorXd>& ho) {
+//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_ho: not initialized.\n"; return; }
+//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+//     const int N = cur->ho.size();
+//     if (ho.size() != N) {
+//         std::cerr << "[OL] set_ho: size mismatch (got " << ho.size()
+//                   << ", expected " << N << ").\n";
+//         return;
+//     }
+//     auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy LO, replace HO
+//     nv_mut->ho = ho;
+//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+//     ol_publish(std::move(nv_const));
+// }
+
+// // Replace both LO and HO together atomically
+// void set_openloop_offsets(const Eigen::Ref<const Eigen::VectorXd>& lo,
+//                           const Eigen::Ref<const Eigen::VectorXd>& ho) {
+//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_both: not initialized.\n"; return; }
+//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+//     const int N = cur->lo.size();
+//     if (lo.size() != N || ho.size() != N) {
+//         std::cerr << "[OL] set_both: size mismatch (got lo=" << lo.size()
+//                   << ", ho=" << ho.size() << ", expected " << N << ").\n";
+//         return;
+//     }
+//     auto nv_mut = std::make_shared<OLOffsets>(*cur);
+//     nv_mut->lo = lo;
+//     nv_mut->ho = ho;
+//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+//     ol_publish(std::move(nv_const));
+// }
+
+// Zero both offsets and publish atomically
+void clear_openloop_offsets() {
+    if (!ol_init_if_needed()) return;
+    auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+    auto nv_mut = std::make_shared<OLOffsets>(*cur);
+    nv_mut->lo.setZero();
+    nv_mut->ho.setZero();
+    std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+    ol_publish(std::move(nv_const));
+}
+
+// Set one actuator in LO or HO open-loop offset vector.
+// branch: "LO" or "HO" (case-insensitive)
+// idx: 0-based actuator index
+// Commander entrypoint: set one actuator open-loop offset (LO/HO) in-place.
+// Accepts: ["HO", 65, 0.1]  or  {"branch":"HO","idx":65,"value":0.1}  or  "HO 65 0.1"
+json ol_set_actuator(json args) {
+    try {
+        std::string branch;
+        long long   idx_ll = -1;
+        double      value  = 0.0;
+
+        // Parse input ---------------------------------------------------------
+        if (args.is_array()) {
+            if (args.size() != 3)
+                return json{{"ok", false}, {"error", "usage: [\"HO|LO\", idx, value]"}};
+
+            branch = args.at(0).get<std::string>();
+
+            // idx can be number or string; accept both
+            if (args.at(1).is_number_integer() || args.at(1).is_number_unsigned())
+                idx_ll = args.at(1).get<long long>();
+            else if (args.at(1).is_string())
+                idx_ll = std::stoll(args.at(1).get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "idx must be integer"}};
+
+            // value can be number or string; accept both
+            if (args.at(2).is_number_float() || args.at(2).is_number_integer())
+                value = args.at(2).get<double>();
+            else if (args.at(2).is_string())
+                value = std::stod(args.at(2).get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "value must be numeric"}};
+        }
+        else if (args.is_object()) {
+            if (!args.contains("branch") || !args.contains("idx") || !args.contains("value"))
+                return json{{"ok", false}, {"error", "usage: {\"branch\":\"HO|LO\",\"idx\":N,\"value\":X}"}};
+
+            branch = args["branch"].get<std::string>();
+
+            if (args["idx"].is_number_integer() || args["idx"].is_number_unsigned())
+                idx_ll = args["idx"].get<long long>();
+            else if (args["idx"].is_string())
+                idx_ll = std::stoll(args["idx"].get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "idx must be integer"}};
+
+            if (args["value"].is_number_float() || args["value"].is_number_integer())
+                value = args["value"].get<double>();
+            else if (args["value"].is_string())
+                value = std::stod(args["value"].get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "value must be numeric"}};
+        }
+        else if (args.is_string()) {
+            std::istringstream iss(args.get<std::string>());
+            if (!(iss >> branch >> idx_ll >> value))
+                return json{{"ok", false}, {"error", "usage: \"HO 65 0.1\""}};
+        }
+        else {
+            return json{{"ok", false}, {"error", "usage: [\"HO|LO\", idx, value] or {\"branch\":\"HO|LO\",\"idx\":N,\"value\":X}"}};
+        }
+
+        // Validate ------------------------------------------------------------
+        if (idx_ll < 0)
+            return json{{"ok", false}, {"error", "idx must be >= 0"}};
+
+        // Ensure offsets are initialized (requires DM SHM size known)
+        if (!ol_init_if_needed())
+            return json{{"ok", false}, {"error", "offsets not initialized (DM length unknown)"}};
+
+        auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+        if (!cur)
+            return json{{"ok", false}, {"error", "internal null snapshot"}};
+
+        const int N   = static_cast<int>(cur->lo.size());   // == cur->ho.size()
+        const int idx = static_cast<int>(idx_ll);
+        if (idx >= N)
+            return json{{"ok", false}, {"error", "idx out of range", {"N", N}}};
+
+        // Apply ----------------------------------------------------------------
+        auto nv_mut = std::make_shared<OLOffsets>(*cur);
+        const bool isHO = (!branch.empty() && (branch[0] == 'H' || branch[0] == 'h'));
+
+        const double old_val = isHO ? nv_mut->ho(idx) : nv_mut->lo(idx);
+        if (isHO) nv_mut->ho(idx) = value;
+        else      nv_mut->lo(idx) = value;
+
+        std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+        std::atomic_store_explicit(&g_ol_offsets, nv_const, std::memory_order_release);
+
+        return json{{"ok", true},
+                    {"branch", isHO ? "HO" : "LO"},
+                    {"idx", idx},
+                    {"old", old_val},
+                    {"value", value},
+                    {"N", N}};
+    }
+    catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("parse/apply: ") + e.what()}};
+    }
+}
+
+/////////////////
 
 //uncomment and build July 2025 AIV
 void change_boxcar(int cmd) {
@@ -2423,6 +2638,12 @@ COMMANDER_REGISTER(m)
         "Set one runtime config field by path and JSON value. Usage: set_rtc_field [\"ctrl_LO_config.kp\", [0.1,0.1,0.1]]",
         "args"_arg);
 
+
+    m.def("ol_set_actuator", ol_set_actuator,
+        "set an open loop DM offset on one actuator",
+        "branch"_arg, "idx"_arg, "value"_arg);
+        
+
  }
 
 
@@ -2549,6 +2770,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+
+    int dm_cmd_length = dm_rtc.md ? static_cast<int>(dm_rtc.md->nelement) : 0;
+    init_openloop_offsets(dm_cmd_length);   // publishes zero offsets of correct length
+    std::cout << "DM command length in shm metadata = " << dm_cmd_length << std::endl;
 
     // Start RTC threads
     std::thread rtc_thread(rtc);

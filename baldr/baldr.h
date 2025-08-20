@@ -780,6 +780,27 @@ extern std::atomic<int> servo_mode_HO;
 //extern int servo_mode_HO;
 // extern vector::<int> telescopes;
 
+
+
+/////// new stuff for onsky interactions (19/8/25)
+// --- Open-loop offsets published atomically as one struct ---
+// --- Open-loop offsets published atomically as one struct ---
+// --- Open-loop offsets published atomically as one struct ---
+struct OLOffsets {
+    Eigen::VectorXd lo;  // LO branch DM-command offset (length = DM command vector)
+    Eigen::VectorXd ho;  // HO branch DM-command offset (length = DM command vector)
+};
+
+// Global handle (RTC reads via atomic_load on this pointer)
+extern std::shared_ptr<const OLOffsets> g_ol_offsets;
+
+// convenience loader (no need for a separate extern/definition)
+// inline std::shared_ptr<const OLOffsets> load_openloop_offsets() {
+//     return std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+// }
+
+/////// end new stuf 
+
 // Servo parameters. These are the parameters that will be adjusted by the commander
 
 // We at least need a mutex for RTC parameters.

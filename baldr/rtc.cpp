@@ -663,9 +663,21 @@ void rtc(){
                 rtc_config.ctrl_LO.reset();
             }
   
-            u_LO = 0 * e_LO ;
 
-            c_LO = rtc_config.matrices.M2C_LO * u_LO;
+            u_LO = 0 * e_LO;
+            
+            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);//load_openloop_offsets();
+            if (off) { //only apply if offset is initialized 
+                c_LO = rtc_config.matrices.M2C_LO * u_LO + off->lo;
+                
+            } else {
+                c_LO = rtc_config.matrices.M2C_LO * u_LO;
+                
+            }
+            
+
+
+            //c_LO = rtc_config.matrices.M2C_LO * u_LO;
             
         }
 
@@ -694,7 +706,16 @@ void rtc(){
 
             u_HO = 0 * e_HO ;
           
-            c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire); //load_openloop_offsets(); // load atomic open loop DM HO offsets 
+            if (off) {
+                c_HO = rtc_config.matrices.M2C_HO * u_HO + off->ho;
+            } else {
+                c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            }
+            
+            
+            
+            //c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
         }
 
