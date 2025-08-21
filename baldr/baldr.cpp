@@ -55,6 +55,11 @@ std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 std::string telemFormat = "fits";//"json";
 std::string telem_save_path = "/home/asg/Music/";
 
+// Your basis file location
+static constexpr const char* kDMBaseFITS =
+    "/usr/local/etc/baldr/dm_basis/bmc_multi3p5_dm_bases.fits";
+
+
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 
@@ -686,55 +691,37 @@ void init_openloop_offsets(int dm_cmd_len) {
     (void)ol_init_if_needed(dm_cmd_len);
 }
 
-// // Replace ONLY the LO offset (size must match DM length)
-// void set_openloop_offset_LO(const Eigen::Ref<const Eigen::VectorXd>& lo) {
-//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_lo: not initialized.\n"; return; }
-//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
-//     const int N = cur->lo.size();
-//     if (lo.size() != N) {
-//         std::cerr << "[OL] set_lo: size mismatch (got " << lo.size()
-//                   << ", expected " << N << ").\n";
-//         return;
-//     }
-//     auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy HO, replace LO
-//     nv_mut->lo = lo;
-//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
-//     ol_publish(std::move(nv_const));
-// }
+// Replace ONLY the LO offset (size must match DM length)
+void set_openloop_offset_LO(const Eigen::Ref<const Eigen::VectorXd>& lo) {
+    if (!ol_init_if_needed()) { std::cerr << "[OL] set_lo: not initialized.\n"; return; }
+    auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+    const int N = cur->lo.size();
+    if (lo.size() != N) {
+        std::cerr << "[OL] set_lo: size mismatch (got " << lo.size()
+                  << ", expected " << N << ").\n";
+        return;
+    }
+    auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy HO, replace LO
+    nv_mut->lo = lo;
+    std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+    ol_publish(std::move(nv_const));
+}
 
-// // Replace ONLY the HO offset (size must match DM length)
-// void set_openloop_offset_HO(const Eigen::Ref<const Eigen::VectorXd>& ho) {
-//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_ho: not initialized.\n"; return; }
-//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
-//     const int N = cur->ho.size();
-//     if (ho.size() != N) {
-//         std::cerr << "[OL] set_ho: size mismatch (got " << ho.size()
-//                   << ", expected " << N << ").\n";
-//         return;
-//     }
-//     auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy LO, replace HO
-//     nv_mut->ho = ho;
-//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
-//     ol_publish(std::move(nv_const));
-// }
-
-// // Replace both LO and HO together atomically
-// void set_openloop_offsets(const Eigen::Ref<const Eigen::VectorXd>& lo,
-//                           const Eigen::Ref<const Eigen::VectorXd>& ho) {
-//     if (!ol_init_if_needed()) { std::cerr << "[OL] set_both: not initialized.\n"; return; }
-//     auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
-//     const int N = cur->lo.size();
-//     if (lo.size() != N || ho.size() != N) {
-//         std::cerr << "[OL] set_both: size mismatch (got lo=" << lo.size()
-//                   << ", ho=" << ho.size() << ", expected " << N << ").\n";
-//         return;
-//     }
-//     auto nv_mut = std::make_shared<OLOffsets>(*cur);
-//     nv_mut->lo = lo;
-//     nv_mut->ho = ho;
-//     std::shared_ptr<const OLOffsets> nv_const = nv_mut;
-//     ol_publish(std::move(nv_const));
-// }
+// Replace ONLY the HO offset (size must match DM length)
+void set_openloop_offset_HO(const Eigen::Ref<const Eigen::VectorXd>& ho) {
+    if (!ol_init_if_needed()) { std::cerr << "[OL] set_ho: not initialized.\n"; return; }
+    auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+    const int N = cur->ho.size();
+    if (ho.size() != N) {
+        std::cerr << "[OL] set_ho: size mismatch (got " << ho.size()
+                  << ", expected " << N << ").\n";
+        return;
+    }
+    auto nv_mut = std::make_shared<OLOffsets>(*cur);  // copy LO, replace HO
+    nv_mut->ho = ho;
+    std::shared_ptr<const OLOffsets> nv_const = nv_mut;
+    ol_publish(std::move(nv_const));
+}
 
 // Zero both offsets and publish atomically
 void clear_openloop_offsets() {
@@ -947,119 +934,123 @@ nlohmann::json poll_telem_scalar(std::string name) {
 }
 
 
+// // these are outdated since the darks now go through Cred1 server (camera)
+// void new_dark_and_bias() {
+//     try {
+//         std::cout << "[capture_dark_and_bias] Starting new dark/bias capture..." << std::endl;
 
-void new_dark_and_bias() {
-    try {
-        std::cout << "[capture_dark_and_bias] Starting new dark/bias capture..." << std::endl;
+//         // Pause the RTC loop
+//         pauseRTC();
+//         std::cout << "[capture_dark_and_bias] RTC paused." << std::endl;
 
-        // Pause the RTC loop
-        pauseRTC();
-        std::cout << "[capture_dark_and_bias] RTC paused." << std::endl;
+//         // Turn off the source
+//         send_mds_cmd("off SBB");
+//         std::cout << "[capture_dark_and_bias] Light source turned off." << std::endl;
+//         std::this_thread::sleep_for(std::chrono::seconds(1));
 
-        // Turn off the source
-        send_mds_cmd("off SBB");
-        std::cout << "[capture_dark_and_bias] Light source turned off." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+//         // Record original FPS and gain
+//         float original_fps = get_float_cam_param("fps raw");
+//         float original_gain = get_float_cam_param("gain raw");
 
-        // Record original FPS and gain
-        float original_fps = get_float_cam_param("fps raw");
-        float original_gain = get_float_cam_param("gain raw");
+//         // Set FPS to maximum (1730 Hz) for bias measurement
+//         send_cam_cmd("set fps 1730");
+//         std::this_thread::sleep_for(std::chrono::seconds(1));
 
-        // Set FPS to maximum (1730 Hz) for bias measurement
-        send_cam_cmd("set fps 1730");
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+//         const size_t nframes = 1000;
+//         size_t totalPixels = static_cast<size_t>(subarray.md->size[0]) * static_cast<size_t>(subarray.md->size[1]);
 
-        const size_t nframes = 1000;
-        size_t totalPixels = static_cast<size_t>(subarray.md->size[0]) * static_cast<size_t>(subarray.md->size[1]);
+//         Eigen::VectorXd bias_sum = Eigen::VectorXd::Zero(totalPixels);
 
-        Eigen::VectorXd bias_sum = Eigen::VectorXd::Zero(totalPixels);
+//         // --- Capture bias frames ---
+//         for (size_t i = 0; i < nframes; ++i) {
+//             catch_up_with_sem(&subarray, 1);
+//             ImageStreamIO_semwait(&subarray, 1);
 
-        // --- Capture bias frames ---
-        for (size_t i = 0; i < nframes; ++i) {
-            catch_up_with_sem(&subarray, 1);
-            ImageStreamIO_semwait(&subarray, 1);
+//             //uint16_t* raw = subarray.array.UI16;
+//             int32_t* raw = subarray.array.SI32;
+//             //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+//             Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+//             bias_sum += rawArr.cast<double>().matrix();
+//         }
 
-            //uint16_t* raw = subarray.array.UI16;
-            int32_t* raw = subarray.array.SI32;
-            //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-            Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-            bias_sum += rawArr.cast<double>().matrix();
-        }
+//         Eigen::VectorXd bias = bias_sum / static_cast<double>(nframes);
 
-        Eigen::VectorXd bias = bias_sum / static_cast<double>(nframes);
+//         std::cout << "[capture_dark_and_bias] Bias frames captured." << std::endl;
 
-        std::cout << "[capture_dark_and_bias] Bias frames captured." << std::endl;
+//         // Restore original FPS
+//         send_cam_cmd("set fps " + std::to_string(static_cast<int>(original_fps)));
+//         std::this_thread::sleep_for(std::chrono::seconds(1));
 
-        // Restore original FPS
-        send_cam_cmd("set fps " + std::to_string(static_cast<int>(original_fps)));
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+//         // --- Capture dark frames ---
+//         Eigen::VectorXd dark_sum = Eigen::VectorXd::Zero(totalPixels);
 
-        // --- Capture dark frames ---
-        Eigen::VectorXd dark_sum = Eigen::VectorXd::Zero(totalPixels);
+//         for (size_t i = 0; i < nframes; ++i) {
+//             catch_up_with_sem(&subarray, 1);
+//             ImageStreamIO_semwait(&subarray, 1);
 
-        for (size_t i = 0; i < nframes; ++i) {
-            catch_up_with_sem(&subarray, 1);
-            ImageStreamIO_semwait(&subarray, 1);
+//             //uint16_t* raw = subarray.array.UI16;
+//             //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+//             int32_t* raw = subarray.array.SI32;
+//             Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
+//             dark_sum += rawArr.cast<double>().matrix();
+//         }
 
-            //uint16_t* raw = subarray.array.UI16;
-            //Eigen::Map<const Eigen::Array<uint16_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-            int32_t* raw = subarray.array.SI32;
-            Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-            dark_sum += rawArr.cast<double>().matrix();
-        }
+//         Eigen::VectorXd dark = dark_sum / static_cast<double>(nframes);
 
-        Eigen::VectorXd dark = dark_sum / static_cast<double>(nframes);
+//         std::cout << "[capture_dark_and_bias] Dark frames captured." << std::endl;
 
-        std::cout << "[capture_dark_and_bias] Dark frames captured." << std::endl;
+//         // Turn the source back on
+//         send_mds_cmd("on SBB");
+//         std::this_thread::sleep_for(std::chrono::seconds(2));
+//         std::cout << "[capture_dark_and_bias] Light source turned back on." << std::endl;
 
-        // Turn the source back on
-        send_mds_cmd("on SBB");
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        std::cout << "[capture_dark_and_bias] Light source turned back on." << std::endl;
+//         // Compute raw dark: (dark - bias) (in ADU)
+//         Eigen::VectorXd raw_dark = dark - bias;
 
-        // Compute raw dark: (dark - bias) (in ADU)
-        Eigen::VectorXd raw_dark = dark - bias;
+//         // Save to rtc_config
+//         rtc_config.reduction.bias = bias;
+//         rtc_config.reduction.dark = raw_dark * (original_fps / original_gain); // Units: ADU/s/gain
 
-        // Save to rtc_config
-        rtc_config.reduction.bias = bias;
-        rtc_config.reduction.dark = raw_dark * (original_fps / original_gain); // Units: ADU/s/gain
+//         rtc_config.reduction.bias_dm = rtc_config.matrices.I2A * rtc_config.reduction.bias;
+//         rtc_config.reduction.dark_dm = rtc_config.matrices.I2A * rtc_config.reduction.dark;
 
-        rtc_config.reduction.bias_dm = rtc_config.matrices.I2A * rtc_config.reduction.bias;
-        rtc_config.reduction.dark_dm = rtc_config.matrices.I2A * rtc_config.reduction.dark;
+//         rtc_config.dark_dm_runtime = rtc_config.matrices.I2A * raw_dark;
 
-        rtc_config.dark_dm_runtime = rtc_config.matrices.I2A * raw_dark;
+//         std::cout << "[capture_dark_and_bias] Updated reduction parameters successfully." << std::endl;
 
-        std::cout << "[capture_dark_and_bias] Updated reduction parameters successfully." << std::endl;
+//         // Resume the RTC
+//         resumeRTC();
+//         std::cout << "[capture_dark_and_bias] RTC resumed." << std::endl;
 
-        // Resume the RTC
-        resumeRTC();
-        std::cout << "[capture_dark_and_bias] RTC resumed." << std::endl;
-
-    } catch (const std::exception& ex) {
-        std::cerr << "[capture_dark_and_bias] Exception occurred: " << ex.what() << std::endl;
-        resumeRTC(); // Ensure we resume RTC even on failure
-    }
-}
-
-
-
-void capture_dark_and_bias() {
-    try {
-        pauseRTC();  // Pause RTC while capturing frames
-        std::cout << "[capture_dark_and_bias] RTC paused for dark and bias acquisition." << std::endl;
-
-        new_dark_and_bias();
-
-        resumeRTC(); // Resume RTC afterwards
-        std::cout << "[capture_dark_and_bias] RTC resumed after dark and bias acquisition." << std::endl;
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "[capture_dark_and_bias] Exception caught: " << ex.what() << std::endl;
-        resumeRTC(); // Try to resume even on error
-    }
-}
+//     } catch (const std::exception& ex) {
+//         std::cerr << "[capture_dark_and_bias] Exception occurred: " << ex.what() << std::endl;
+//         resumeRTC(); // Ensure we resume RTC even on failure
+//     }
+// }
 
 
+
+// void capture_dark_and_bias() {
+//     try {
+//         pauseRTC();  // Pause RTC while capturing frames
+//         std::cout << "[capture_dark_and_bias] RTC paused for dark and bias acquisition." << std::endl;
+
+//         new_dark_and_bias();
+
+//         resumeRTC(); // Resume RTC afterwards
+//         std::cout << "[capture_dark_and_bias] RTC resumed after dark and bias acquisition." << std::endl;
+//     }
+//     catch (const std::exception& ex) {
+//         std::cerr << "[capture_dark_and_bias] Exception caught: " << ex.what() << std::endl;
+//         resumeRTC(); // Try to resume even on error
+//     }
+// }
+
+
+
+
+
+///////////////////////////////////////////
 ///// untested version 2 of getter and setters! 
 struct FieldHandle {
     std::string type;  // for introspection ("double","int","string","vector","matrix",…)
@@ -2627,7 +2618,7 @@ void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, d
     std::cout << "[IM] Starting interaction matrix capture with 140 modes..." << std::endl;
 
     // Take new dark and bias
-    new_dark_and_bias();
+    //new_dark_and_bias();
 
     // Get gain and fps
     float gain = get_float_cam_param("gain");
@@ -2869,6 +2860,486 @@ json reload_config(json args) {
 //     std::cout << "[Modal ID] Saved closed-loop response data to " << output_filename << std::endl;
 // }
 
+//////////////////
+
+
+namespace dm {
+
+// fits files that populate this struc are created here :
+// asgard-alignment/playground/build_DM_basis_configs.py
+// also should be copied to dcs/util but will require some modules from asgard-alginment python package to run!
+
+// Immutable snapshot of all loaded bases.
+struct DMBasisSet {
+    long nx = 0;   // expected NX for 3D cubes; 0 if unknown
+    long ny = 0;   // expected NY for 3D cubes; 0 if unknown
+    // basis name (lowercase) -> modes (each Eigen::VectorXd is flattened row-major of length nx*ny)
+    std::unordered_map<std::string, std::shared_ptr<const std::vector<Eigen::VectorXd>>> bases;
+};
+
+// Inline variables are OK in C++17
+inline std::shared_ptr<const DMBasisSet> g_dm_bases = std::make_shared<DMBasisSet>();
+
+
+// Helpers
+inline void publish(std::shared_ptr<const DMBasisSet> nv) {
+    std::atomic_store_explicit(&g_dm_bases, std::move(nv), std::memory_order_release);
+}
+inline std::shared_ptr<const DMBasisSet> snapshot() {
+    return std::atomic_load_explicit(&g_dm_bases, std::memory_order_acquire);
+}
+
+inline std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
+    return s;
+}
+
+
+// Internal: read a single BASIS extension currently selected in fptr.
+// Accepts 3D (NX,NY,NMODES) or 2D (LEN,NMODES). Returns vector of flattened modes and (nx,ny).
+inline bool read_current_basis_ext(fitsfile* fptr,
+                                   std::vector<Eigen::VectorXd>& out_modes,
+                                   long& out_nx, long& out_ny,
+                                   std::string& warn_msg)
+{
+    int status = 0;
+    out_modes.clear(); out_nx = out_ny = 0; warn_msg.clear();
+
+    int naxis = 0;
+    if (fits_get_img_dim(fptr, &naxis, &status)) return false;
+    long naxes[3] = {0,0,0};
+    if (fits_get_img_size(fptr, naxis, naxes, &status)) return false;
+
+    // Read entire image as double
+    long nelem = 1; for (int i=0;i<naxis;++i) nelem *= naxes[i];
+    std::vector<double> buf(static_cast<size_t>(nelem));
+    long fpixel = 1; double nulval = 0.0; int anynul = 0;
+    if (fits_read_img(fptr, TDOUBLE, fpixel, nelem, &nulval, buf.data(), &anynul, &status))
+        return false;
+
+    // 2D fallback: (LEN, NMODES)
+    if (naxis == 2) {
+        const long LEN = naxes[0], NMODES = naxes[1];
+        out_nx = LEN; out_ny = 1;
+        out_modes.reserve(static_cast<size_t>(NMODES));
+        for (long k=0;k<NMODES;++k) {
+            const long base = k*LEN;
+            Eigen::VectorXd v(LEN);
+            for (long i=0;i<LEN;++i) v[i] = buf[base+i];
+            out_modes.emplace_back(std::move(v));
+        }
+        warn_msg = "2D (LEN,NMODES) treated as pre-flattened.";
+        return true;
+    }
+    if (naxis != 3) { warn_msg = "Unsupported NAXIS (expected 2 or 3)."; return false; }
+
+    // Identify which axis is "modes"
+    int mode_ax = -1;
+    {   // Prefer header key NMODES if present
+        LONGLONG nmods_ll = -1;
+        if (fits_read_key_lnglng(fptr, "NMODES", &nmods_ll, nullptr, &status) == 0) {
+            long nmods = static_cast<long>(nmods_ll);
+            for (int a=0;a<3;++a) if (naxes[a] == nmods) { mode_ax = a; break; }
+        }
+        status = 0; // ignore missing key
+    }
+    if (mode_ax < 0) {
+        // Heuristic: take the largest dim as modes (typical: 140 vs 12×12)
+        mode_ax = int(std::distance(naxes, std::max_element(naxes, naxes+3)));
+    }
+
+    // Remaining two axes are spatial; the lower axis index varies fastest -> X
+    int sp[2], si = 0; for (int a=0;a<3;++a) if (a != mode_ax) sp[si++] = a;
+    std::sort(sp, sp+2);
+    const int ax_x = sp[0], ax_y = sp[1];
+
+    const long NX = naxes[ax_x], NY = naxes[ax_y], NMODES = naxes[mode_ax];
+    out_nx = NX; out_ny = NY;
+    out_modes.reserve(static_cast<size_t>(NMODES));
+
+    // FITS linear index: i = i1 + N1*(i2 + N2*i3), with i1 = axis1 (0-based), etc.
+    const long stride1 = 1;
+    const long stride2 = naxes[0];
+    const long stride3 = naxes[0]*naxes[1];
+
+    for (long k=0;k<NMODES;++k) {
+        Eigen::VectorXd v(NX*NY);
+        for (long y=0;y<NY;++y) {
+            for (long x=0;x<NX;++x) {
+                long idx3[3] = {0,0,0};
+                idx3[ax_x]    = x;
+                idx3[ax_y]    = y;
+                idx3[mode_ax] = k;
+                const long lin = idx3[0]*stride1 + idx3[1]*stride2 + idx3[2]*stride3;
+                v[y*NX + x] = buf[lin];
+            }
+        }
+        out_modes.emplace_back(std::move(v));
+    }
+    if (mode_ax != 2) warn_msg = "Mode axis not NAXIS3; auto-detected.";
+    return true;
+}
+// // wrong version 
+// inline bool read_current_basis_ext(fitsfile* fptr,
+//                                    std::vector<Eigen::VectorXd>& out_modes,
+//                                    long& out_nx, long& out_ny,
+//                                    std::string& warn_msg)
+// {
+//     int status = 0;
+//     int naxis = 0;
+//     if (fits_get_img_dim(fptr, &naxis, &status)) return false;
+
+//     long naxes[3] = {0,0,0};
+//     if (fits_get_img_size(fptr, naxis, naxes, &status)) return false;
+
+//     out_modes.clear();
+//     out_nx = out_ny = 0;
+
+//     // Read entire image, converted to double (cfitsio will convert if stored as float)
+//     long nelem = 1;
+//     for (int i=0;i<naxis;++i) nelem *= naxes[i];
+//     std::vector<double> buf(static_cast<size_t>(nelem));
+//     long fpixel = 1;
+//     double nulval = 0.0;
+//     int anynul = 0;
+//     if (fits_read_img(fptr, TDOUBLE, fpixel, nelem, &nulval, buf.data(), &anynul, &status)) {
+//         return false;
+//     }
+
+//     if (naxis == 3) {
+//         const long NX = naxes[0];
+//         const long NY = naxes[1];
+//         const long NMODES = naxes[2];
+//         const long plane = NX * NY;
+//         out_nx = NX; out_ny = NY;
+
+//         out_modes.reserve(static_cast<size_t>(NMODES));
+//         for (long k = 0; k < NMODES; ++k) {
+//             const long base = k * plane;
+//             // contiguous block, keep row-major flatten: idx=y*NX + x
+//             Eigen::VectorXd v(plane);
+//             for (long y = 0; y < NY; ++y) {
+//                 const long row_off = y * NX;
+//                 // memcpy would also work; this is explicit and clear:
+//                 for (long x = 0; x < NX; ++x) {
+//                     v[row_off + x] = buf[base + row_off + x];
+//                 }
+//             }
+//             out_modes.emplace_back(std::move(v));
+//         }
+//         return true;
+//     }
+//     else if (naxis == 2) {
+//         const long LEN = naxes[0];
+//         const long NMODES = naxes[1];
+//         out_nx = LEN; out_ny = 1;  // unknown 2D shape; treat as flat
+//         out_modes.reserve(static_cast<size_t>(NMODES));
+//         for (long k = 0; k < NMODES; ++k) {
+//             const long base = k * LEN;
+//             Eigen::VectorXd v(LEN);
+//             // contiguous copy
+//             for (long i = 0; i < LEN; ++i) v[i] = buf[base + i];
+//             out_modes.emplace_back(std::move(v));
+//         }
+//         warn_msg = "BASIS extension is 2D (LEN,NMODES); treating as already-flattened.";
+//         return true;
+//     }
+
+//     warn_msg = "Unsupported NAXIS (expected 2 or 3).";
+//     return false;
+// }
+
+// Load all BASIS:* image extensions from a FITS file into a new snapshot.
+// On any error, prints a warning and returns false (leaves previous snapshot unchanged).
+inline bool load_from_fits_file(const std::string& fits_path)
+{
+    int status = 0;
+    fitsfile* fptr = nullptr;
+    auto close_guard = [&]{ if (fptr) fits_close_file(fptr, &status); };
+
+    if (fits_open_file(&fptr, fits_path.c_str(), READONLY, &status)) {
+        char msg[FLEN_STATUS]; fits_get_errstatus(status, msg);
+        std::cerr << "[DMBasis] WARN: cannot open FITS '" << fits_path << "': " << msg << "\n";
+        close_guard();
+        return false;
+    }
+
+    int hdunum = 0;
+    if (fits_get_num_hdus(fptr, &hdunum, &status)) {
+        std::cerr << "[DMBasis] WARN: FITS get_num_hdus failed.\n"; close_guard(); return false;
+    }
+
+    auto nv = std::make_shared<DMBasisSet>();
+    long common_nx = 0, common_ny = 0;
+    int n_loaded = 0;
+
+    for (int i = 2; i <= hdunum; ++i) { // start at 2 (skip primary)
+        if (fits_movabs_hdu(fptr, i, nullptr, &status)) { status = 0; continue; }
+
+        char extname[FLEN_VALUE] = {0};
+        if (fits_read_key(fptr, TSTRING, "EXTNAME", extname, nullptr, &status)) {
+            status = 0; continue;
+        }
+        std::string en(extname);
+        if (en.size() < 7 || en.rfind("BASIS:", 0) != 0) continue; // not starting with BASIS:
+
+        std::string key = lower(en.substr(6));  // after "BASIS:"
+        std::vector<Eigen::VectorXd> modes;
+        long nx = 0, ny = 0;
+        std::string warn;
+        if (!read_current_basis_ext(fptr, modes, nx, ny, warn)) {
+            std::cerr << "[DMBasis] WARN: failed to read extension '" << en << "'\n";
+            continue;
+        }
+        if (!warn.empty()) std::cerr << "[DMBasis] NOTE: " << warn << " (EXTNAME=" << en << ")\n";
+
+        if (modes.empty()) {
+            std::cerr << "[DMBasis] WARN: extension '" << en << "' has zero modes; skipping.\n";
+            continue;
+        }
+
+        if (common_nx == 0 && ny > 0) { // first successful ext with 3D or 2D
+            common_nx = nx;
+            common_ny = ny;
+        } else {
+            // Enforce consistent lengths; allow 2D LENx1 to match NX*NY if equal
+            const long lenA = (common_ny > 1) ? (common_nx * common_ny) : common_nx;
+            const long lenB = (ny > 1) ? (nx * ny) : nx;
+            if (lenB != lenA) {
+                std::cerr << "[DMBasis] WARN: extension '" << en
+                          << "' length " << lenB << " != " << lenA
+                          << "; skipping to keep consistent geometry.\n";
+                continue;
+            }
+        }
+
+        // Store (share) without copying modes again
+        nv->bases.emplace(std::move(key),
+                          std::make_shared<const std::vector<Eigen::VectorXd>>(std::move(modes)));
+        ++n_loaded;
+    }
+
+    if (n_loaded == 0) {
+        std::cerr << "[DMBasis] WARN: no BASIS:* extensions found in '" << fits_path << "'.\n";
+        close_guard();
+        return false;
+    }
+
+    // If common_ny == 1 we only know flat length; encode as (LEN,1)
+    nv->nx = common_nx;
+    nv->ny = common_ny;
+
+    publish(nv);
+    close_guard();
+    std::cerr << "[DMBasis] Loaded " << n_loaded << " bases from '" << fits_path
+              << "' (nx=" << nv->nx << ", ny=" << nv->ny << ").\n";
+    return true;
+}
+
+// Convenience: try load once if cache is empty; returns whether cache is non-empty afterwards.
+inline bool ensure_loaded_from(const std::string& fits_path)
+{
+    auto snap = snapshot();
+    if (!snap || snap->bases.empty()) {
+        (void)load_from_fits_file(fits_path); // ignore boolean; we only warn
+        snap = snapshot();
+        return (snap && !snap->bases.empty());
+    }
+    return true;
+}
+
+// Lookup (no copy). Returns nullptr if basis missing or cache empty.
+inline std::shared_ptr<const std::vector<Eigen::VectorXd>>
+get_basis(const std::string& basis_key_lower)
+{
+    auto snap = snapshot();
+    if (!snap) return nullptr;
+    auto it = snap->bases.find(lower(basis_key_lower));
+    if (it == snap->bases.end()) return nullptr;
+    return it->second;
+}
+
+} // namespace dm
+
+
+static std::string upper(std::string s){
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::toupper(c); });
+    return s;
+}
+
+inline std::vector<std::string> list_loaded_bases() {
+    std::vector<std::string> out;
+    auto snap = dm::snapshot();
+    if (!snap) return out;
+    out.reserve(snap->bases.size());
+    for (auto& kv : snap->bases) out.push_back(kv.first);
+    // Print nicely
+    std::cout << "[DMBasis] Loaded bases (" << out.size() << "): ";
+    for (size_t i = 0; i < out.size(); ++i) {
+        if (i) std::cout << ", ";
+        std::cout << out[i];
+    }
+    std::cout << '\n';
+    return out;
+}
+
+json ol_set_mode(const json& args)
+{
+    //ol_set_mode — set/add an open-loop offset in HO or LO using a basis mode; usage: ["HO|LO","<basis>",<index>,<amplitude>,(optional)<accumulate_bool>], e.g. ["HO","zernike",5,0.2] or ["LO","hadamard",12,-0.05,true]
+    try {
+        // ---- Parse args ----
+        std::string branch, basis;
+        long long   idx_ll = -1;
+        double      amplitude = 0.0;
+        bool        accumulate = false;
+
+        if (args.is_array()) {
+            if (args.size() < 4 || args.size() > 5)
+                return json{{"ok", false}, {"error", "usage: [\"HO|LO\", basis, index, amplitude, (optional) accumulate]"}};
+            branch = args.at(0).get<std::string>();
+            basis  = args.at(1).get<std::string>();
+            if (args.at(2).is_number_integer() || args.at(2).is_number_unsigned())
+                idx_ll = args.at(2).get<long long>();
+            else if (args.at(2).is_string())
+                idx_ll = std::stoll(args.at(2).get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "index must be integer"}};
+            if (args.at(3).is_number())
+                amplitude = args.at(3).get<double>();
+            else if (args.at(3).is_string())
+                amplitude = std::stod(args.at(3).get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "amplitude must be numeric"}};
+            if (args.size() == 5) accumulate = args.at(4).get<bool>();
+        } else if (args.is_object()) {
+            if (!args.contains("branch") || !args.contains("basis") ||
+                !args.contains("index")  || !args.contains("amplitude"))
+                return json{{"ok", false}, {"error", "usage: {branch,basis,index,amplitude[,accumulate]}"}};
+            branch = args["branch"].get<std::string>();
+            basis  = args["basis"].get<std::string>();
+            if (args["index"].is_number_integer() || args["index"].is_number_unsigned())
+                idx_ll = args["index"].get<long long>();
+            else if (args["index"].is_string())
+                idx_ll = std::stoll(args["index"].get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "index must be integer"}};
+            if (args["amplitude"].is_number())
+                amplitude = args["amplitude"].get<double>();
+            else if (args["amplitude"].is_string())
+                amplitude = std::stod(args["amplitude"].get<std::string>());
+            else
+                return json{{"ok", false}, {"error", "amplitude must be numeric"}};
+            if (args.contains("accumulate")) accumulate = args["accumulate"].get<bool>();
+        } else if (args.is_string()) {
+            std::istringstream iss(args.get<std::string>());
+            if (!(iss >> branch >> basis >> idx_ll >> amplitude))
+                return json{{"ok", false}, {"error", "usage: \"HO <basis> <index> <amp> [accumulate]\""}};
+            if (!iss.eof()) iss >> std::boolalpha >> accumulate;
+        } else {
+            return json{{"ok", false}, {"error", "args must be array, object, or string"}};
+        }
+
+        const std::string BR = upper(branch);
+        if (BR != "HO" && BR != "LO")
+            return json{{"ok", false}, {"error", "branch must be \"HO\" or \"LO\""}};
+        if (idx_ll < 0)
+            return json{{"ok", false}, {"error", "index must be >= 0"}};
+
+        // ---- Ensure OL initialized ----
+        if (!ol_init_if_needed())
+            return json{{"ok", false}, {"error", "offsets not initialized (DM length unknown)"}};
+        auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+        if (!cur) return json{{"ok", false}, {"error", "internal null snapshot"}};
+        const int dm_len = static_cast<int>(cur->lo.size());
+
+        // ---- Ensure bases loaded (once) ----
+        dm::ensure_loaded_from(kDMBaseFITS); // will WARN but not throw on failure
+        auto snap = dm::snapshot();
+        if (!snap || snap->bases.empty())
+            return json{{"ok", false}, {"error", "no DM bases loaded"}, {"file", kDMBaseFITS}};
+
+        // ---- Lookup basis ----
+        auto modes_ptr = dm::get_basis(basis); // lowercase lookup inside
+        if (!modes_ptr)
+            return json{{"ok", false}, {"error", "basis not found"}, {"basis", basis}};
+
+        const auto& modes = *modes_ptr;
+        if (idx_ll >= static_cast<long long>(modes.size()))
+            return json{{"ok", false}, {"error", "index out of range"}, {"n_modes", (long)modes.size()}};
+
+        const Eigen::VectorXd& mode = modes[static_cast<size_t>(idx_ll)];
+        if (mode.size() != dm_len)
+            return json{{"ok", false}, {"error", "basis mode length != DM length"},
+                        {"basis_len", (long)mode.size()}, {"dm_len", dm_len}};
+
+        // ---- Apply ----
+        Eigen::VectorXd v = amplitude * mode;
+        if (BR == "HO") {
+            if (accumulate) set_openloop_offset_HO(cur->ho + v);
+            else            set_openloop_offset_HO(v);
+        } else {
+            if (accumulate) set_openloop_offset_LO(cur->lo + v);
+            else            set_openloop_offset_LO(v);
+        }
+
+        return json{{"ok", true},
+                    {"branch", BR},
+                    {"basis", basis},
+                    {"index", idx_ll},
+                    {"amplitude", amplitude},
+                    {"accumulate", accumulate},
+                    {"dm_len", dm_len}, {"n_modes", (long)modes.size()}};
+    }
+    catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("parse/apply: ") + e.what()}};
+    }
+}
+
+
+
+
+//////////////////
+
+
+// input
+// aberrations: list of tuples of [(indicies, amplitudes)..]
+// basis = str (name of modal basis to apply)
+// state: string (OL | CL)
+// signal: string (what signal from the RTC telemetry to record)
+// duration_per_cmd : int (number of frames to capture per command)
+// dead_time = (optional) int (number of frames to wait before recording)
+
+// output a list of list of signals obtained for each command 
+
+// pseudo code 
+
+// basis = string 
+// res = init structure to hold results  
+// for a in aberrations:
+//     idx, amp = a 
+//     if state.strip() == 'OL':
+//         //offset DM in open loop 
+//         ol_set_mode ["HO",<basis>,<idx>,<amp>]
+//     elif state.strip() == 'CL'
+//         //offset DM in closed loop (using controller set_point)
+//         mode = amp * read(basis)[idx]
+//         ctrl_set ["HO","set_point",mode]
+//     else:
+//         raise typeError( "Invalid input state, valid states are CL or OL")
+//     wait deadtime 
+//     ims = record images 
+//     res.append( ims ) 
+
+// return res
+
+// ## To do 
+// # [x] load basis functionality (store basis in toml/csv/fits? where to store, usr/etc/baldr? what normalization convention?)
+// # independant of telemetry buffer size, copy N independant frames even when N> or N<buffer size.  
+
+// ## questions
+// # what structure to store results in (keeping in mind it could be thousands of a 32x32 image)
+// # second function will get these results and save them. 
+
 
 COMMANDER_REGISTER(m)
 {
@@ -2892,9 +3363,9 @@ COMMANDER_REGISTER(m)
         "Usage: send_cam_command [\"your command\"]. e.g. send_cam_command [\"set gain 1\"]",
         "args"_arg);
         
-
-    m.def("capture_dark_and_bias", capture_dark_and_bias,
-            "Capture a new bias and dark frame, update reduction products, and update DM-space maps.");
+    // outdated , reduction is done via cred1 camera
+    // m.def("capture_dark_and_bias", capture_dark_and_bias,
+    //         "Capture a new bias and dark frame, update reduction products, and update DM-space maps.");
             
     m.def("stop_baldr", stop_baldr,
           "stop the baldr rtc loop","mode"_arg);
@@ -3026,8 +3497,14 @@ COMMANDER_REGISTER(m)
     m.def("ol_set_actuator", ol_set_actuator,
         "set an open loop DM offset on one actuator.  Branch is HO|LO, idx is index in vector and value to set. e.g. ol_set_actuator [\"HO\", 65, 0.1] ",
         "branch"_arg, "idx"_arg, "value"_arg);
-        
 
+    m.def("ol_set_mode",
+      [](json args){ return ol_set_mode(args); },
+      "ol_set_mode — set/add an open-loop offset in HO or LO using a basis mode; usage: [\"HO|LO\",\"<basis>\",<index>,<amplitude>,(optional)<accumulate_bool>] (accumulate defaults false).");
+
+    m.def("clear_openloop_offsets",clear_openloop_offsets,
+        "clears the open loop DM offsets");
+        
     m.def("list_rtc_fields", list_rtc_fields,
         "List exposed runtime config fields and types.",
         "args"_arg);
@@ -3053,7 +3530,7 @@ COMMANDER_REGISTER(m)
         "args"_arg);
 
     /////    
-    // below are utils that allow relative moves and/or updating all or multiple parameters at once 
+    // below are utils that allow relative moves and/or updating all or multiple parameters at once without necessarily writing out full vector!
     /////
     //update_pid_param ["LO","kp", "all",0.1] or update_pid_param ["HO","kp","1,3,5,42",0.1] to update gains of particular mode indicies  (1,3,5,42) to 0.1
     m.def("update_ctrl_param", update_ctrl_param,
@@ -3142,13 +3619,19 @@ int main(int argc, char* argv[]) {
     try {
         rtc_config = readBDRConfig(config, beamKey, phasemask);
 
-        std::cout << "here " << std::endl;
 
         std::cout << "[INFO] RTC configuration initialized for beam " << beam_id << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Error initializing RTC config: " << e.what() << std::endl;
         return 1;
     }
+
+
+    // set up some DM basis cache 
+    dm::load_from_fits_file(kDMBaseFITS);
+    std::cout << "Listing available DM basis: " << std::endl;
+    list_loaded_bases();
+    
 
     // Open shared memory
     if (!rtc_config.state.simulation_mode) {
