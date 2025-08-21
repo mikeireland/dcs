@@ -2596,7 +2596,7 @@ nlohmann::json dg(nlohmann::json args) {
 //     }
 // }
 
-Eigen::VectorXd expand_to_144(const Eigen::VectorXd& input140) {
+Eigen::VectorXd dm140_to_144(const Eigen::VectorXd& input140) {
     if (input140.size() != 140) {
         throw std::runtime_error("Input vector must be of size 140");
     }
@@ -2612,6 +2612,23 @@ Eigen::VectorXd expand_to_144(const Eigen::VectorXd& input140) {
         }
     }
     return output144;
+}
+
+Eigen::VectorXd dm144_to_140(const Eigen::Ref<const Eigen::VectorXd>& v144)
+{
+    if (v144.size() != 144)
+        throw std::runtime_error("dm144_to_140: input size must be 144");
+
+    Eigen::VectorXd out(140);
+    int j = 0;
+    for (int i = 0; i < 144; ++i) {
+        // Skip the four corner indices in row-major order:
+        // (0,0)->0, (0,11)->11, (11,0)->132, (11,11)->143
+        if (i == 0 || i == 11 || i == 132 || i == 143) continue;
+        out[j++] = v144[i];
+    }
+    // j should be 140 here
+    return out;
 }
 
 void build_interaction_matrix(double poke_amp = 0.05, int num_iterations = 10, double sleep_seconds = 0.01, const std::string& signal_space = "dm", const std::string& output_filename = "") {
@@ -2979,75 +2996,6 @@ inline bool read_current_basis_ext(fitsfile* fptr,
     if (mode_ax != 2) warn_msg = "Mode axis not NAXIS3; auto-detected.";
     return true;
 }
-// // wrong version 
-// inline bool read_current_basis_ext(fitsfile* fptr,
-//                                    std::vector<Eigen::VectorXd>& out_modes,
-//                                    long& out_nx, long& out_ny,
-//                                    std::string& warn_msg)
-// {
-//     int status = 0;
-//     int naxis = 0;
-//     if (fits_get_img_dim(fptr, &naxis, &status)) return false;
-
-//     long naxes[3] = {0,0,0};
-//     if (fits_get_img_size(fptr, naxis, naxes, &status)) return false;
-
-//     out_modes.clear();
-//     out_nx = out_ny = 0;
-
-//     // Read entire image, converted to double (cfitsio will convert if stored as float)
-//     long nelem = 1;
-//     for (int i=0;i<naxis;++i) nelem *= naxes[i];
-//     std::vector<double> buf(static_cast<size_t>(nelem));
-//     long fpixel = 1;
-//     double nulval = 0.0;
-//     int anynul = 0;
-//     if (fits_read_img(fptr, TDOUBLE, fpixel, nelem, &nulval, buf.data(), &anynul, &status)) {
-//         return false;
-//     }
-
-//     if (naxis == 3) {
-//         const long NX = naxes[0];
-//         const long NY = naxes[1];
-//         const long NMODES = naxes[2];
-//         const long plane = NX * NY;
-//         out_nx = NX; out_ny = NY;
-
-//         out_modes.reserve(static_cast<size_t>(NMODES));
-//         for (long k = 0; k < NMODES; ++k) {
-//             const long base = k * plane;
-//             // contiguous block, keep row-major flatten: idx=y*NX + x
-//             Eigen::VectorXd v(plane);
-//             for (long y = 0; y < NY; ++y) {
-//                 const long row_off = y * NX;
-//                 // memcpy would also work; this is explicit and clear:
-//                 for (long x = 0; x < NX; ++x) {
-//                     v[row_off + x] = buf[base + row_off + x];
-//                 }
-//             }
-//             out_modes.emplace_back(std::move(v));
-//         }
-//         return true;
-//     }
-//     else if (naxis == 2) {
-//         const long LEN = naxes[0];
-//         const long NMODES = naxes[1];
-//         out_nx = LEN; out_ny = 1;  // unknown 2D shape; treat as flat
-//         out_modes.reserve(static_cast<size_t>(NMODES));
-//         for (long k = 0; k < NMODES; ++k) {
-//             const long base = k * LEN;
-//             Eigen::VectorXd v(LEN);
-//             // contiguous copy
-//             for (long i = 0; i < LEN; ++i) v[i] = buf[base + i];
-//             out_modes.emplace_back(std::move(v));
-//         }
-//         warn_msg = "BASIS extension is 2D (LEN,NMODES); treating as already-flattened.";
-//         return true;
-//     }
-
-//     warn_msg = "Unsupported NAXIS (expected 2 or 3).";
-//     return false;
-// }
 
 // Load all BASIS:* image extensions from a FITS file into a new snapshot.
 // On any error, prints a warning and returns false (leaves previous snapshot unchanged).
@@ -3296,7 +3244,865 @@ json ol_set_mode(const json& args)
 }
 
 
+// Helper: classify the field
+static inline int telem_field_kind(const std::string& f) {
+    // 0 = vector<Eigen::VectorXd>, 1 = scalar<double>, 2 = scalar<int>, -1 = unknown
+    if (f=="img" || f=="img_dm" || f=="signal" || f=="e_LO" || f=="u_LO" ||
+        f=="e_HO" || f=="u_HO" || f=="c_LO" || f=="c_HO") return 0;
+    if (f=="timestamp" || f=="rmse_est" || f=="snr") return 1;
+    if (f=="LO_servo_mode" || f=="HO_servo_mode")   return 2;
+    return -1;
+}
 
+// capture N samples of baldr telemetry field , by default we change telemetry capacity to match N 
+std::vector<std::vector<double>>
+capture_telem_list(const std::string& field, size_t N, long long dead_ms, bool change_capacity = true)
+{
+    if (N == 0) return {};
+
+    const int kind = telem_field_kind(field);
+    if (kind < 0)
+        throw std::invalid_argument("capture_telem_list: unknown field \"" + field + "\"");
+
+    size_t old_cap = 0;
+
+    // Optionally change capacity just for this call
+    if (change_capacity) {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        old_cap = rtc_config.telem.signal.capacity(); // all ring buffers share capacity
+        rtc_config.telem.setCapacity(N);
+    }
+
+    // If dead_ms < 0, compute a wait that roughly fills N samples; otherwise use given dead_ms
+    if (dead_ms < 0) {
+        const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
+        const double ms = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2; // 120% margin
+        dead_ms = (long long)std::llround(std::min(10000.0, std::max(0.0, ms)));
+    }
+    if (dead_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
+
+    // Snapshot ONLY the requested field (oldest -> newest)
+    std::vector<std::vector<double>> out;
+    {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+
+        auto dump_vecbuf = [&](const boost::circular_buffer<Eigen::VectorXd>& buf) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            out.reserve(take);
+            for (size_t i = 0; i < take; ++i) {
+                const Eigen::VectorXd& v = buf[start + i];
+                out.emplace_back(v.data(), v.data() + v.size());
+            }
+        };
+        auto dump_dblbuf = [&](const boost::circular_buffer<double>& buf) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            out.reserve(take);
+            for (size_t i = 0; i < take; ++i)
+                out.push_back(std::vector<double>{ buf[start + i] });
+        };
+        auto dump_intbuf = [&](const boost::circular_buffer<int>& buf) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            out.reserve(take);
+            for (size_t i = 0; i < take; ++i)
+                out.push_back(std::vector<double>{ static_cast<double>(buf[start + i]) });
+        };
+
+        switch (kind) {
+            case 0: // vector fields
+                if      (field=="img")      dump_vecbuf(rtc_config.telem.img);
+                else if (field=="img_dm")   dump_vecbuf(rtc_config.telem.img_dm);
+                else if (field=="signal")   dump_vecbuf(rtc_config.telem.signal);
+                else if (field=="e_LO")     dump_vecbuf(rtc_config.telem.e_LO);
+                else if (field=="u_LO")     dump_vecbuf(rtc_config.telem.u_LO);
+                else if (field=="e_HO")     dump_vecbuf(rtc_config.telem.e_HO);
+                else if (field=="u_HO")     dump_vecbuf(rtc_config.telem.u_HO);
+                else if (field=="c_LO")     dump_vecbuf(rtc_config.telem.c_LO);
+                else if (field=="c_HO")     dump_vecbuf(rtc_config.telem.c_HO);
+                break;
+            case 1: // scalar<double>
+                if      (field=="timestamp") dump_dblbuf(rtc_config.telem.timestamp);
+                else if (field=="rmse_est")  dump_dblbuf(rtc_config.telem.rmse_est);
+                else if (field=="snr")       dump_dblbuf(rtc_config.telem.snr);
+                break;
+            case 2: // scalar<int>
+                if      (field=="LO_servo_mode") dump_intbuf(rtc_config.telem.LO_servo_mode);
+                else if (field=="HO_servo_mode") dump_intbuf(rtc_config.telem.HO_servo_mode);
+                break;
+        }
+    }
+
+    // Restore capacity if we changed it here
+    if (change_capacity) {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        rtc_config.telem.setCapacity(old_cap);
+    }
+
+    return out;
+}
+
+nlohmann::json capture_telem_list_json(const nlohmann::json& args) {
+    using json = nlohmann::json;
+    try {
+        if (!args.is_array() || args.size() < 2 || args.size() > 4)
+            return json{{"ok", false}, {"error", "usage: [field, N, dead_ms=0, change_capacity=true]"}};
+
+        const std::string field = args.at(0).get<std::string>();
+        const size_t N          = args.at(1).get<size_t>();
+        long long dead_ms       = (args.size() >= 3) ? args.at(2).get<long long>() : 0;
+        bool change_capacity    = (args.size() >= 4) ? args.at(3).get<bool>() : true;
+
+        auto data = capture_telem_list(field, N, dead_ms, change_capacity);
+        return json{{"ok", true}, {"field", field}, {"N", N}, {"data", std::move(data)}};
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("capture_telem_list_json: ") + e.what()}};
+    }
+}
+
+
+// Probe interaction data by applying a sequence of modal aberrations and capturing N samples.
+// Args (JSON):
+//   array form: [aberrations, basis, state, field, N, deadtime_ms(optional)]
+//     - aberrations: e.g. [[5, 0.05], [12, -0.03], ...]   (idx, amplitude)
+//     - basis:       string (e.g. "zernike", "fourier_12x12", ...)
+//     - state:       "OL" or "CL"
+//     - field:       telemetry field (e.g. "signal", "img", "e_HO", ...)
+//     - N:           number of sequential samples per aberration
+//     - deadtime_ms: optional; if <0 will be computed from fps & N; else used as-is
+//   object form: {"aberrations":[...], "basis":"...", "state":"OL|CL", "field":"...",
+//                 "N":123, "deadtime_ms":0}
+//
+// Behavior:
+//   - If state=="OL": uses ol_set_mode ["HO", basis, idx, amp] to apply, then captures N samples.
+//   - If state=="CL": builds HO set_point = amp * dm144_to_140(basis[idx]) and sets it via ctrl_set.
+//   - Capacity of all telemetry buffers is set to N once, then restored at the end.
+//   - For each aberration, state is restored (OL offsets or HO set_point) after capture.
+//
+// Returns JSON:
+//   {"ok":true, "basis":..., "state":"OL|CL", "field":..., "N":..., "deadtime_ms":..., 
+//    "probes":[ {"idx":i, "amp":a, "data":[ [...], [...], ... ]}, ... ] }
+//
+// Requires helpers already in this file:
+//   - dm::get_basis(std::string) -> std::shared_ptr<const std::vector<Eigen::VectorXd>>
+//   - dm144_to_140(const Eigen::Ref<const Eigen::VectorXd>&)
+//   - eigen_vector_to_json(const Eigen::VectorXd&)
+//   - ctrl_get(json), ctrl_set(json)
+//   - ol_set_mode(json)
+//   - capture_telem_list_json(json)  // we pass [field, N, 0, false]
+//   - telemetry_mutex, rtc_config
+//   - g_ol_offsets, set_openloop_offset_LO/HO(), ol_init_if_needed()
+nlohmann::json probe_interaction_data(nlohmann::json args)
+{
+    using json = nlohmann::json;
+
+    // -------- parse --------
+    std::vector<std::pair<long long,double>> aberr;
+    std::string basis, state, field;
+    size_t N = 0;
+    long long dead_ms = -1;
+
+    try {
+        if (args.is_array()) {
+            // [ [[idx,amp],...], basis, state, field, N, deadtime? ]
+            if (args.size() < 5) return json{{"ok",false},{"error","usage: [[[idx,amp],...],basis,state,field,N,deadtime?]"}};
+            basis = args.at(1).get<std::string>();
+            state = args.at(2).get<std::string>();
+            field = args.at(3).get<std::string>();
+            N     = args.at(4).get<size_t>();
+            if (args.size() >= 6) dead_ms = args.at(5).get<long long>();
+
+            const auto& arr = args.at(0);
+            if (!arr.is_array()) return json{{"ok",false},{"error","aberrations must be array"}};
+            for (const auto& t : arr) {
+                if (!t.is_array() || t.size()!=2) return json{{"ok",false},{"error","each aberration must be [idx,amp]"}};
+                long long idx = t.at(0).get<long long>();
+                double amp    = t.at(1).get<double>();
+                aberr.emplace_back(idx, amp);
+            }
+        } else if (args.is_object()) {
+            basis = args.at("basis").get<std::string>();
+            state = args.at("state").get<std::string>();
+            field = args.at("field").get<std::string>();
+            N     = args.at("N").get<size_t>();
+            if (args.contains("deadtime_ms")) dead_ms = args.at("deadtime_ms").get<long long>();
+            const auto& arr = args.at("aberrations");
+            if (!arr.is_array()) return json{{"ok",false},{"error","aberrations must be array"}};
+            for (const auto& t : arr) {
+                long long idx = t.at(0).get<long long>();
+                double amp    = t.at(1).get<double>();
+                aberr.emplace_back(idx, amp);
+            }
+        } else {
+            return json{{"ok",false},{"error","bad args"}};
+        }
+    } catch (const std::exception& e) {
+        return json{{"ok",false},{"error",std::string("parse: ")+e.what()}};
+    }
+
+    // -------- prepare global telemetry capacity ONCE --------
+    size_t old_cap = 0;
+    {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        old_cap = rtc_config.telem.signal.capacity();
+        rtc_config.telem.setCapacity(N);
+    }
+
+    auto restore_capacity = [&](){
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        if (rtc_config.telem.signal.capacity() != old_cap)
+            rtc_config.telem.setCapacity(old_cap);
+    };
+
+    // -------- run probes --------
+    json out;
+    out["ok"]          = true;
+    out["basis"]       = basis;
+    out["state"]       = state;
+    out["field"]       = field;
+    out["N"]           = static_cast<long long>(N);
+    out["deadtime_ms"] = dead_ms;
+    out["n_probes"]    = static_cast<long long>(aberr.size());
+    out["probes"]      = json::array();
+
+    try {
+        for (const auto& [idx_ll, amp] : aberr) {
+            // apply mode
+            if (state == "OL" || state == "ol" || state == "Ol") {
+                json japply = ol_set_mode(json::array({"HO", basis, idx_ll, amp}));
+                if (!japply.value("ok", false)) {
+                    restore_capacity();
+                    return json{{"ok",false},{"error","ol_set_mode failed"},{"detail",japply}};
+                }
+            } else if (state == "CL" || state == "cl" || state == "Cl") {
+                // lookup basis and set controller set_point
+                auto modes_ptr = dm::get_basis(basis);
+                if (!modes_ptr) {
+                    restore_capacity();
+                    return json{{"ok",false},{"error","basis not found"},{"basis",basis}};
+                }
+                const auto& modes = *modes_ptr;
+                if (idx_ll < 0 || static_cast<size_t>(idx_ll) >= modes.size()) {
+                    restore_capacity();
+                    return json{{"ok",false},{"error","index out of range"},{"idx",idx_ll},{"n_modes",(long)modes.size()}};
+                }
+
+                Eigen::VectorXd mode144 = modes[static_cast<size_t>(idx_ll)];
+                mode144 *= amp;
+                Eigen::VectorXd mode140 = dm144_to_140(mode144);
+
+                json jset = ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(mode140)}));
+                if (!jset.value("ok", false)) {
+                    restore_capacity();
+                    return json{{"ok",false},{"error","ctrl_set set_point failed"},{"detail",jset}};
+                }
+            } else {
+                restore_capacity();
+                return json{{"ok",false},{"error","Invalid state (use 'OL' or 'CL')"},{"state",state}};
+            }
+
+            // dead time
+            if (dead_ms < 0) {
+                // infer from fps and N (same logic as capture_telem_list when dead_ms<0)
+                const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
+                const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2;
+                std::this_thread::sleep_for(std::chrono::milliseconds((long long)std::llround(std::min(5000.0, std::max(0.0, ms)))));
+            } else if (dead_ms > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
+            }
+
+            // capture without changing capacity again
+            std::vector<std::vector<double>> frames = capture_telem_list(field, N, /*dead_ms*/dead_ms, /*change_capacity*/false);
+
+            // --- IMPORTANT: put under "samples" (what the FITS writer expects) ---
+            json probe = json::object();
+            probe["index"]    = idx_ll;
+            probe["amplitude"]= amp;
+            probe["samples"]  = json::array();     // array of arrays
+            for (const auto& v : frames) probe["samples"].push_back(v);
+
+            out["probes"].push_back(std::move(probe));
+        }
+    }
+    catch (const std::exception& e) {
+        restore_capacity();
+        return json{{"ok",false},{"error",std::string("probe loop: ")+e.what()}};
+    }
+
+    // restore telemetry capacity
+    restore_capacity();
+    return out;
+}
+
+// static nlohmann::json probe_interaction_data(nlohmann::json args) //(const nlohmann::json& args)
+// {
+//     using json = nlohmann::json;
+//     try {
+//         // ------------------- Parse inputs -------------------
+//         std::vector<std::pair<long long,double>> aberr; // (idx, amp)
+//         std::string basis;
+//         std::string state;
+//         std::string field;
+//         long long   N = -1;
+//         long long   dead_ms = 1; // default 1 ms, matches your note
+
+//         auto parse_aberr_list = [&](const json& ja) -> bool {
+//             if (!ja.is_array()) return false;
+//             for (const auto& item : ja) {
+//                 long long idx_ll = -1;
+//                 double    amp    = 0.0;
+
+//                 if (item.is_array() && item.size() >= 2) {
+//                     // [idx, amp]
+//                     if (item[0].is_number_integer() || item[0].is_number_unsigned())
+//                         idx_ll = item[0].get<long long>();
+//                     else if (item[0].is_string())
+//                         idx_ll = std::stoll(item[0].get<std::string>());
+//                     else return false;
+
+//                     if (item[1].is_number_float() || item[1].is_number_integer())
+//                         amp = item[1].get<double>();
+//                     else if (item[1].is_string())
+//                         amp = std::stod(item[1].get<std::string>());
+//                     else return false;
+//                 }
+//                 else if (item.is_object() && item.contains("idx") && item.contains("amp")) {
+//                     if (item["idx"].is_number_integer() || item["idx"].is_number_unsigned())
+//                         idx_ll = item["idx"].get<long long>();
+//                     else if (item["idx"].is_string())
+//                         idx_ll = std::stoll(item["idx"].get<std::string>());
+//                     else return false;
+
+//                     if (item["amp"].is_number_float() || item["amp"].is_number_integer())
+//                         amp = item["amp"].get<double>();
+//                     else if (item["amp"].is_string())
+//                         amp = std::stod(item["amp"].get<std::string>());
+//                     else return false;
+//                 } else {
+//                     return false;
+//                 }
+//                 if (idx_ll < 0) return false;
+//                 aberr.emplace_back(idx_ll, amp);
+//             }
+//             return true;
+//         };
+
+//         if (args.is_array()) {
+//             if (args.size() < 5 || args.size() > 6)
+//                 return json{{"ok", false}, {"error", "usage: [aberrations, basis, state, field, N, deadtime_ms?]"}};
+
+//             if (!parse_aberr_list(args[0]))
+//                 return json{{"ok", false}, {"error", "bad aberrations list"}};
+//             basis = args[1].get<std::string>();
+//             state = args[2].get<std::string>();
+//             field = args[3].get<std::string>();
+//             N     = args[4].get<long long>();
+//             if (args.size() == 6) dead_ms = args[5].get<long long>();
+//         }
+//         else if (args.is_object()) {
+//             if (!args.contains("aberrations") || !args.contains("basis") ||
+//                 !args.contains("state") || !args.contains("field") || !args.contains("N"))
+//                 return json{{"ok", false}, {"error", "missing required keys"}};
+
+//             if (!parse_aberr_list(args["aberrations"]))
+//                 return json{{"ok", false}, {"error", "bad aberrations list"}};
+//             basis = args["basis"].get<std::string>();
+//             state = args["state"].get<std::string>();
+//             field = args["field"].get<std::string>();
+//             N     = args["N"].get<long long>();
+//             if (args.contains("deadtime_ms")) dead_ms = args["deadtime_ms"].get<long long>();
+//         }
+//         else {
+//             return json{{"ok", false}, {"error", "args must be array or object"}};
+//         }
+
+//         if (aberr.empty()) return json{{"ok", false}, {"error", "no aberrations"}};
+//         if (N <= 0)        return json{{"ok", false}, {"error", "N must be > 0"}};
+
+//         // Normalize state and basis
+//         auto to_lower = [](std::string s){ for (auto& c : s) c = static_cast<char>(std::tolower(c)); return s; };
+//         const std::string basis_lc = to_lower(basis);
+//         const std::string state_lc = to_lower(state);
+//         const bool use_ol = (state_lc == "ol");
+//         const bool use_cl = (state_lc == "cl");
+//         if (!use_ol && !use_cl)
+//             return json{{"ok", false}, {"error", "state must be \"OL\" or \"CL\""}};
+
+//         // -------------- Set telemetry capacity ONCE --------------
+//         size_t old_cap = 0;
+//         {
+//             std::lock_guard<std::mutex> lk(telemetry_mutex);
+//             old_cap = rtc_config.telem.signal.capacity(); // all ring-buffers share capacity
+//             if (old_cap != static_cast<size_t>(N))
+//                 rtc_config.telem.setCapacity(static_cast<size_t>(N));
+//         }
+//         auto restore_capacity = [&]() {
+//             std::lock_guard<std::mutex> lk(telemetry_mutex);
+//             if (rtc_config.telem.signal.capacity() != old_cap)
+//                 rtc_config.telem.setCapacity(old_cap);
+//         };
+
+//         // ----------- Snapshot current OL or CL state -----------
+//         Eigen::VectorXd ho_saved, lo_saved;
+//         Eigen::VectorXd sp_saved;
+
+//         if (use_ol) {
+//             // Ensure offsets exist
+//             (void)ol_init_if_needed();
+//             auto cur = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+//             if (!cur) {
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "open-loop offsets not initialized"}};
+//             }
+//             ho_saved = cur->ho;
+//             lo_saved = cur->lo;
+//         } else {
+//             // Read HO controller set_point via ctrl_get
+//             json j_sp = ctrl_get(json::array({"HO","set_point"}));
+//             if (!j_sp.value("ok", false)) {
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "failed to read HO.set_point"}, {"detail", j_sp}};
+//             }
+//             // Expect j_sp["value"] to be an array -> Eigen
+//             if (!j_sp.contains("value") || !j_sp["value"].is_array()) {
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "HO.set_point missing/invalid"}};
+//             }
+//             if (!json_to_eigen_vector(j_sp["value"], sp_saved)) {
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "could not parse HO.set_point as vector"}};
+//             }
+//         }
+
+//         // If CL, ensure basis is loaded and indexable
+//         std::shared_ptr<const std::vector<Eigen::VectorXd>> modes_ptr;
+//         if (use_cl) {
+//             modes_ptr = dm::get_basis(basis_lc);
+//             if (!modes_ptr) {
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "basis not loaded"}, {"basis", basis_lc}};
+//             }
+//         }
+
+//         json results = json::array();
+
+//         // ---------------- Iterate aberrations ----------------
+//         for (const auto& p : aberr) {
+//             const long long idx_ll = p.first;
+//             const double    amp    = p.second;
+
+//             if (use_ol) {
+//                 // Apply OL offset to HO branch via your commander entrypoint
+//                 json japply = ol_set_mode(json::array({"HO", basis_lc, idx_ll, amp}));
+//                 if (!japply.value("ok", false)) {
+//                     // Restore & capacity, then abort
+//                     set_openloop_offset_HO(ho_saved);
+//                     set_openloop_offset_LO(lo_saved);
+//                     restore_capacity();
+//                     return json{{"ok", false}, {"error", "ol_set_mode failed"}, {"detail", japply}};
+//                 }
+//             } else {
+//                 // Build HO set_point = amp * mode140 (converted from 144 via drop corners)
+//                 const auto& modes = *modes_ptr;
+//                 if (idx_ll < 0 || idx_ll >= static_cast<long long>(modes.size())) {
+//                     restore_capacity();
+//                     return json{{"ok", false},
+//                                 {"error", "index out of range"},
+//                                 {"idx", idx_ll}, {"n_modes", (long)modes.size()}};
+//                 }
+//                 const Eigen::VectorXd& mode144 = modes[static_cast<size_t>(idx_ll)];
+//                 if (mode144.size() != 144) {
+//                     restore_capacity();
+//                     return json{{"ok", false},
+//                                 {"error", "basis mode length != 144"},
+//                                 {"got", mode144.size()}};
+//                 }
+//                 Eigen::VectorXd mode140 = dm144_to_140(mode144);
+//                 mode140 *= amp;
+
+//                 // Replace HO set_point (not accumulate)
+//                 json jset = ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(mode140)}));
+//                 if (!jset.value("ok", false)) {
+//                     restore_capacity();
+//                     return json{{"ok", false}, {"error", "ctrl_set HO.set_point failed"}, {"detail", jset}};
+//                 }
+//             }
+
+//             // ----- Dead time before sampling -----
+//             if (dead_ms < 0) {
+//                 // auto-compute from fps & N (120% margin, clamp 0..5000 ms)
+//                 const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
+//                 const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2;
+//                 const long long auto_ms = (long long)std::llround(std::min(5000.0, std::max(0.0, ms)));
+//                 if (auto_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(auto_ms));
+//             } else if (dead_ms > 0) {
+//                 std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
+//             }
+
+//             // ----- Capture N sequential samples without changing capacity -----
+//             json jcap = capture_telem_list_json(json::array({field, N, 0, false}));
+//             if (!jcap.value("ok", false)) {
+//                 // Restore states and capacity, then abort
+//                 if (use_ol) {
+//                     set_openloop_offset_HO(ho_saved);
+//                     set_openloop_offset_LO(lo_saved);
+//                 } else {
+//                     (void)ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(sp_saved)}));
+//                 }
+//                 restore_capacity();
+//                 return json{{"ok", false}, {"error", "capture_telem_list_json failed"}, {"detail", jcap}};
+//             }
+
+//             results.push_back(json{
+//                 {"idx",  idx_ll},
+//                 {"amp",  amp},
+//                 {"data", jcap["data"]}
+//             });
+
+//             // ----- Restore state after each probe -----
+//             if (use_ol) {
+//                 set_openloop_offset_HO(ho_saved);
+//                 set_openloop_offset_LO(lo_saved);
+//             } else {
+//                 (void)ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(sp_saved)}));
+//             }
+//         }
+
+//         // ------------- Restore capacity on success -------------
+//         restore_capacity();
+
+//         return json{
+//             {"ok", true},
+//             {"basis", basis_lc},
+//             {"state", use_ol ? "OL" : "CL"},
+//             {"field", field},
+//             {"N", N},
+//             {"deadtime_ms", dead_ms},
+//             {"probes", results}
+//         };
+//     }
+//     catch (const std::exception& e) {
+//         return nlohmann::json{{"ok", false}, {"error", std::string("probe_interaction_data: ") + e.what()}};
+//     }
+// }
+
+
+
+
+// ---------- Probe method wrapper + FITS writer ----------
+
+static int save_probe_result_fits(const nlohmann::json& jr, const std::string& filepath) {
+    using json = nlohmann::json;
+
+    if (!jr.value("ok", false)) {
+        std::cerr << "[probe] cannot save: result not ok.\n";
+        return -1;
+    }
+    if (!jr.contains("probes") || !jr["probes"].is_array()) {
+        std::cerr << "[probe] cannot save: no 'probes' array.\n";
+        return -2;
+    }
+
+    const auto& probes = jr["probes"];
+    const long nrows = static_cast<long>(probes.size());
+    if (nrows <= 0) {
+        std::cerr << "[probe] nothing to save: zero probes.\n";
+        return -3;
+    }
+
+    // Infer dimensions from first probe
+    if (!probes[0].contains("samples") || !probes[0]["samples"].is_array())
+        throw std::runtime_error("[probe] malformed JSON: probes[0].samples missing/invalid");
+
+    const auto& s0   = probes[0]["samples"];
+    const long NSAMP = static_cast<long>(s0.size());
+    if (NSAMP <= 0) throw std::runtime_error("[probe] first probe has zero samples");
+
+    const long VLEN = static_cast<long>(s0[0].size());  // vector length per sample
+    if (VLEN <= 0) throw std::runtime_error("[probe] first sample has zero length");
+
+    // Validate uniformity
+    for (long i = 0; i < nrows; ++i) {
+        const auto& ps = probes[static_cast<size_t>(i)]["samples"];
+        if (!ps.is_array() || static_cast<long>(ps.size()) != NSAMP)
+            throw std::runtime_error("[probe] non-uniform number of samples across probes");
+        for (long k = 0; k < NSAMP; ++k) {
+            if (!ps[static_cast<size_t>(k)].is_array() ||
+                static_cast<long>(ps[static_cast<size_t>(k)].size()) != VLEN)
+                throw std::runtime_error("[probe] non-uniform vector length in samples");
+        }
+    }
+
+    fitsfile* fptr = nullptr;
+    int status = 0;
+
+    auto cleanup = [&]() {
+        if (fptr) {
+            int s2 = 0;
+            fits_close_file(fptr, &s2);
+            fptr = nullptr;
+        }
+    };
+
+    try {
+        // Ensure parent directory exists
+        try {
+            std::filesystem::create_directories(std::filesystem::path(filepath).parent_path());
+        } catch (...) { /* best effort */ }
+
+        if (fits_create_file(&fptr, ("!" + filepath).c_str(), &status)) {
+            fits_report_error(stderr, status);
+            cleanup();
+            return status ? status : -99;
+        }
+
+        // Column layout:
+        // 1 IDX (J)     actuator/mode index
+        // 2 AMP (D)     amplitude
+        // 3 VLEN (J)    vector length per sample
+        // 4 NSAMP (J)   number of sequential samples
+        // 5 DATA ((VLEN*NSAMP)D) flattened [sample-major]
+        const int ncols = 5;
+        char* ttype[ncols] = {
+            const_cast<char*>("IDX"),
+            const_cast<char*>("AMP"),
+            const_cast<char*>("VLEN"),
+            const_cast<char*>("NSAMP"),
+            const_cast<char*>("DATA")
+        };
+
+        std::string data_form = std::to_string(VLEN * NSAMP) + "D";
+        char tform0[8]  = "1J";
+        char tform1[8]  = "1D";
+        char tform2[8]  = "1J";
+        char tform3[8]  = "1J";
+        char tform4[32] = {0};
+        std::snprintf(tform4, sizeof(tform4), "%s", data_form.c_str());
+
+        char* tform[ncols] = { tform0, tform1, tform2, tform3, tform4 };
+        char* tunit[ncols] = {
+            const_cast<char*>(""), const_cast<char*>(""),
+            const_cast<char*>(""), const_cast<char*>(""),
+            const_cast<char*>("")
+        };
+
+        if (fits_create_tbl(fptr, BINARY_TBL, nrows, ncols, ttype, tform, tunit,
+                            const_cast<char*>("PROBES"), &status)) {
+            fits_report_error(stderr, status);
+            cleanup();
+            return status ? status : -99;
+        }
+
+        // Header metadata
+        auto putstr = [&](const char* key, const std::string& val) {
+            char buf[2880];
+            std::snprintf(buf, sizeof(buf), "%s", val.c_str());
+            fits_update_key(fptr, TSTRING, const_cast<char*>(key), buf, nullptr, &status);
+        };
+        auto putint = [&](const char* key, long v) {
+            long vv = v;
+            fits_update_key(fptr, TLONG, const_cast<char*>(key), &vv, nullptr, &status);
+        };
+
+        putstr("BASIS",    jr.value("basis",      std::string("")));
+        putstr("STATE",    jr.value("state",      std::string("")));
+        putstr("FIELD",    jr.value("field",      std::string("")));
+        putint("N",        jr.value("N",          0));
+        putint("DEADTIME", jr.value("deadtime_ms",0));
+        putint("USEDCAP",  jr.value("used_capacity", 0));
+
+        // Timestamp
+        {
+            auto now = std::chrono::system_clock::now();
+            std::time_t tt = std::chrono::system_clock::to_time_t(now);
+            char tbuf[64];
+            std::strftime(tbuf, sizeof(tbuf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&tt));
+            putstr("DATE", tbuf);
+        }
+
+        if (status) {
+            fits_report_error(stderr, status);
+            cleanup();
+            return status ? status : -99;
+        }
+
+        // Write rows
+        for (long r = 0; r < nrows; ++r) {
+            const auto& pr = probes[static_cast<size_t>(r)];
+            int idx    = pr.value("idx", 0);
+            double amp = pr.value("amp", 0.0);
+
+            if (fits_write_col(fptr, TINT,    1, r+1, 1, 1, &idx,  &status) ||
+                fits_write_col(fptr, TDOUBLE, 2, r+1, 1, 1, &amp,  &status) ||
+                fits_write_col(fptr, TINT,    3, r+1, 1, 1, (void*)&VLEN,  &status) ||
+                fits_write_col(fptr, TINT,    4, r+1, 1, 1, (void*)&NSAMP, &status)) {
+                fits_report_error(stderr, status);
+                cleanup();
+                return status ? status : -99;
+            }
+
+            std::vector<double> flat;
+            flat.reserve(static_cast<size_t>(VLEN * NSAMP));
+            const auto& samples = pr["samples"];
+            for (long k = 0; k < NSAMP; ++k) {
+                const auto& v = samples[static_cast<size_t>(k)];
+                for (long j = 0; j < VLEN; ++j)
+                    flat.push_back(v[static_cast<size_t>(j)].get<double>());
+            }
+
+            if (fits_write_col(fptr, TDOUBLE, 5, r+1, 1, VLEN*NSAMP, flat.data(), &status)) {
+                fits_report_error(stderr, status);
+                cleanup();
+                return status ? status : -99;
+            }
+        }
+
+        if (fits_close_file(fptr, &status)) {
+            fits_report_error(stderr, status);
+            fptr = nullptr;
+            return status ? status : -99;
+        }
+        fptr = nullptr;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "[probe] exception while saving: " << e.what() << "\n";
+        cleanup();
+        return status ? status : -99;
+    }
+}
+
+///!!!! 
+// Build default args for a named method of applying aberrations/offsets in closed or open loop and recording telemetry.
+static nlohmann::json build_probe_args_for_method(const std::string& method) {
+    using json = nlohmann::json;
+
+    if (method == "method_1") {
+        // probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",3,5000]
+        // aa = util.get_DM_command_in_2D( np.mean( d[1].data['DATA'][0].reshape(3,-1), axis=0 ) )
+        json aberr = json::array();
+        aberr.push_back(json::array({5,  0.05}));
+        aberr.push_back(json::array({2, -0.05}));
+        return json::array({ aberr, "zernike", "OL", "signal", 3, 5000 });
+    }
+    //+++++++++++++++++++++++++++++++++++++
+    //+++++++++++++++++++++++++++++++++++++
+    // Add more named methods here…
+    // else if (method == "method_2") { … }
+    //+++++++++++++++++++++++++++++++++++++
+    //+++++++++++++++++++++++++++++++++++++
+    throw std::invalid_argument("Unknown probe method: " + method);
+}
+
+// Commander-facing wrapper:
+// Accepts: ["method_1", "/path/or/dir/optional"]
+//      e.g ["method_1","/home/rtc/Downloads/test.fits"]
+static nlohmann::json run_probe_method(nlohmann::json args) {
+    using json = nlohmann::json;
+
+    std::string method;
+    std::string out_path;  // optional
+
+    // --- Parse ---
+    try {
+        if (args.is_array()) {
+            if (args.size() < 1 || args.size() > 2)
+                return json{{"ok", false}, {"error", "usage: [\"method_name\", optional_path]"}};
+            method = args.at(0).get<std::string>();
+            if (args.size() == 2) out_path = args.at(1).get<std::string>();
+        } else if (args.is_object()) {
+            if (!args.contains("method"))
+                return json{{"ok", false}, {"error", "missing 'method'"}};
+            method = args.at("method").get<std::string>();
+            if (args.contains("path")) out_path = args.at("path").get<std::string>();
+        } else {
+            return json{{"ok", false}, {"error", "bad args: expected array or object"}};
+        }
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("parse: ") + e.what()}};
+    }
+
+    // --- Build default probe args for the selected method ---
+    json probe_args;
+    try {
+        probe_args = build_probe_args_for_method(method);
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", e.what()}};
+    }
+
+
+    // --- Run the probe ---
+    json result;
+    try {
+        result = probe_interaction_data(probe_args);
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("probe_interaction_data threw: ") + e.what()}};
+    }
+    if (!result.value("ok", false)) {
+        return json{{"ok", false}, {"error", "probe_interaction_data failed"}, {"detail", result}};
+    }
+
+    // --- Resolve output path ---
+    std::string filepath;
+    try {
+        if (out_path.empty()) {
+            // default base: telem_save_path (if set) or fallback dir
+            auto now = std::chrono::system_clock::now();
+            std::time_t tt = std::chrono::system_clock::to_time_t(now);
+            char tbuf[32];
+            std::strftime(tbuf, sizeof(tbuf), "%Y%m%d_%H%M%S", std::localtime(&tt));
+
+            std::filesystem::path base = telem_save_path.empty()
+                ? std::filesystem::path("/usr/local/var/baldr/probes")
+                : std::filesystem::path(telem_save_path);
+
+            std::filesystem::create_directories(base);
+            filepath = (base / ("probe_" + method + "_" + std::string(tbuf) + ".fits")).string();
+        } else {
+            std::filesystem::path p(out_path);
+            if (p.has_extension()) {
+                // Treat as full filename
+                std::filesystem::create_directories(p.parent_path());
+                filepath = p.string();
+            } else {
+                // Treat as directory
+                std::filesystem::create_directories(p);
+                auto now = std::chrono::system_clock::now();
+                std::time_t tt = std::chrono::system_clock::to_time_t(now);
+                char tbuf[32];
+                std::strftime(tbuf, sizeof(tbuf), "%Y%m%d_%H%M%S", std::localtime(&tt));
+                filepath = (p / ("probe_" + method + "_" + std::string(tbuf) + ".fits")).string();
+            }
+        }
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("path resolution: ") + e.what()}};
+    }
+
+    // --- Save to FITS ---
+    int st = save_probe_result_fits(result, filepath);
+    if (st != 0) {
+        return json{
+            {"ok", false},
+            {"error", "save_probe_result_fits failed"},
+            {"status", st},
+            {"path", filepath}
+        };
+    }
+
+    return json{
+        {"ok", true},
+        {"method", method},
+        {"path", filepath},
+        {"n_probes", result.value("n_probes", 0)},
+        {"basis", result.value("basis", "")},
+        {"state", result.value("state", "")},
+        {"field", result.value("field", "")},
+        {"N", result.value("N", 0)}
+    };
+}
 
 //////////////////
 
@@ -3339,6 +4145,37 @@ json ol_set_mode(const json& args)
 // ## questions
 // # what structure to store results in (keeping in mind it could be thousands of a 32x32 image)
 // # second function will get these results and save them. 
+
+
+// static json probe_interaction_data( list of tuples or similar ::aberration, std::str state, std::str field, int N, int deadtime_ms=1)
+// for a in aberrations:
+//     idx, amp = a 
+//     if state.strip() == 'OL':
+//         //offset DM in open loop 
+//         ol_set_mode ["HO",basis,idx,amp]
+//     elif state.strip() == 'CL'
+//         //offset DM in closed loop (using controller set_point)
+//                 // ---- Lookup basis ----
+//         auto modes_ptr = dm::get_basis(basis); // lowercase lookup inside
+//         // if (!modes_ptr)
+//         //     return json{{"ok", false}, {"error", "basis not found"}, {"basis", basis}};
+
+//         const auto& modes = *modes_ptr;
+//         // if (idx_ll >= static_cast<long long>(modes.size()))
+//         //     return json{{"ok", false}, {"error", "index out of range"}, {"n_modes", (long)modes.size()}};
+
+//         const Eigen::VectorXd& mode144 = modes[static_cast<size_t>(idx_ll)];
+
+//         mode144 *= amp 
+//         mode = dm144_to_140(mode144)
+
+//         ctrl_set ["HO","set_point",mode]
+//     else:
+//         raise typeError( "Invalid input state, valid states are CL or OL")
+    
+//     sleep deadtime_ms
+//     ims = capture_telem_list( field, N, deadtime_ms=0)
+//     res.append( ims ) 
 
 
 COMMANDER_REGISTER(m)
@@ -3548,7 +4385,32 @@ COMMANDER_REGISTER(m)
         "Usage: increment_pid_param [\"LO\" or \"HO\", \"kp\" or \"ki\" or \"kd\", increment]",
         "args"_arg);
 
+    m.def(
+        "run_probe_method",
+        run_probe_method,
+        R"(Run a named probe recipe and save to FITS.
+    Usage: probe_method ["method_1", "/optional/dir/or/filename.fits"]
+        probe_method {"method":"method_1","path":"/optional/dir/or/filename.fits"}
+    Default path = telem_save_path with timestamped file, /usr/local/var/baldr/probes/probe_<method>_<YYYYMMDD_HHMMSS>.fits.)"
+    );
 
+
+    m.def(
+    "build_probe_args_for_method",
+    [](std::string method) -> nlohmann::json {
+        return build_probe_args_for_method(method);   // returns the args payload
+    },
+    R"(Return the probe_interaction_data argument for a named method.
+    Usage: build_probe_args_for_method "method_1")"
+    );
+
+    m.def(
+    "probe_interaction_data", probe_interaction_data,
+    R"(Apply modal probes and capture telemetry.
+Args: [ [[idx,amp],...], "basis", "OL|CL", "field", N, deadtime_ms? ]
+or:   {"aberrations":[...],"basis":"...","state":"OL|CL","field":"...","N":N,"deadtime_ms":ms}
+Example: probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",2,50])"
+);
 
  }
 
