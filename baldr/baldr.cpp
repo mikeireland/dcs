@@ -103,6 +103,9 @@ bool mds_zmq_initialized = false;
 // 20-8-25
 std::unique_ptr<Controller>
 make_controller(const std::string& type, const bdr_controller& cfg) {
+
+    const int n = static_cast<int>(cfg.set_point.size());
+ 
     if (type == "PID") {
         return std::make_unique<PIDController_1>(
             cfg.kp, cfg.ki, cfg.kd,
@@ -113,6 +116,51 @@ make_controller(const std::string& type, const bdr_controller& cfg) {
     // extend this mapping later:
     // else if (type == "LEAKY")   return std::make_unique<LeakyIntegratorController>(cfg.kp /*K*/, cfg.ki /*alpha*/, /*dt=*/1.0);
     // else if (type == "KALMAN")  return std::make_unique<KalmanController>(/* sizes */, /* dt */);
+    else if (type == "LEAKY") {
+        // Map: K <- cfg.kp, alpha <- cfg.ki, dt <- 1/fps (fallback 1.0)
+        Eigen::VectorXd K = cfg.kp;
+
+        Eigen::VectorXd alpha;
+        if (cfg.ki.size() == n) {
+            alpha = cfg.ki;
+        } else {
+            // default alpha if not provided: moderately leaky
+            alpha = Eigen::VectorXd::Constant(n, 0.95);
+        }
+        // clamp alpha into [0,1)
+        for (Eigen::Index i=0;i<alpha.size();++i)
+            alpha(i) = std::min(std::max(alpha(i), 0.0), 0.999999);
+
+        // dt from current RTC fps if available
+        const double dt = (rtc_config.fps > 1e-9) ? (1.0 / rtc_config.fps) : 1.0;
+
+        auto c = std::make_unique<LeakyIntegratorController>(K, alpha, dt);
+        // optional: seed setpoint if sized
+        if (cfg.set_point.size()==n) c->set_setpoint(cfg.set_point);
+        return c;
+    }
+    else if (type == "KALMAN") {
+        // Minimal constructor: choose sizes and dt sensibly.
+        // State dimension ~ number of actuators/channels (use kp size).
+        const int nx = n;
+
+        // Measurement dimension: if you have a known measurement size, use it.
+        // Fall back to nx if unknown.
+        int nz = nx;
+        // If your config carries a measurement size somewhere, substitute it here.
+
+        const double dt = (rtc_config.fps > 1e-9) ? (1.0 / rtc_config.fps) : 1.0;
+
+        auto c = std::make_unique<KalmanController>(nx, nz, dt);
+
+        // optional: seed setpoint to match PID/LEAKY convention
+        if (cfg.set_point.size()==nx) c->set_setpoint(cfg.set_point);
+
+        // NOTE: If you want non-default A,B,H,Q,R,P, set them via c->set_parameter(...) after construction.
+        // (e.g., names: "A","B","H","Q","R","P" depending on your KalmanController implementation).
+
+        return c;
+    }
 
     throw std::runtime_error("Unknown controller_type: " + type);
 }
@@ -4385,14 +4433,6 @@ COMMANDER_REGISTER(m)
         "Usage: increment_pid_param [\"LO\" or \"HO\", \"kp\" or \"ki\" or \"kd\", increment]",
         "args"_arg);
 
-    m.def(
-        "run_probe_method",
-        run_probe_method,
-        R"(Run a named probe recipe and save to FITS.
-    Usage: probe_method ["method_1", "/optional/dir/or/filename.fits"]
-        probe_method {"method":"method_1","path":"/optional/dir/or/filename.fits"}
-    Default path = telem_save_path with timestamped file, /usr/local/var/baldr/probes/probe_<method>_<YYYYMMDD_HHMMSS>.fits.)"
-    );
 
 
     m.def(
@@ -4407,10 +4447,21 @@ COMMANDER_REGISTER(m)
     m.def(
     "probe_interaction_data", probe_interaction_data,
     R"(Apply modal probes and capture telemetry.
-Args: [ [[idx,amp],...], "basis", "OL|CL", "field", N, deadtime_ms? ]
-or:   {"aberrations":[...],"basis":"...","state":"OL|CL","field":"...","N":N,"deadtime_ms":ms}
-Example: probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",2,50])"
-);
+    Args: [ [[idx,amp],...], "basis", "OL|CL", "field", N, deadtime_ms? ]
+    or:   {"aberrations":[...],"basis":"...","state":"OL|CL","field":"...","N":N,"deadtime_ms":ms}
+    Example: probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",2,50])"
+    );
+
+    /// This is where users can really define useful sequence of 
+    // offsets / aberrations to apply in closed or open loop! 
+    m.def(
+        "run_probe_method",
+        run_probe_method,
+        R"(Run a named probe recipe and save to FITS.
+    Usage: probe_method ["method_1", "/optional/dir/or/filename.fits"]
+        probe_method {"method":"method_1","path":"/optional/dir/or/filename.fits"}
+    Default path = telem_save_path with timestamped file, /usr/local/var/baldr/probes/probe_<method>_<YYYYMMDD_HHMMSS>.fits.)"
+    );
 
  }
 
