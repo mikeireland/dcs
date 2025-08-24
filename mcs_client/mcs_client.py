@@ -11,8 +11,8 @@ Top-Level Control Software
 User and Maintenance Manual
 sec 8.7.2
 
-example (to be discussed with team) of baldr_mcs_client 
-is a lightweight Python bridge that polls Baldr/HDLR/DM/CAM 
+example (to be discussed with team) of baldr_mcs_client which
+is a lightweight Python bridge that polls Baldr/Heimdallr or other
 ZMQ status and reads/writes the corresponding shared parameters 
 on WAG’s Module Communication Server (TCP 7020), keeping OLDB in 
 sync for operations and GUIs. 
@@ -78,7 +78,7 @@ class MCSClient:
         rep = self.z.ask(body)
         if not rep or "reply" not in rep:
             return False, "no-reply"
-        content = rep["reply"].get("content", "ERROR")
+        content = rep["reply"].get("content", "ERROR") 
         return (content == "OK" or content != "ERROR"), str(content)
 
     def write_scalar(self, name: str, value: Any) -> Tuple[bool, str]:
@@ -94,7 +94,7 @@ class MCSClient:
                 }
             }
         }
-        return self._send(msg)  # Reply "OK"/"ERROR". See 8.7.2.  [oai_citation:14‡ASGARD Top-Level Control Software v.4.2.pdf](file-service://file-1tWRLXu5uuX5KwAVLhsy2R)
+        return self._send(msg)  # Reply "OK"/"ERROR". See 8.7.2. ASGARD Top-Level Control Software v.4.2
 
     def write_vector(self, name: str, values: List[Any], i0: int = 0) -> Tuple[bool, str]:
         msg = {
@@ -166,14 +166,14 @@ class BaldrStatus:
 
 class BaldrAdapter:
     """
-    Talks to your Baldr ZMQ server ("tcp://host:6662") and returns a BaldrStatus.
-    Adjust the commands/parsing to match your server (e.g., 'status', 'ctrl_get', etc.).
+    Talks to Baldr ZMQ server ("tcp://host:6662") and returns a BaldrStatus.
+    
     """
     def __init__(self, host="127.0.0.1", port=6662):
         self.z = ZmqReq(f"tcp://{host}:{port}")
 
     def fetch(self) -> Optional[BaldrStatus]:
-        # Example: ask a 'status' command; replace with your actual RPCs
+        # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs 
         rep = self.z.ask({"cmd": "status"})
         if not rep or rep.get("ok") is False:
             return None
@@ -247,5 +247,5 @@ def publish_baldr_to_wag(
     mcs.write_vector("BALDR.OLOFF_HO",    st.oloff_ho,    0)
 
 if __name__ == "__main__":
-    # Example: run once (cron/systemd can schedule it), or loop with sleep if you prefer.
+    # e/g
     publish_baldr_to_wag()
