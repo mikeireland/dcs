@@ -81,9 +81,9 @@ Eigen::VectorXd dmCmd;
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
 //// getting telemetry in AIV 
-IMAGE shm_sig, shm_eLO, shm_eHO;
-constexpr int shm_telem_samples = 20;  // Number of telemetry samples exported to SHM
-thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
+// IMAGE shm_sig, shm_eLO, shm_eHO;
+// constexpr int shm_telem_samples = 20;  // Number of telemetry samples exported to SHM
+// thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
 
 
 // dm rms model
@@ -290,14 +290,15 @@ void rtc(){
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_LO.size() << std::endl;
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_HO.size() << std::endl;
 
-    std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // comment out while upgrading controller class 20-8-25. Uncomment later after verified (may need to change some things)
+    // std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
+    // std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
+    // std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
+    // std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
+    // std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
+    // std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
-    std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
-    std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
-    std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
-    std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
-    std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
     std::cout << "secondary pixels size: " << rtc_config.pixels.secondary_pixels.size() << std::endl;
@@ -313,6 +314,7 @@ void rtc(){
     std::cout << "I2A.cols() : " << rtc_config.matrices.I2A.cols() << std::endl;
     std::cout << "I2A.rows() : " << rtc_config.matrices.I2A.rows() << std::endl;
 
+
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
         int dm_width = dm_rtc.md->size[0];
@@ -324,6 +326,8 @@ void rtc(){
         std::cerr << "Error: No metadata available in the dm shared memory image." << std::endl;
     }
 
+
+
     if (subarray.md) {
         int img_naxis = subarray.md->naxis;
         int img_width = subarray.md->size[0];
@@ -332,21 +336,27 @@ void rtc(){
         std::cout << "Shared memory size: " << img_width << " x " << img_height << " pixels ("
                 << img_totalElements << " elements)" << std::endl;
     } else {
+        //std::cout << "here" << std::endl;
         std::cerr << "Error: No metadata available in the subarray shared memory image." << std::endl;
     }
 
+
+    
     //// getting telemetry in AIV 
 
-    std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
+    // std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
 
-    // Allocate shapes
-    uint32_t size_sig[2] = {140, shm_telem_samples};
-    uint32_t size_eLO[2] = {2, shm_telem_samples};
-    uint32_t size_eHO[2] = {140, shm_telem_samples};
-    // Create SHM images with no semaphores and no keywords
-    ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
-    ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
-    ImageStreamIO_createIm(&shm_eHO, "eHO_telem", 2, size_eHO, _DATATYPE_FLOAT, 1, 0);
+    // // Allocate shapes
+    // uint32_t size_sig[2] = {140, shm_telem_samples};
+    // uint32_t size_eLO[2] = {2, shm_telem_samples};
+    // uint32_t size_eHO[2] = {140, shm_telem_samples};
+    // // Create SHM images with no semaphores and no keywords
+    // ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
+    // ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
+    // ImageStreamIO_createIm(&shm_eHO, "eHO_telem", 2, size_eHO, _DATATYPE_FLOAT, 1, 0);
+
+
+
 
     ////////////////////////////////////////////////////
     /// parameters below are calculated at run time (derived from rtc_config) so 
@@ -414,7 +424,7 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-
+    
     
     ///////////////////////////////////////
 
@@ -472,6 +482,8 @@ void rtc(){
     catch_up_with_sem(&subarray, semid);
     catch_up_with_sem(&dm_rtc0, 1); // necessary?
 
+
+    std::cout << "RTC started" << std::endl;
     while(servo_mode.load() != SERVO_STOP){
 
         //std::cout << servo_mode_LO << std::endl;
@@ -636,7 +648,7 @@ void rtc(){
 
             //std::cout << "HERE NOW, LO IN CLOSED LOOP" << std::endl;
 
-            u_LO = rtc_config.ctrl_LO.process( e_LO );
+            u_LO = rtc_config.ctrl_LO->process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
 
@@ -649,12 +661,24 @@ void rtc(){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting LO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_LO.reset();
+                rtc_config.ctrl_LO->reset();
             }
   
-            u_LO = 0 * e_LO ;
 
-            c_LO = rtc_config.matrices.M2C_LO * u_LO;
+            u_LO = 0 * e_LO;
+            
+            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);//load_openloop_offsets();
+            if (off) { //only apply if offset is initialized 
+                c_LO = rtc_config.matrices.M2C_LO * u_LO + off->lo;
+                
+            } else {
+                c_LO = rtc_config.matrices.M2C_LO * u_LO;
+                
+            }
+            
+
+
+            //c_LO = rtc_config.matrices.M2C_LO * u_LO;
             
         }
 
@@ -665,7 +689,7 @@ void rtc(){
 
             }
 
-            u_HO = rtc_config.ctrl_HO.process( e_HO );
+            u_HO = rtc_config.ctrl_HO->process( e_HO );
             
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
@@ -677,13 +701,22 @@ void rtc(){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_HO.reset();
+                rtc_config.ctrl_HO->reset();
             }
   
 
             u_HO = 0 * e_HO ;
           
-            c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire); //load_openloop_offsets(); // load atomic open loop DM HO offsets 
+            if (off) {
+                c_HO = rtc_config.matrices.M2C_HO * u_HO + off->ho;
+            } else {
+                c_HO = rtc_config.matrices.M2C_HO * u_HO;
+            }
+            
+            
+            
+            //c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
         }
 
@@ -697,10 +730,18 @@ void rtc(){
             for (int i = 0; i < u_HO.size(); ++i) {
                 if (std::abs(u_HO(i)) > ho_threshold) {
                     //std::cout << "[SAFETY] HO actuator " << i << " exceeded threshold with value " << u_HO(i) << std::endl;
-
-                    // Reset controller state
-                    rtc_config.ctrl_HO.integrals(i) = 0.0;
-                    rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    //// 20-8-25
+                    // // Reset controller state
+                    // rtc_config.ctrl_HO.integrals(i) = 0.0;
+                    // rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    {
+                    auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("integrals"));
+                    auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("prev_errors"));
+                    I(i) = 0.0;
+                    E(i) = 0.0;
+                    rtc_config.ctrl_HO->set_parameter("integrals", I);
+                    rtc_config.ctrl_HO->set_parameter("prev_errors", E);
+                    }
 
                     // Track misbehavior
                     naughty_list[i]++;
@@ -708,9 +749,21 @@ void rtc(){
                     // Disable gains only once when crossing threshold
                     if (naughty_list[i] == 100) {
                         std::cout << "[SAFETY] Disabling gains for actuator " << i << " after 100 violations" << std::endl;
-                        rtc_config.ctrl_HO.kp(i) = 0.0;
-                        rtc_config.ctrl_HO.ki(i) = 0.0;
-                        rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        //// 20-8-25
+                        // rtc_config.ctrl_HO.kp(i) = 0.0;
+                        // rtc_config.ctrl_HO.ki(i) = 0.0;
+                        // rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        {
+                        auto kp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kp"));
+                        auto ki = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("ki"));
+                        auto kd = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kd"));
+                        kp(i) = ki(i) = kd(i) = 0.0;
+                        rtc_config.ctrl_HO->set_parameter("kp", kp);
+                        rtc_config.ctrl_HO->set_parameter("ki", ki);
+                        rtc_config.ctrl_HO->set_parameter("kd", kd);
+                        }
 
                         disabled_this_frame = true;
                     }
@@ -728,11 +781,21 @@ void rtc(){
 
         
         if (c_LO.cwiseAbs().maxCoeff() > 0.2) {
+            // 20-8-25
             // Reset controller state
-            for (int i = 0; i < u_LO.size(); ++i) {
-                rtc_config.ctrl_LO.integrals(i) = 0.0;
-                rtc_config.ctrl_LO.prev_errors(i) = 0.0;
-            }
+            // for (int i = 0; i < u_LO.size(); ++i) {
+            //     rtc_config.ctrl_LO.integrals(i) = 0.0;
+            //     rtc_config.ctrl_LO.prev_errors(i) = 0.0;
+            // }
+            std::lock_guard<std::mutex> lk(ctrl_mutex);  // if you already guard controller access
+            auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("integrals"));
+            auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("prev_errors"));
+            I.setZero();
+            E.setZero();
+            rtc_config.ctrl_LO->set_parameter("integrals", I);
+            rtc_config.ctrl_LO->set_parameter("prev_errors", E);
+        
+
 
             updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
             ImageStreamIO_sempost(&dm_rtc0, 1);
@@ -895,39 +958,39 @@ void rtc(){
         }
 
         //// getting telemetry in AIV 
-        // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
-        if (true){
+        // // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
+        // if (true){
 
-            std::lock_guard<std::mutex> lock(telemetry_mutex);
+        //     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-            //int shm_idx = shm_telem_cnt % shm_telem_samples;
+        //     //int shm_idx = shm_telem_cnt % shm_telem_samples;
 
-            // Get write pointers
-            float* buf_sig = (float*) shm_sig.array.F;
-            float* buf_eLO = (float*) shm_eLO.array.F;
-            float* buf_eHO = (float*) shm_eHO.array.F;
+        //     // Get write pointers
+        //     float* buf_sig = (float*) shm_sig.array.F;
+        //     float* buf_eLO = (float*) shm_eLO.array.F;
+        //     float* buf_eHO = (float*) shm_eHO.array.F;
 
-            // Compute offset for this frame
-            size_t offset_sig = 140 * (shm_telem_cnt % shm_telem_samples);
-            size_t offset_eLO = 2 * (shm_telem_cnt % shm_telem_samples);
-            size_t offset_eHO = 140 * (shm_telem_cnt % shm_telem_samples);
+        //     // Compute offset for this frame
+        //     size_t offset_sig = 140 * (shm_telem_cnt % shm_telem_samples);
+        //     size_t offset_eLO = 2 * (shm_telem_cnt % shm_telem_samples);
+        //     size_t offset_eHO = 140 * (shm_telem_cnt % shm_telem_samples);
 
-            // Write current frame
-            memcpy(&buf_sig[offset_sig], sig.data(), 140 * sizeof(float));
-            memcpy(&buf_eLO[offset_eLO], e_LO.data(), 2 * sizeof(float));
-            memcpy(&buf_eHO[offset_eHO], e_HO.data(), 140 * sizeof(float));
+        //     // Write current frame
+        //     memcpy(&buf_sig[offset_sig], sig.data(), 140 * sizeof(float));
+        //     memcpy(&buf_eLO[offset_eLO], e_LO.data(), 2 * sizeof(float));
+        //     memcpy(&buf_eHO[offset_eHO], e_HO.data(), 140 * sizeof(float));
 
-            // Update metadata
-            shm_sig.md->cnt0++;
-            shm_sig.md->cnt1++;
-            shm_eLO.md->cnt0++;
-            shm_eLO.md->cnt1++;
-            shm_eHO.md->cnt0++;
-            shm_eHO.md->cnt1++;
+        //     // Update metadata
+        //     shm_sig.md->cnt0++;
+        //     shm_sig.md->cnt1++;
+        //     shm_eLO.md->cnt0++;
+        //     shm_eLO.md->cnt1++;
+        //     shm_eHO.md->cnt0++;
+        //     shm_eHO.md->cnt1++;
 
-            // Increment index
-            shm_telem_cnt++;
-        }
+        //     // Increment index
+        //     shm_telem_cnt++;
+        // }
 
         // -------------------- DEAD TIME BEGINS HERE 
         // schedule next wakeup
