@@ -25,6 +25,23 @@
 
 //#include <ImageStreamIO/ImageStreamIO.h>
 
+namespace dm {
+
+// Read-only list of command-space modes (each is length = DM actuator count)
+using ModeList = std::vector<Eigen::VectorXd>;
+
+// Ensure a basis FITS is loaded if none is loaded yet (thread-safe).
+bool ensure_loaded_from(const std::string& fits_path);
+
+// Convenience: ensure using the default FITS path compiled in baldr.cpp.
+bool ensure_loaded_default();
+
+// Lookup a loaded basis by (case-insensitive) key. Returns nullptr if missing.
+std::shared_ptr<const ModeList> get_basis(const std::string& basis_key_lower);
+
+} // namespace dm
+
+
 //----------Defines-----------
 
 #define N_TEL 4 // Number of telescopes
@@ -488,6 +505,7 @@ struct bdr_telem {
     boost::circular_buffer<Eigen::VectorXd> u_HO;
     boost::circular_buffer<Eigen::VectorXd> c_LO;
     boost::circular_buffer<Eigen::VectorXd> c_HO;
+    boost::circular_buffer<Eigen::VectorXd> c_inj; //<-- NEW NEW 
     boost::circular_buffer<double> rmse_est;   // <-- NEW
     boost::circular_buffer<double> snr;         // <-- NEW
 
@@ -506,6 +524,7 @@ struct bdr_telem {
         u_HO(capacity),
         c_LO(capacity),
         c_HO(capacity),
+        c_inj(capacity), 
         rmse_est(capacity),   // <-- initialize
         snr(capacity)         // <-- initialize
     {}
@@ -524,6 +543,7 @@ struct bdr_telem {
         u_HO.set_capacity(newCapacity);
         c_LO.set_capacity(newCapacity);
         c_HO.set_capacity(newCapacity);
+        c_inj.set_capacity(newCapacity); // <-- NEW NEW 
         rmse_est.set_capacity(newCapacity);  // <-- new
         snr.set_capacity(newCapacity); // <-- new
     }
@@ -571,6 +591,28 @@ struct bdr_filters {
 
 };
 
+// Signal injection (command-space) ---
+struct bdr_signal_cfg {
+    bool        enabled        = false;     // master on/off
+    std::string space          = "dm";   // fixed: we inject via dm -> dm command space
+    std::string basis          = "zonal";   // name used by dm::get_basis(...)
+    int         basis_index    = 0;         // which mode to inject
+    double      amplitude      = 0.05;      // scalar gain applied to unit-normalized mode
+    std::string waveform       = "sine";    // "sine","square","step","chirp","prbs","none"
+    double      freq_hz        = 10.0;      // for sine/square
+    double      phase_deg      = 0.0;       // phase offset
+    double      duty           = 0.5;       // for square (0..1)
+    double      t_start_s      = 0.0;       // start time gate
+    double      t_stop_s       = 0.0;       // 0 => no stop
+    int         latency_frames = 0;         // simulate pipeline delay
+    int         hold_frames    = 1;         // sample-and-hold; 1 => update every frame
+    uint32_t    prbs_seed      = 0xACE1u;   // initial seed (PRBS)
+    // Chirp options:
+    double      chirp_f0       = 1.0;
+    double      chirp_f1       = 50.0;
+    double      chirp_T        = 5.0;       // seconds of sweep window
+};
+
 //-----------------------------------------------------
 // Master configuration struct for RTC.
 struct bdr_rtc_config {
@@ -585,6 +627,7 @@ struct bdr_rtc_config {
     bdr_cam cam;
     bdr_telem telem;
     bdr_filters filters;
+    bdr_signal_cfg inj_signal;   // <--- NEW
 
     // // Derived run time parameters (need to be re-calculated if we reload a config)
     //PIDController ctrl_LO ;

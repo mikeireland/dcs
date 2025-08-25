@@ -53,7 +53,7 @@ std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 
 
 std::string telemFormat = "fits";//"json";
-std::string telem_save_path = "/home/asg/Music/";
+std::string telem_save_path = "/home/rtc/Downloads/"; //"/home/asg/Music/";
 
 // Your basis file location
 static constexpr const char* kDMBaseFITS =
@@ -2960,6 +2960,7 @@ inline std::string lower(std::string s) {
 }
 
 
+
 // Internal: read a single BASIS extension currently selected in fptr.
 // Accepts 3D (NX,NY,NMODES) or 2D (LEN,NMODES). Returns vector of flattened modes and (nx,ny).
 inline bool read_current_basis_ext(fitsfile* fptr,
@@ -3143,6 +3144,12 @@ inline bool ensure_loaded_from(const std::string& fits_path)
     }
     return true;
 }
+
+// to decouple the rtc.cpp (which uses dm namespace for signal injection stuff)
+// from the file path and keep the default path private to baldr.cpp.
+bool ensure_loaded_default() {
+    return ensure_loaded_from(kDMBaseFITS);
+} // new
 
 // Lookup (no copy). Returns nullptr if basis missing or cache empty.
 inline std::shared_ptr<const std::vector<Eigen::VectorXd>>

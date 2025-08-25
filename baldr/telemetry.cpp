@@ -30,6 +30,7 @@ extern std::mutex telemetry_mutex;
 // A helper function to convert telemetry data into JSON.
 // For example, here we assume each telemetry field is a ring buffer of Eigen::VectorXd,
 // and for the timestamp we have a ring buffer of doubles.
+
 json telemetry_to_json(const bdr_telem &telemetry) {
     json j;
     j["counter"] = telemetry.counter;
@@ -64,7 +65,7 @@ json telemetry_to_json(const bdr_telem &telemetry) {
     j["u_HO"] = eigen_vec_to_json(telemetry.u_HO);
     j["c_LO"] = eigen_vec_to_json(telemetry.c_LO);
     j["c_HO"] = eigen_vec_to_json(telemetry.c_HO);
-
+    j["c_inj"] = eigen_vec_to_json(telemetry.c_inj);     // NEW:
     j["rmse_est"] = telemetry.rmse_est;
     j["snr"] = telemetry.snr;
 
@@ -88,9 +89,12 @@ json telemetry_to_json(const bdr_telem &telemetry) {
 //  11. U_HO      (Eigen::VectorXd flattened)
 //  12. C_LO      (Eigen::VectorXd flattened)
 //  13. C_HO      (Eigen::VectorXd flattened)
+//  14. C_INJ     (Eigen::VectorXd flattened)
+//  15. rmse_est   <double>
+//. 16. snr        <double>
 
-// It creates a binary table with 13 columns: COUNTER, TIMESTAMPS,
-// LO_SERVO_MODE, HO_SERVO_MODE, IMG, IMG_DM, SIGNAL, E_LO, U_LO, E_HO, U_HO, C_LO, and C_HO.
+// It creates a binary table with 16 columns: COUNTER, TIMESTAMPS,
+// LO_SERVO_MODE, HO_SERVO_MODE, IMG, IMG_DM, SIGNAL, E_LO, U_LO, E_HO, U_HO, C_LO, C_HO, C_INJ, 
 int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filename) {
     fitsfile *fptr = nullptr;
     int status = 0;
@@ -114,13 +118,14 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     long len_u_HO   = getVecLength(telemetry.u_HO);
     long len_c_LO   = getVecLength(telemetry.c_LO);
     long len_c_HO   = getVecLength(telemetry.c_HO);
+    long len_c_inj  = getVecLength(telemetry.c_inj); // NEW
 
     auto makeFormat = [](long len) -> std::string {
         return std::to_string(len) + "D";
     };
     
     //const int ncols = 13;
-    const int ncols = 15;
+    const int ncols = 16; // +1 for C_INJ //const int ncols = 15;
     char *ttype[ncols] = {
         const_cast<char*>("COUNTER"),
         const_cast<char*>("TIMESTAMPS"),
@@ -135,6 +140,7 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
         const_cast<char*>("U_HO"),
         const_cast<char*>("C_LO"),
         const_cast<char*>("C_HO"),
+        const_cast<char*>("C_INJ"),     // NEW (col 14)
         const_cast<char*>("RMSE_EST"), //<--- New
         const_cast<char*>("SNR")     
     };
@@ -153,8 +159,9 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     snprintf(tform[10], sizeof(tform[10]), "%s", makeFormat(len_u_HO).c_str());
     snprintf(tform[11], sizeof(tform[11]), "%s", makeFormat(len_c_LO).c_str());
     snprintf(tform[12], sizeof(tform[12]), "%s", makeFormat(len_c_HO).c_str());
-    snprintf(tform[13], sizeof(tform[13]), "1D");  // RMSE_EST
-    snprintf(tform[14], sizeof(tform[14]), "1D");  // SNR
+    snprintf(tform[13], sizeof(tform[13]), "%s", makeFormat(len_c_inj).c_str()); // NEW (C_INJ)
+    snprintf(tform[14], sizeof(tform[14]), "1D");  // RMSE_EST
+    snprintf(tform[15], sizeof(tform[15]), "1D");  // SNR
 
     char* tform_ptr[ncols];
     for (int i = 0; i < ncols; ++i) {
@@ -173,8 +180,11 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
         const_cast<char*>(""),
         const_cast<char*>(""),
         const_cast<char*>(""),
+        const_cast<char*>(""), 
         const_cast<char*>(""),
-        const_cast<char*>("")
+        const_cast<char*>(""),         /// C_INJ
+        const_cast<char*>(""),        // 15 RMSE_EST
+        const_cast<char*>("")         // 16 SNR
     };
     
     if (fits_create_file(&fptr, ("!" + filename).c_str(), &status))
@@ -223,6 +233,7 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     auto u_HOCol   = flattenBuffer(telemetry.u_HO);
     auto c_LOCol   = flattenBuffer(telemetry.c_LO);
     auto c_HOCol   = flattenBuffer(telemetry.c_HO);
+    auto c_injCol  = flattenBuffer(telemetry.c_inj); // NEW
 
     // Helper: write per-row vector
     auto writeVectorColumn = [&](int colnum, const std::vector<std::vector<double>>& buffer) {
@@ -242,16 +253,17 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     writeVectorColumn(11, u_HOCol);
     writeVectorColumn(12, c_LOCol);
     writeVectorColumn(13, c_HOCol);
+    writeVectorColumn(14, c_injCol); // NEW
 
-    // Write RMSE_EST
+    // RMSE_EST and SNR shift by +1
     std::vector<double> rmse_est_vec(telemetry.rmse_est.begin(), telemetry.rmse_est.end());
-    if (fits_write_col(fptr, TDOUBLE, 14, 1, 1, nrows, rmse_est_vec.data(), &status))
+    if (fits_write_col(fptr, TDOUBLE, 15, 1, 1, nrows, rmse_est_vec.data(), &status))
         throw std::runtime_error("Error writing RMSE_EST column");
 
-    // Write SNR
     std::vector<double> snr_vec(telemetry.snr.begin(), telemetry.snr.end());
-    if (fits_write_col(fptr, TDOUBLE, 15, 1, 1, nrows, snr_vec.data(), &status))
+    if (fits_write_col(fptr, TDOUBLE, 16, 1, 1, nrows, snr_vec.data(), &status))
         throw std::runtime_error("Error writing SNR column");
+
     
     
     // Close the file

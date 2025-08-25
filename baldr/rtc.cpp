@@ -7,6 +7,14 @@
 
 #include <fstream>
 
+// adding for signal injection. 
+#include <random>
+#include <deque>
+#include <algorithm>   // transform, clamp
+#include <cctype>      // tolower
+#include <cmath>       // M_PI (or define your own PI)
+#include <memory>      // shared_ptr
+#include <stdexcept>   // runtime_error
 
 using json = nlohmann::json;
 
@@ -76,9 +84,11 @@ Eigen::VectorXd u_LO;
 
 Eigen::VectorXd c_LO;
 Eigen::VectorXd c_HO;
+Eigen::VectorXd c_inj;
 Eigen::VectorXd dmCmd;
 
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
+
 
 //// getting telemetry in AIV 
 // IMAGE shm_sig, shm_eLO, shm_eHO;
@@ -270,6 +280,213 @@ void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
 
 
 
+// -- specific helpers for signal injection in command space 
+namespace {
+
+using clock_t = std::chrono::steady_clock;
+
+struct SignalInjRuntime {
+    bool inited = false;
+
+    // Basis vector (unit-normalized in command space, length = nAct)
+    Eigen::VectorXd basis_vec;
+
+    // PRBS state
+    uint32_t lfsr = 0xACE1u;
+
+    // White-noise RNG (unused here but handy if you add "white")
+    std::mt19937_64 rng{0xdeadbeef};
+
+    // Timing + frame cadence
+    clock_t::time_point t0;
+    long long frame_idx = 0;
+
+    // Sample-and-hold + latency
+    double last_sample = 0.0;     // held scalar
+    std::deque<double> latency_q; // size = latency_frames
+} g_inj;
+
+// Convert degrees to radians
+inline double deg2rad(double d) { return d * M_PI / 180.0; }
+
+// PRBS31: taps 31,28 -> returns ±1
+inline int prbs31_step(uint32_t &l) {
+    uint32_t bit = ((l >> 30) ^ (l >> 27)) & 1u;
+    l = (l << 1) | bit;
+    return (l & 1u) ? +1 : -1;
+}
+
+// Elapsed seconds since t0
+inline double now_s() {
+    static const auto t0 = clock_t::now();
+    std::chrono::duration<double> dt = clock_t::now() - t0;
+    return dt.count();
+}
+
+/**
+ * Build a command-space basis vector:
+
+ */
+inline void get_basis_mode(const bdr_rtc_config &rtc_config,
+                           const std::string   &basis_name,
+                           int                  basis_index,
+                           Eigen::VectorXd     &basis_vec_out)
+{
+    const int nAct = static_cast<int>(rtc_config.zeroCmd.size());
+    if (basis_vec_out.size() != nAct) basis_vec_out.resize(nAct);
+
+    // lower-case key to match dm::get_basis convention
+    std::string key = basis_name;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    // Ensure basis file is loaded
+    if (!dm::ensure_loaded_default()) {
+        throw std::runtime_error("RTC get_basis_mode: failed to load default DM basis file.");
+    }
+
+    // Fetch basis list
+    auto modes_ptr = dm::get_basis(key);
+    if (!modes_ptr) {
+        throw std::runtime_error("RTC get_basis_mode: basis \"" + basis_name + "\" not found.");
+    }
+
+    // Index validation
+    const int nModes = static_cast<int>(modes_ptr->size());
+    if (basis_index < 0 || basis_index >= nModes) {
+        throw std::runtime_error(
+            "RTC get_basis_mode: index " + std::to_string(basis_index) +
+            " out of range for basis \"" + basis_name + "\" (0.." + std::to_string(nModes-1) + ")."
+        );
+    }
+
+    // Size validation
+    const Eigen::VectorXd &mode = (*modes_ptr)[static_cast<size_t>(basis_index)];
+    if (mode.size() != nAct) {
+        throw std::runtime_error(
+            "RTC get_basis_mode: size mismatch for basis \"" + basis_name + "\" index " +
+            std::to_string(basis_index) + ": mode has " + std::to_string(mode.size()) +
+            " elements, expected " + std::to_string(nAct) + " (DM actuators)."
+        );
+    }
+
+    // Use the raw mode exactly as stored (NO normalization)
+    basis_vec_out = mode;
+}
+
+
+/**
+ * Sample the scalar carrier at relative time t (seconds) per the waveform.
+ * amplitude multiplies the unit-normalized basis mode.
+ */
+inline double sample_waveform(const bdr_signal_cfg &cfg, double t)
+{
+    const double A   = cfg.amplitude;
+    const double ph  = deg2rad(cfg.phase_deg);
+    const double f   = cfg.freq_hz > 0.0 ? cfg.freq_hz : 0.0;
+    const double dut = std::clamp(cfg.duty, 0.0, 1.0);
+
+    if (cfg.waveform == "sine") {
+        return A * std::sin(2.0 * M_PI * f * t + ph);
+    }
+    else if (cfg.waveform == "square") {
+        if (f <= 0.0) return 0.0;
+        const double T = 1.0 / f;
+        const double tau = std::fmod(t + (ph / (2.0 * M_PI * f)), T); // phase shift as time
+        return (tau / T < dut) ? A : 0.0;  // 0/A PWM style (not ±A)
+    }
+    else if (cfg.waveform == "step") {
+        return A; // constant after gate opens
+    }
+    else if (cfg.waveform == "chirp") {
+        // Linear chirp: f(t) = f0 + k t, k = (f1 - f0)/T
+        // Phase φ(t) = 2π [ f0 t + 0.5 k t^2 ] + ph, limited to window [0, T]
+        double T = std::max(cfg.chirp_T, 1e-6);
+        double t_clip = std::clamp(t, 0.0, T);
+        double k = (cfg.chirp_f1 - cfg.chirp_f0) / T;
+        double phi = 2.0 * M_PI * (cfg.chirp_f0 * t_clip + 0.5 * k * t_clip * t_clip) + ph;
+        return A * std::sin(phi);
+    }
+    else if (cfg.waveform == "prbs") {
+        int s = prbs31_step(g_inj.lfsr); // ±1
+        return A * static_cast<double>(s);
+    }
+    // "none" or unknown
+    return 0.0;
+}
+
+/**
+ * Compute c_inj (length nAct) for this frame:
+ * - Gated by t_start_s / t_stop_s
+ * - Sample-and-hold every hold_frames
+ * - Latency in frames via a scalar FIFO
+ */
+inline void compute_c_inj(const bdr_rtc_config &rtc_config,
+                          Eigen::Ref<Eigen::VectorXd> c_inj_out)
+{
+    const auto &cfg = rtc_config.inj_signal;           // <-- bdr_signal_cfg lives here
+    const int nAct  = static_cast<int>(rtc_config.zeroCmd.size());
+
+    // Default: no injection
+    c_inj_out.setZero();
+
+    if (!cfg.enabled) return;
+    //if (cfg.space != "dm") return;             // so far we only implmented this for dm command space 
+
+    // Lazy one-time init
+    if (!g_inj.inited) {
+        g_inj.t0 = clock_t::now();
+        g_inj.frame_idx = 0;
+        g_inj.lfsr = cfg.prbs_seed ? cfg.prbs_seed : 0xACE1u;
+        g_inj.latency_q.clear();
+        g_inj.latency_q.resize(static_cast<size_t>(std::max(0, cfg.latency_frames)), 0.0);
+        get_basis_mode(rtc_config, cfg.basis, cfg.basis_index, g_inj.basis_vec);
+        g_inj.inited = true;
+    }
+
+    // Time gating
+    const double t_abs = now_s();
+    if (t_abs < cfg.t_start_s) { 
+        // still before start; shift latency queue with zeros to keep alignment
+        if (!g_inj.latency_q.empty()) { g_inj.latency_q.pop_front(); g_inj.latency_q.push_back(0.0); }
+        g_inj.frame_idx++;
+        return;
+    }
+    if (cfg.t_stop_s > 0.0 && t_abs > cfg.t_stop_s) {
+        // after stop; flush zeros through latency
+        if (!g_inj.latency_q.empty()) { g_inj.latency_q.pop_front(); g_inj.latency_q.push_back(0.0); }
+        g_inj.frame_idx++;
+        return;
+    }
+
+    // Sample-and-hold: only refresh the scalar every 'hold_frames'
+    double scalar = g_inj.last_sample;
+    const int H = std::max(1, cfg.hold_frames);
+    if ((g_inj.frame_idx % H) == 0) {
+        const double t_rel = t_abs - cfg.t_start_s;
+        scalar = sample_waveform(cfg, t_rel);
+        g_inj.last_sample = scalar;
+    }
+
+    // Apply latency (scalar FIFO)
+    double delayed_scalar = scalar;
+    if (!g_inj.latency_q.empty()) {
+        g_inj.latency_q.pop_front();
+        g_inj.latency_q.push_back(scalar);
+        delayed_scalar = g_inj.latency_q.front();
+    }
+
+    // c_inj = delayed_scalar * basis_vec
+    if (g_inj.basis_vec.size() != nAct) {
+        // defensive (e.g. DM size changed)
+        get_basis_mode(rtc_config, cfg.basis, cfg.basis_index, g_inj.basis_vec);
+    }
+    c_inj_out = delayed_scalar * g_inj.basis_vec;
+
+    g_inj.frame_idx++;
+}
+
+} // namespace
 
 // // The main RTC function
 void rtc(){
@@ -424,7 +641,9 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    
+    // init disturbance injection command
+    c_inj.resize(rtc_config.zeroCmd.size());
+    c_inj.setZero();
     
     ///////////////////////////////////////
 
@@ -715,7 +934,6 @@ void rtc(){
             }
             
             
-            
             //c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
         }
@@ -803,9 +1021,13 @@ void rtc(){
             std::cout << "[SAFETY] Re-locking the loop" << std::endl;
         }
 
+        // injecting disturbances in command space 
+        // This handles: enabled flag, t_start/t_stop, hold_frames, latency_frames,
+        // waveform selection (sine/square/step/chirp/prbs), basis lookup & normalization.
+        compute_c_inj(rtc_config, c_inj);
 
         /// ============= FINAL DM CMD ==============
-        dmCmd = -1 * (c_LO + c_HO);
+        dmCmd = -1 * (c_LO + c_HO) + c_inj;
         /// =========================================
 
         // remove piston 
@@ -922,7 +1144,9 @@ void rtc(){
             //std::cout << ", c_HO size: " << c_HO.size() << std::endl;
             rtc_config.telem.c_HO.push_back(c_HO);          // 'c_HO' is Eigen::VectorXd
 
-
+            // just first iteration to test save fits function update! 
+            rtc_config.telem.c_inj.push_back(c_inj); // <-- NEW
+            
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
 
             // === COMPUTE SNR inside the pupil ===
