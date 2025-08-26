@@ -87,6 +87,9 @@ Eigen::VectorXd c_HO;
 Eigen::VectorXd c_inj;
 Eigen::VectorXd dmCmd;
 
+Eigen::VectorXd ol_lo; 
+Eigen::VectorXd ol_ho; 
+
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
 
@@ -100,7 +103,9 @@ std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
 
-const size_t boxcar = 5; // how many samples we average
+// delete cause we define later from baldr boxcar global variable
+//const size_t boxcar = 5; // how many samples we average
+
 
 
 template<typename Buffer>
@@ -285,6 +290,30 @@ namespace {
 
 using clock_t = std::chrono::steady_clock;
 
+static inline std::string to_lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    return s;
+}
+
+struct InjCache {
+    bool ready = false;
+
+    // identity of what we cached for
+    std::string basis_key;   // lower-cased basis name
+    int         basis_index = -1;
+    int         nAct = 0;
+
+    // precomputed vectors
+    Eigen::VectorXd p_all;   // nAct
+    Eigen::VectorXd p_lo;    // nAct
+    Eigen::VectorXd p_ho;    // nAct
+    Eigen::VectorXd v_lo;    // size 2
+    Eigen::VectorXd v_ho;    // size nHO
+};
+
+static InjCache g_inj_cache;
+
 struct SignalInjRuntime {
     bool inited = false;
 
@@ -304,24 +333,10 @@ struct SignalInjRuntime {
     // Sample-and-hold + latency
     double last_sample = 0.0;     // held scalar
     std::deque<double> latency_q; // size = latency_frames
+    // NEW: scalar actually sent this frame after latency
+    double last_out_scalar = 0.0;      // <— added this when we moved to allow branch and space (not just dm) injection options
 } g_inj;
 
-// Convert degrees to radians
-inline double deg2rad(double d) { return d * M_PI / 180.0; }
-
-// PRBS31: taps 31,28 -> returns ±1
-inline int prbs31_step(uint32_t &l) {
-    uint32_t bit = ((l >> 30) ^ (l >> 27)) & 1u;
-    l = (l << 1) | bit;
-    return (l & 1u) ? +1 : -1;
-}
-
-// Elapsed seconds since t0
-inline double now_s() {
-    static const auto t0 = clock_t::now();
-    std::chrono::duration<double> dt = clock_t::now() - t0;
-    return dt.count();
-}
 
 /**
  * Build a command-space basis vector:
@@ -374,6 +389,76 @@ inline void get_basis_mode(const bdr_rtc_config &rtc_config,
     basis_vec_out = mode;
 }
 
+
+// Minimal Tikhonov-regularized LS solve: argmin_v ||A v - b||^2 + \lambda||v||^2
+static Eigen::VectorXd tikhonov_ls(const Eigen::MatrixXd& A,
+                                   const Eigen::VectorXd& b,
+                                   double lambda = 1e-8)
+{
+    // (AᵀA + λI) v = Aᵀ b
+    const int m = static_cast<int>(A.cols());
+    Eigen::MatrixXd AtA = A.transpose() * A;
+    AtA.diagonal().array() += lambda;
+    Eigen::VectorXd Atb = A.transpose() * b;
+    return AtA.ldlt().solve(Atb);
+}
+
+static void rebuild_injection_cache(const bdr_rtc_config& cfg)
+{
+    // Ensure basis_vec is current (no normalization!)
+    get_basis_mode(cfg, cfg.inj_signal.basis, cfg.inj_signal.basis_index, g_inj.basis_vec);
+
+    const int nAct = static_cast<int>(cfg.zeroCmd.size());
+    g_inj_cache.ready       = false;         // will set true at end
+    g_inj_cache.nAct        = nAct;
+    g_inj_cache.basis_key   = to_lower_copy(cfg.inj_signal.basis);
+    g_inj_cache.basis_index = cfg.inj_signal.basis_index;
+
+    // Actuator-space target for injection
+    g_inj_cache.p_all = g_inj.basis_vec;     // same size as DM
+
+    // LO: project onto colspace(M2C_LO) and compute setpoint vector
+    if (cfg.matrices.M2C_LO.rows() != nAct) {
+        throw std::runtime_error("M2C_LO row mismatch vs zeroCmd size.");
+    }
+    // could add : if cfg.inj_signal.ls_method == "tikhonov" ...else other mthds
+    g_inj_cache.v_lo = tikhonov_ls(cfg.matrices.M2C_LO, g_inj_cache.p_all, 1e-8); // size 2
+    g_inj_cache.p_lo = cfg.matrices.M2C_LO * g_inj_cache.v_lo;                     // actuator equiv
+
+    // HO: project onto colspace(M2C_HO) and compute setpoint vector
+    if (cfg.matrices.M2C_HO.rows() != nAct) {
+        throw std::runtime_error("M2C_HO row mismatch vs zeroCmd size.");
+    }
+    g_inj_cache.v_ho = tikhonov_ls(cfg.matrices.M2C_HO, g_inj_cache.p_all, 1e-8); // size nHO
+    g_inj_cache.p_ho = cfg.matrices.M2C_HO * g_inj_cache.v_ho;                     // actuator equiv
+
+    g_inj_cache.ready = true;
+}
+
+
+// Convert degrees to radians
+inline double deg2rad(double d) { return d * M_PI / 180.0; }
+
+// PRBS31: taps 31,28 -> returns ±1
+inline int prbs31_step(uint32_t &l) {
+    uint32_t bit = ((l >> 30) ^ (l >> 27)) & 1u;
+    l = (l << 1) | bit;
+    return (l & 1u) ? +1 : -1;
+}
+
+// Elapsed seconds since t0
+inline double now_s() {
+    static const auto t0 = clock_t::now();
+    std::chrono::duration<double> dt = clock_t::now() - t0;
+    return dt.count();
+}
+
+
+// reset injection signal runtime
+void reset_signal_injection_runtime() {
+    g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
+    //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
+}
 
 /**
  * Sample the scalar carrier at relative time t (seconds) per the waveform.
@@ -476,12 +561,15 @@ inline void compute_c_inj(const bdr_rtc_config &rtc_config,
         delayed_scalar = g_inj.latency_q.front();
     }
 
+    g_inj.last_out_scalar = delayed_scalar;   // <— added this when we moved to allow branch and space (not just dm) injection options
+
     // c_inj = delayed_scalar * basis_vec
     if (g_inj.basis_vec.size() != nAct) {
         // defensive (e.g. DM size changed)
         get_basis_mode(rtc_config, cfg.basis, cfg.basis_index, g_inj.basis_vec);
     }
     c_inj_out = delayed_scalar * g_inj.basis_vec;
+
 
     g_inj.frame_idx++;
 }
@@ -645,6 +733,11 @@ void rtc(){
     c_inj.resize(rtc_config.zeroCmd.size());
     c_inj.setZero();
     
+    //static open loop offsets in LO and HO 
+    ol_lo.resize(rtc_config.zeroCmd.size());
+    ol_ho.resize(rtc_config.zeroCmd.size());
+    ol_lo.setZero();
+    ol_ho.setZero();
     ///////////////////////////////////////
 
 
@@ -807,11 +900,118 @@ void rtc(){
             sig = weightedAverage(rtc_config.telem.signal, boxcar);
         }
 
-        
+
+        // ------------- START OF SIGNAL INJECTION SECTION -----------
+        // ============================================================
+
+        /* in rtc_config we have a nested bdr_signal_cfg struc which defined 
+        what and where signals are injected into the controller. Either this can
+        be in HO, LO or all branches and can be applied to the plant (command space)
+        or to the setpoints. Here we check if cached signals need to be updated */
+
+
+        // React to config changes
+        static uint64_t seen_epoch = 0;
+        if (g_inj_cfg_epoch.load(std::memory_order_relaxed) != seen_epoch) {
+            seen_epoch = g_inj_cfg_epoch.load(std::memory_order_relaxed);
+            reset_signal_injection_runtime();   // clears runtime (basis cached in g_inj)
+            g_inj_cache.ready = false;          // force cache rebuild on use
+        }
+
+        // Compute this frame’s carrier once (don’t add to dm yet)
+        Eigen::VectorXd ctmp(rtc_config.zeroCmd.size());
+        compute_c_inj(rtc_config, ctmp);        // fills g_inj.last_out_scalar; ctmp not used directly
+
+        // Rebuild cache if basis/basis_index changed
+        const auto basis_key_now = to_lower_copy(rtc_config.inj_signal.basis);
+        if (!g_inj_cache.ready ||
+            g_inj_cache.basis_index != rtc_config.inj_signal.basis_index ||
+            g_inj_cache.basis_key   != basis_key_now) {
+            rebuild_injection_cache(rtc_config);   // computes p_all/p_lo/p_ho and v_lo/v_ho
+        }
+
+        // If injecting at SETPOINT, update controller setpoints BEFORE processing
+        Eigen::VectorXd du_lo, du_ho;                 // for telemetry/safety later
+        Eigen::VectorXd c_inj_applied = Eigen::VectorXd::Zero(ctmp.size()); // actuator-space equiv
+
+        if (rtc_config.inj_signal.enabled &&
+            rtc_config.inj_signal.apply_to == "setpoint")
+        {
+            const double a = g_inj.last_out_scalar;
+            std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+            if ((rtc_config.inj_signal.branch == "LO" || rtc_config.inj_signal.branch == "ALL") &&
+                servo_mode_LO.load() == SERVO_CLOSE)
+            {
+                du_lo = a * g_inj_cache.v_lo;
+                const auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("set_point"));
+                Eigen::VectorXd new_sp = (sp + du_lo).eval();                 // force materialization
+                rtc_config.ctrl_LO->set_parameter("set_point", new_sp);
+
+                // actuator-equivalent for telemetry only:
+                c_inj_applied += rtc_config.matrices.M2C_LO * du_lo;
+            }
+
+            if ((rtc_config.inj_signal.branch == "HO" || rtc_config.inj_signal.branch == "ALL") &&
+                servo_mode_HO.load() == SERVO_CLOSE)
+            {
+                du_ho = a * g_inj_cache.v_ho;
+                const auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("set_point"));
+                Eigen::VectorXd new_sp = (sp + du_ho).eval();                 // force materialization
+                rtc_config.ctrl_HO->set_parameter("set_point", new_sp);
+
+                c_inj_applied += rtc_config.matrices.M2C_HO * du_ho;
+            }
+        }
+
+
+        // if (rtc_config.inj_signal.enabled &&
+        //     rtc_config.inj_signal.apply_to == "setpoint")
+        // {
+        //     const double a = g_inj.last_out_scalar;
+
+        //     std::lock_guard<std::mutex> lock(ctrl_mutex);  // protect ctrl_* parameter updates
+
+        //     if (rtc_config.inj_signal.branch == "LO" || rtc_config.inj_signal.branch == "ALL") {
+        //         du_lo = a * g_inj_cache.v_lo;            // size 2
+        //         // Update setpoint for LO BEFORE ctrl_LO->process(e_LO)
+        //         auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("set_point"));
+        //         rtc_config.ctrl_LO->set_parameter("set_point", sp + du_lo);
+
+        //         // actuator-equivalent for telemetry/safety
+        //         c_inj_applied += rtc_config.matrices.M2C_LO * du_lo;
+        //     }
+
+        //     if (rtc_config.inj_signal.branch == "HO" || rtc_config.inj_signal.branch == "ALL") {
+        //         du_ho = a * g_inj_cache.v_ho;            // size nHO
+        //         auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("set_point"));
+        //         rtc_config.ctrl_HO->set_parameter("set_point", sp + du_ho);
+
+        //         c_inj_applied += rtc_config.matrices.M2C_HO * du_ho;
+        //     }
+        // } 
+
+
+        // ------------- END OF SIGNAL INJECTION SECTION -----------
+        // ============================================================
+
+
+        // open loop static offsets - distint from injection signals which are dynamic and applied in different places (e.g. setpoints)
+        ol_lo.setZero(); // set zero each iteration and only populate if in open loop and offsets exist
+        ol_ho.setZero();  
+        auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+        if (off) {
+            if (servo_mode_LO.load() == SERVO_OPEN) ol_lo = off->lo;
+            if (servo_mode_HO.load() == SERVO_OPEN) ol_ho = off->ho;
+        }
+
+
         //  Project into LO/HO as before, but now using the smoother sig_avg
         e_LO = rtc_config.I2M_LO_runtime * sig;
 
         e_HO = rtc_config.I2M_HO_runtime * sig;
+
+
 
         //-------------------------------
         // try this 
@@ -886,14 +1086,8 @@ void rtc(){
 
             u_LO = 0 * e_LO;
             
-            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);//load_openloop_offsets();
-            if (off) { //only apply if offset is initialized 
-                c_LO = rtc_config.matrices.M2C_LO * u_LO + off->lo;
-                
-            } else {
-                c_LO = rtc_config.matrices.M2C_LO * u_LO;
-                
-            }
+            c_LO = rtc_config.matrices.M2C_LO * u_LO;
+
             
 
 
@@ -925,13 +1119,8 @@ void rtc(){
   
 
             u_HO = 0 * e_HO ;
-          
-            auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire); //load_openloop_offsets(); // load atomic open loop DM HO offsets 
-            if (off) {
-                c_HO = rtc_config.matrices.M2C_HO * u_HO + off->ho;
-            } else {
-                c_HO = rtc_config.matrices.M2C_HO * u_HO;
-            }
+            c_HO = rtc_config.matrices.M2C_HO * u_HO;
+
             
             
             //c_HO = rtc_config.matrices.M2C_HO * u_HO;
@@ -1021,13 +1210,27 @@ void rtc(){
             std::cout << "[SAFETY] Re-locking the loop" << std::endl;
         }
 
+
+
         // injecting disturbances in command space 
         // This handles: enabled flag, t_start/t_stop, hold_frames, latency_frames,
         // waveform selection (sine/square/step/chirp/prbs), basis lookup & normalization.
-        compute_c_inj(rtc_config, c_inj);
+        //compute_c_inj(rtc_config, c_inj);
+
+        // If injecting in COMMAND space, build actuator vector AFTER controller outputs
+        if (rtc_config.inj_signal.enabled &&
+            rtc_config.inj_signal.apply_to == "command")
+        {
+            const double a = g_inj.last_out_scalar;
+
+            if      (rtc_config.inj_signal.branch == "ALL") c_inj_applied = a * g_inj_cache.p_all;
+            else if (rtc_config.inj_signal.branch == "LO")  c_inj_applied = a * g_inj_cache.p_lo;
+            else                                            c_inj_applied = a * g_inj_cache.p_ho;
+        }
+
 
         /// ============= FINAL DM CMD ==============
-        dmCmd = -1 * (c_LO + c_HO) + c_inj;
+        dmCmd = -1 * (c_LO + c_HO) + c_inj_applied + ol_lo + ol_ho ; //  ol are open loop offsets distinct from injected signals for system ID (c_inj_applied). ol_* are more usefull for static matrix calibrations for example. See baldr.cpp commander functions relating to interactions.
         /// =========================================
 
         // remove piston 
@@ -1145,7 +1348,7 @@ void rtc(){
             rtc_config.telem.c_HO.push_back(c_HO);          // 'c_HO' is Eigen::VectorXd
 
             // just first iteration to test save fits function update! 
-            rtc_config.telem.c_inj.push_back(c_inj); // <-- NEW
+            rtc_config.telem.c_inj.push_back(c_inj_applied); // <-- NEW
             
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
 

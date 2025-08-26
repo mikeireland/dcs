@@ -10,7 +10,7 @@ To set up:
 in Simulation folder set up a virtual environemnt 
 
 > cd dcs/simulation
-> python3.12 -m venv myenv
+> python3.12 -m venv venv
 
 Or setup the environment with whatever python you want. But note this was tested with Python 3.12.4
 
@@ -37,6 +37,12 @@ To stop the simulation servers:
 To see camera images updating once servers are running:
 
 > shmview /dev/shm/cred1.im.shm
+
+To make the baldr program (If it hasn't already been done)
+
+> cd dcs/baldr
+> make clean
+> make
 
 To start the Baldr RTC (this requires configuration files in usr/etc/local/baldr/..): 
 > cd dcs/baldr

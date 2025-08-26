@@ -61,7 +61,7 @@ class PlotWidget(QWidget):
     new_plot_requested = pyqtSignal()
 
     SCALAR_FIELDS = ["snr", "rmse_est"]  # extend if you add more
-    VECTOR_FIELDS = ["img", "img_dm", "signal", "e_LO", "u_LO", "e_HO", "u_HO", "c_LO", "c_HO"]
+    VECTOR_FIELDS = ["img", "img_dm", "signal", "e_LO", "u_LO", "e_HO", "u_HO", "c_LO", "c_HO", "c_inj"]
     REDUCERS = ["mean", "rms", "index"]
 
     def __init__(self, server_addr=SERVER_ADDR, history=600):  # keep ~1 min at 10 Hz

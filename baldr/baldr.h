@@ -58,6 +58,12 @@ std::shared_ptr<const ModeList> get_basis(const std::string& basis_key_lower);
 std::unique_ptr<Controller>
 make_controller(const std::string& type, const bdr_controller& cfg);
 
+
+
+
+//declare the helper so others can call it
+void mark_injection_changed();
+
 //----------Constant Arrays-----------
 
 //----- Structures and typedefs------
@@ -594,7 +600,7 @@ struct bdr_filters {
 // Signal injection (command-space) ---
 struct bdr_signal_cfg {
     bool        enabled        = false;     // master on/off
-    std::string space          = "dm";   // fixed: we inject via dm -> dm command space
+    //std::string space          = "command";   // we replace this with apply_to // fixed: we inject via dm -> dm command space
     std::string basis          = "zonal";   // name used by dm::get_basis(...)
     int         basis_index    = 0;         // which mode to inject
     double      amplitude      = 0.05;      // scalar gain applied to unit-normalized mode
@@ -611,6 +617,9 @@ struct bdr_signal_cfg {
     double      chirp_f0       = 1.0;
     double      chirp_f1       = 50.0;
     double      chirp_T        = 5.0;       // seconds of sweep window
+
+    std::string branch         = "HO";        // "LO" | "HO" | "ALL" <- what control branch to apply the injected signals
+    std::string apply_to       = "command";   // "command" | "setpoint" <- what signal space to inject them intop
 };
 
 //-----------------------------------------------------
@@ -879,7 +888,8 @@ extern std::atomic<int> servo_mode_HO;
 //extern int servo_mode_HO;
 // extern vector::<int> telescopes;
 
-
+// change signal epoch to mark changes in signal injection config
+extern std::atomic<uint64_t> g_inj_cfg_epoch;
 
 /////// new stuff for onsky interactions (19/8/25)
 // --- Open-loop offsets published atomically as one struct ---

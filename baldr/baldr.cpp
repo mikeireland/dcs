@@ -100,6 +100,9 @@ std::string mds_host_str = "tcp://192.168.100.2:5555";
 bool mds_zmq_initialized = false;
 
 
+std::atomic<uint64_t> g_inj_cfg_epoch{0};
+
+
 // 20-8-25
 std::unique_ptr<Controller>
 make_controller(const std::string& type, const bdr_controller& cfg) {
@@ -163,6 +166,11 @@ make_controller(const std::string& type, const bdr_controller& cfg) {
     }
 
     throw std::runtime_error("Unknown controller_type: " + type);
+}
+
+// to make changes to injection config visible to rtc thread
+void mark_injection_changed() {
+    g_inj_cfg_epoch.fetch_add(1, std::memory_order_relaxed);
 }
 
 
@@ -915,7 +923,8 @@ nlohmann::json poll_telem_vector(std::string name) {
         {"e_HO",   &bdr_telem::e_HO},
         {"u_HO",   &bdr_telem::u_HO},
         {"c_LO",   &bdr_telem::c_LO},
-        {"c_HO",   &bdr_telem::c_HO}
+        {"c_HO",   &bdr_telem::c_HO},
+        {"c_inj",   &bdr_telem::c_inj},
     };
 
     nlohmann::json j;
@@ -1527,6 +1536,27 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     // {"ctrl_HO.output",       make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::output)},
     // {"ctrl_HO.integrals",    make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::integrals)},
     // {"ctrl_HO.prev_errors",  make_nested_eigen_vector_getter(&bdr_rtc_config::ctrl_HO, &PIDController::prev_errors)}
+
+    // ===== inj_signal (RW) =====
+    {"inj_signal.enabled",        make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::enabled, "int")},
+    {"inj_signal.space",          make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::space, "string")},   // currently "basis"
+    {"inj_signal.basis",          make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::basis, "string")},
+    {"inj_signal.basis_index",    make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::basis_index, "int")},
+    {"inj_signal.amplitude",      make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::amplitude, "double")},
+    {"inj_signal.waveform",       make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::waveform, "string")}, // "sine|square|step|chirp|prbs|none"
+    {"inj_signal.freq_hz",        make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::freq_hz, "double")},
+    {"inj_signal.phase_deg",      make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::phase_deg, "double")},
+    {"inj_signal.duty",           make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::duty, "double")},
+    {"inj_signal.t_start_s",      make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::t_start_s, "double")},
+    {"inj_signal.t_stop_s",       make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::t_stop_s, "double")},
+    {"inj_signal.latency_frames", make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::latency_frames, "int")},
+    {"inj_signal.hold_frames",    make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::hold_frames, "int")},
+    {"inj_signal.prbs_seed",      make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::prbs_seed, "uint32")},
+    {"inj_signal.chirp_f0",       make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::chirp_f0, "double")},
+    {"inj_signal.chirp_f1",       make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::chirp_f1, "double")},
+    {"inj_signal.chirp_T",        make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::chirp_T, "double")},
+    {"inj_signal.branch",         make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::branch, "string")},   // "LO|HO|ALL"
+    {"inj_signal.apply_to",       make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::apply_to, "string")}, // "command|setpoint"
 };
 
 
@@ -1632,6 +1662,9 @@ nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
         return {{"ok", false}, {"error", "bad value/type"}, {"field", path}, {"expected", fh.type}};
     // Side-effects hook (recompute derived state) — add as needed, e.g.:
     // if (path.rfind("ctrl_", 0) == 0) { std::lock_guard<std::mutex> lk(rtc_mutex); /* rebuild controllers */ }
+    if (path.rfind("inj_signal.", 0) == 0) {
+        mark_injection_changed();
+    }
     return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
 }
 
