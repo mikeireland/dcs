@@ -1539,7 +1539,7 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
 
     // ===== inj_signal (RW) =====
     {"inj_signal.enabled",        make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::enabled, "int")},
-    {"inj_signal.space",          make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::space, "string")},   // currently "basis"
+    //{"inj_signal.space",          make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::space, "string")},   // , not used anymore
     {"inj_signal.basis",          make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::basis, "string")},
     {"inj_signal.basis_index",    make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::basis_index, "int")},
     {"inj_signal.amplitude",      make_nested_scalar_rw(&bdr_rtc_config::inj_signal, &bdr_signal_cfg::amplitude, "double")},
@@ -4072,10 +4072,33 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
         // probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",3,5000]
         // aa = util.get_DM_command_in_2D( np.mean( d[1].data['DATA'][0].reshape(3,-1), axis=0 ) )
         json aberr = json::array();
-        aberr.push_back(json::array({5,  0.05}));
+        aberr.push_back(json::array({65,  0.05}));
         aberr.push_back(json::array({2, -0.05}));
         return json::array({ aberr, "zernike", "OL", "signal", 3, 5000 });
     }
+
+    if (method == "I2A") {
+        // probes 4 inner corners to solve DM registration matrix
+        // Note the convention here my be 12x12 (144 for zonal) not 140!
+        //In [2]: DM_registration.get_inner_square_indices(outer_size=12, inner_offset=4)
+        // Out[2]: [np.int64(50), np.int64(53), np.int64(86), np.int64(89)]
+
+        // In [3]: DM_registration.get_inner_square_indices(outer_size=12, inner_offset=3)
+        // Out[3]: [np.int64(37), np.int64(42), np.int64(97), np.int64(102)]
+
+        // In [4]: DM_registration.get_inner_square_indices(outer_size=12, inner_offset=2)
+        // Out[4]: [np.int64(24), np.int64(31), np.int64(108), np.int64(115)]
+        
+        // NEED TO TEST METHOD
+        json aberr = json::array();
+
+        for (int iii : {50, 53, 86, 89}) { // the four inner corners (4 rows in)
+            aberr.push_back(json::array({iii,  0.04}));
+            aberr.push_back(json::array({iii, -0.04}));
+        }
+        return json::array({ aberr, "zonal", "OL", "img", 4, 5000 });
+    }
+
     //+++++++++++++++++++++++++++++++++++++
     //+++++++++++++++++++++++++++++++++++++
     // Add more named methods here…

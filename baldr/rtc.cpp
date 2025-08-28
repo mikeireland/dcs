@@ -108,6 +108,10 @@ double dm_rms_est_2 ; // from exterior pixels
 
 
 
+// Timing helper
+using Clock = std::chrono::high_resolution_clock;
+
+
 template<typename Buffer>
 Eigen::VectorXd weightedAverage(const Buffer &buf, size_t K) {
     size_t M = buf.size();
@@ -852,11 +856,18 @@ void rtc(){
         // // Cast it to double—and store into a VectorXd:
         // Eigen::VectorXd img = rawArr.cast<double>();
         
+        //-----1. S T A R T  C L O C K -----//
+        // auto start1 = Clock::now();
+
         int32_t *raw = subarray.array.SI32;
         Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
         Eigen::VectorXd img = rawArr.cast<double>();
 
 
+        // auto end1   = Clock::now();
+        // auto us1    = std::chrono::duration_cast<std::chrono::nanoseconds>(end1 - start1).count();
+        // std::cout << "[TIMER] Process image took " << us1 << " ns\n";
+        //----- E N D  C L O C K -----//
 
         //std::cout  << img.size() << std::endl;
         //uint64_t totalFramesWritten = subarray.md->cnt0;
@@ -867,8 +878,10 @@ void rtc(){
         //     << "Frame #" << totalFramesWritten 
         //     << " landed in buffer slot " << lastSliceIndex 
         //     << std::endl;
-            
-
+        
+        //-----2. C L O C K -----//
+        // auto start2 = Clock::now();
+        
         // model of residual rms in DM units using secondary obstruction 
         dm_rms_est_1 = rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
 
@@ -881,6 +894,15 @@ void rtc(){
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
 
+        // auto end2   = Clock::now();
+        // auto us2    = std::chrono::duration_cast<std::chrono::nanoseconds>(end2 - start2).count();
+        // std::cout << "[TIMER] I2A projection took " << us2 << " ns\n";
+        //----- E N D  C L O C K -----//
+        
+        
+
+        //-----3. C L O C K -----//
+        // auto start3 = Clock::now();
         
         //  Compute the averaged signal, telem size can change mid rtc so check! 
         size_t M = rtc_config.telem.signal.size();
@@ -891,7 +913,7 @@ void rtc(){
         
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
-
+        
         // uncomment and build July 2025 AIV
         //this boxcar weighted average is a first attempt - later evolve to
         //burst window in full unfiltered non-destructive read mode with slope est. 
@@ -900,6 +922,13 @@ void rtc(){
             sig = weightedAverage(rtc_config.telem.signal, boxcar);
         }
 
+        
+        // auto end3   = Clock::now();
+        // auto us3    = std::chrono::duration_cast<std::chrono::nanoseconds>(end3 - start3).count();
+        // std::cout << "[TIMER] signal and boxcar took " << us3 << " ns\n";
+        //----- E N D  C L O C K -----//
+        
+        
 
         // ------------- START OF SIGNAL INJECTION SECTION -----------
         // ============================================================
@@ -909,6 +938,8 @@ void rtc(){
         be in HO, LO or all branches and can be applied to the plant (command space)
         or to the setpoints. Here we check if cached signals need to be updated */
 
+        //-----4. C L O C K -----//
+        // auto start4 = Clock::now();
 
         // React to config changes
         static uint64_t seen_epoch = 0;
@@ -964,6 +995,10 @@ void rtc(){
             }
         }
 
+        // auto end4   = Clock::now();
+        // auto us4    = std::chrono::duration_cast<std::chrono::nanoseconds>(end4 - start4).count();
+        // std::cout << "[TIMER] signal injection checks took " << us4 << " ns\n";
+        //----- E N D  C L O C K -----//
 
         // if (rtc_config.inj_signal.enabled &&
         //     rtc_config.inj_signal.apply_to == "setpoint")
@@ -996,6 +1031,9 @@ void rtc(){
         // ============================================================
 
 
+        //-----5. C L O C K -----//
+        // auto start5 = Clock::now();
+
         // open loop static offsets - distint from injection signals which are dynamic and applied in different places (e.g. setpoints)
         ol_lo.setZero(); // set zero each iteration and only populate if in open loop and offsets exist
         ol_ho.setZero();  
@@ -1005,6 +1043,13 @@ void rtc(){
             if (servo_mode_HO.load() == SERVO_OPEN) ol_ho = off->ho;
         }
 
+        // auto end5   = Clock::now();
+        // auto us5    = std::chrono::duration_cast<std::chrono::nanoseconds>(end5 - start5).count();
+        // std::cout << "[TIMER] checking static OL signal took " << us5 << " ns\n";
+        //----- E N D  C L O C K -----//
+
+        //-----6. C L O C K -----//
+        auto start6 = Clock::now();
 
         //  Project into LO/HO as before, but now using the smoother sig_avg
         e_LO = rtc_config.I2M_LO_runtime * sig;
@@ -1012,6 +1057,10 @@ void rtc(){
         e_HO = rtc_config.I2M_HO_runtime * sig;
 
 
+        // auto end6   = Clock::now();
+        // auto us6    = std::chrono::duration_cast<std::chrono::nanoseconds>(end6 - start6).count();
+        // std::cout << "[TIMER] error calc took " << us6 << " ns\n";
+        //----- E N D  C L O C K -----//
 
         //-------------------------------
         // try this 
@@ -1055,6 +1104,9 @@ void rtc(){
 
         // if auto mode change state based on signals
 
+
+        //-----7. C L O C K -----//
+        // auto start7 = Clock::now();
 
         // LO CALCULATIONS 
         if (servo_mode_LO.load() == SERVO_CLOSE){
@@ -1126,6 +1178,12 @@ void rtc(){
             //c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
         }
+
+        // auto end7   = Clock::now();
+        // auto us7    = std::chrono::duration_cast<std::chrono::nanoseconds>(end7 - start7).count();
+        // std::cout << "[TIMER] ctrl signal processing took " << us7 << " ns\n";
+
+        //----- E N D  C L O C K -----//
 
 
         // === HO Safety Check: Zero gains for misbehaving actuators ===
@@ -1217,6 +1275,9 @@ void rtc(){
         // waveform selection (sine/square/step/chirp/prbs), basis lookup & normalization.
         //compute_c_inj(rtc_config, c_inj);
 
+        //-----8. C L O C K -----//
+        // auto start8 = Clock::now();
+        
         // If injecting in COMMAND space, build actuator vector AFTER controller outputs
         if (rtc_config.inj_signal.enabled &&
             rtc_config.inj_signal.apply_to == "command")
@@ -1228,6 +1289,11 @@ void rtc(){
             else                                            c_inj_applied = a * g_inj_cache.p_ho;
         }
 
+        // auto end8   = Clock::now();
+        // auto us8    = std::chrono::duration_cast<std::chrono::nanoseconds>(end8 - start8).count();
+        // std::cout << "[TIMER] command space signal injection checks " << us8 << " ns\n";
+
+        //----- E N D  C L O C K -----//
 
         /// ============= FINAL DM CMD ==============
         dmCmd = -1 * (c_LO + c_HO) + c_inj_applied + ol_lo + ol_ho ; //  ol are open loop offsets distinct from injected signals for system ID (c_inj_applied). ol_* are more usefull for static matrix calibrations for example. See baldr.cpp commander functions relating to interactions.
@@ -1293,10 +1359,17 @@ void rtc(){
 
         // ******************** UPDATE DM ******************************
 
+        //-----9. C L O C K -----//
+        // auto start9 = Clock::now();
+
         updateDMSharedMemory(dm_rtc, dmCmd);
 
         // Signal the master DM process to update itself.
         ImageStreamIO_sempost(&dm_rtc0, 1);
+
+        // auto end9   = Clock::now();
+        // auto us9    = std::chrono::duration_cast<std::chrono::nanoseconds>(end9 - start9).count();
+        // std::cout << "[TIMER] update DM SHM and post sem " << us9 << " ns\n";
 
         //BCB
         //updateDMSharedMemory( dmCmd ) ;
@@ -1306,6 +1379,11 @@ void rtc(){
         // ************************************************************
         // Struc of ring buffers to keep history and offload to telemetry thread if requestec 
         if (true){
+
+            //-----10. C L O C K -----//
+            auto start10 = Clock::now();
+
+            
             std::lock_guard<std::mutex> lock(telemetry_mutex);
             // Get the current time as a double (microseconds)
             current_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1382,6 +1460,12 @@ void rtc(){
 
             // Increment the counter.
             rtc_config.telem.counter++;
+
+            // auto end10   = Clock::now();
+            // auto us10    = std::chrono::duration_cast<std::chrono::nanoseconds>(end10 - start10).count();
+            // std::cout << "[TIMER] update telemetry ring buffer " << us10 << " ns\n";
+
+
         }
 
         //// getting telemetry in AIV 
@@ -1430,7 +1514,7 @@ void rtc(){
         //     auto over = now - next_tick;
         //     //std::cerr<<"Loop overran by "
         //     //       << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
-        //     //       <<" μs\n";
+        //     //       <<" us\n";
         // }
         
         //end = std::chrono::steady_clock::now();
