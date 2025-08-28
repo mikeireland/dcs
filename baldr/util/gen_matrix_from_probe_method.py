@@ -95,6 +95,8 @@ if args.method == 'I2A':
         # update the field (example!)
         s.send_string('set_rtc_field "inj_signal.freq_hz",0.04')
         rep = s.recv_json()
+        # s.send_string(f'set_rtc_field "matrices.I2A",{I2A}')
+        # rep = s.recv_json()
 
         print( rep )
 

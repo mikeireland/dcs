@@ -1431,18 +1431,30 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"reference_pupils.I0_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm)},
 
     // ===== matrices (RO) =====
-    {"matrices.I2A",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2A)},
-    {"matrices.I2M",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M)},
-    {"matrices.I2M_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_LO)},
-    {"matrices.I2M_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_HO)},
-    {"matrices.M2C",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C)},
-    {"matrices.M2C_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_LO)},
-    {"matrices.M2C_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_HO)},
-    {"matrices.I2rms_sec",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_sec)},
-    {"matrices.I2rms_ext",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_ext)},
-    {"matrices.szm",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szm, "int")},
-    {"matrices.sza",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::sza, "int")},
-    {"matrices.szp",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szp, "int")},
+    {"matrices.I2A",    make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2A)},
+    {"matrices.I2M",    make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2M)},
+    {"matrices.I2M_LO", make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2M_LO)},
+    {"matrices.I2M_HO", make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2M_HO)},
+    {"matrices.M2C",    make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::M2C)},
+    {"matrices.M2C_LO", make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::M2C_LO)},
+    {"matrices.M2C_HO", make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::M2C_HO)},
+    {"matrices.I2rms_sec",  make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_sec)},
+    {"matrices.I2rms_ext",  make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_ext)},
+    {"matrices.szm",        make_nested_scalar_rw(&bdr_rtc_config::matrices, &bdr_matricies::szm, "int")},
+    {"matrices.sza",        make_nested_scalar_rw(&bdr_rtc_config::matrices, &bdr_matricies::sza, "int")},
+    {"matrices.szp",        make_nested_scalar_rw(&bdr_rtc_config::matrices, &bdr_matricies::szp, "int")},
+    // {"matrices.I2A",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2A)},
+    // {"matrices.I2M",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M)},
+    // {"matrices.I2M_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_LO)},
+    // {"matrices.I2M_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2M_HO)},
+    // {"matrices.M2C",        make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C)},
+    // {"matrices.M2C_LO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_LO)},
+    // {"matrices.M2C_HO",     make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::M2C_HO)},
+    // {"matrices.I2rms_sec",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_sec)},
+    // {"matrices.I2rms_ext",  make_nested_eigen_matrix_getter(&bdr_rtc_config::matrices, &bdr_matricies::I2rms_ext)},
+    // {"matrices.szm",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szm, "int")},
+    // {"matrices.sza",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::sza, "int")},
+    // {"matrices.szp",        make_nested_scalar_getter(&bdr_rtc_config::matrices, &bdr_matricies::szp, "int")},
 
     // ===== controller configs (RW ) =====
     //// uncomment / fix after controller class upgrade verified 20-8-25
@@ -1649,24 +1661,74 @@ nlohmann::json ctrl_get(nlohmann::json args) {
     }
 }
 
+
 nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
     auto it = RTC_FIELDS.find(path);
     if (it == RTC_FIELDS.end())
         return {{"ok", false}, {"error", "unknown field"}, {"field", path}};
+
     const auto& fh = it->second;
     if (!fh.set)
         return {{"ok", false}, {"error", "read-only field"}, {"field", path}};
-    // Optional: per-field validation here (range/size checks, etc.)
+
+    // Write the value
     const bool ok = fh.set(value);
     if (!ok)
         return {{"ok", false}, {"error", "bad value/type"}, {"field", path}, {"expected", fh.type}};
-    // Side-effects hook (recompute derived state) — add as needed, e.g.:
-    // if (path.rfind("ctrl_", 0) == 0) { std::lock_guard<std::mutex> lk(rtc_mutex); /* rebuild controllers */ }
-    if (path.rfind("inj_signal.", 0) == 0) {
+
+    // ---- Selective side-effects / derived recomputes ----
+    // Matrices that affect runtime projections (cheap scale/update)
+    if (path == "matrices.I2M_LO" || path == "scale") {
+        std::lock_guard<std::mutex> lk(rtc_mutex);
+        rtc_config.I2M_LO_runtime = rtc_config.scale * rtc_config.matrices.I2M_LO;
+    }
+    if (path == "matrices.I2M_HO" || path == "scale") {
+        std::lock_guard<std::mutex> lk(rtc_mutex);
+        rtc_config.I2M_HO_runtime = rtc_config.scale * rtc_config.matrices.I2M_HO;
+    }
+    // Strehl/rms model (m,b) recompute
+    if (path == "matrices.I2rms_sec" || path == "scale") {
+        std::lock_guard<std::mutex> lk(rtc_mutex);
+        if (rtc_config.matrices.I2rms_sec.rows() >= 2 && rtc_config.matrices.I2rms_sec.cols() >= 2) {
+            rtc_config.m_s_runtime = rtc_config.scale * rtc_config.matrices.I2rms_sec(0,0);
+            rtc_config.b_s_runtime =                       rtc_config.matrices.I2rms_sec(1,1);
+        }
+    }
+
+    // Injection cache invalidation:
+    // (basis→DM path or setpoint→DM mapping depends on these)
+    if (path.rfind("inj_signal.", 0) == 0 ||
+        path == "matrices.M2C_LO" ||
+        path == "matrices.M2C_HO" ||
+        path == "matrices.I2M_LO" ||
+        path == "matrices.I2M_HO" ||
+        path == "matrices.I2A")
+    {
         mark_injection_changed();
     }
+
+    // Echo back current value
     return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
 }
+// nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
+//     auto it = RTC_FIELDS.find(path);
+    
+//     if (it == RTC_FIELDS.end())
+//         return {{"ok", false}, {"error", "unknown field"}, {"field", path}};
+//     const auto& fh = it->second;
+//     if (!fh.set)
+//         return {{"ok", false}, {"error", "read-only field"}, {"field", path}};
+//     // Optional: per-field validation here (range/size checks, etc.)
+//     const bool ok = fh.set(value);
+//     if (!ok)
+//         return {{"ok", false}, {"error", "bad value/type"}, {"field", path}, {"expected", fh.type}};
+//     // Side-effects hook (recompute derived state) — add as needed, e.g.:
+//     // if (path.rfind("ctrl_", 0) == 0) { std::lock_guard<std::mutex> lk(rtc_mutex); /* rebuild controllers */ }
+//     if (path.rfind("inj_signal.", 0) == 0) {
+//         mark_injection_changed();
+//     }
+//     return {{"ok", true}, {"field", path}, {"type", fh.type}, {"value", fh.get()}};
+// }
 
 // could be used to replace the set_ctrl_param function... 
 // Usage: ctrl_set ["LO","kp", [0.1,0.1,...]]
