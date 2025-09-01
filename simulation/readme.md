@@ -22,6 +22,23 @@ Then install requirements
 
 > pip install -r requirements.txt
 
+then we have to build the MDM server and shm_creator_sim C++ programs. 
+
+> sudo apt install nlohmann-json3-dev
+
+> cd dcs/simulation
+
+then build directly using libImageStreamIO source:
+
+> g++ -std=c++17 shm_creator_sim.cpp ../libImageStreamIO/ImageStreamIO.c \
+  -I../libImageStreamIO -pthread -o shm_creator_sim
+
+> g++ -O2 -std=c++17 -o sim_mdm_server sim_mdm_server.cpp ../libImageStreamIO/ImageStreamIO.c \
+  -I../libImageStreamIO -pthread
+
+
+you may want to check depedent file exists in /dcs/asgard-cred1-server/cred1_split.json
+
 To start the simulation servers: 
 
 > ./heimbal_simulation_servers.sh start

@@ -11,7 +11,7 @@
 // using json = nlohmann::json;
 
 // /// Compile with:
-// /// g++ shm_creator_sim.cpp -o shm_creator_sim -I/home/rtc/Documents/dcs/libImageStreamIO -L/home/rtc/Documents/dcs/libImageStreamIO -lImageStreamIO -I/usr/include/nlohmann -pthread
+// /// g++ shm_creator_sim.cpp -o shm_creator_sim -I/home/benjamin/Documents/dcs/libImageStreamIO -L/home/rtc/Documents/dcs/libImageStreamIO -lImageStreamIO -I/usr/include/nlohmann -pthread
 
 // int create_and_init_image(const std::string& name, int width, int height, int datatype, int nbsem) {
 //     IMAGE* img = (IMAGE*) malloc(sizeof(IMAGE));
@@ -104,7 +104,7 @@
 using json = nlohmann::json;
 
 /// compile
-// g++ shm_creator_sim.cpp -o shm_creator_sim -I/home/rtc/Documents/dcs/libImageStreamIO -L/home/rtc/Documents/dcs/libImageStreamIO -lImageStreamIO -I/usr/include/nlohmann -pthread
+// g++ shm_creator_sim.cpp -o shm_creator_sim -I/home/benjamin/Documents/dcs/libImageStreamIO -L/home/benjamin/Documents/dcs/libImageStreamIO -lImageStreamIO -I/usr/include/nlohmann -pthread
 
 
 
@@ -221,8 +221,29 @@ int create_image(const std::string& name, int width, int height, int datatype, i
 // // // //     return ImageStreamIO_createIm(shm_name.c_str(), width, height, datatype, nbsem);
 // // // // }
 
+#include <unistd.h>
+#include <limits.h>
+#include <string>
+#include <stdexcept>
+
+std::string get_executable_dir() {
+    char buf[PATH_MAX];
+    ssize_t len = ::readlink("/proc/self/exe", buf, sizeof(buf)-1);
+    if (len == -1) throw std::runtime_error("cannot read /proc/self/exe");
+    buf[len] = '\0';
+    std::string exe_path(buf);
+    auto pos = exe_path.find_last_of('/');
+    return exe_path.substr(0, pos);
+}
+
+std::string get_json_path() {
+    std::string exe_dir = get_executable_dir();
+    // binary lives in dcs/simulation → go up one, then into asgard-cred1-server
+    return exe_dir + "/../asgard-cred1-server/cred1_split.json";
+}
+
 int main() {
-    const std::string json_path = "/home/rtc/Documents/dcs/asgard-cred1-server/cred1_split.json";
+    const std::string json_path = get_json_path();//"/home/rtc/Documents/dcs/asgard-cred1-server/cred1_split.json";
     std::ifstream file(json_path);
     if (!file.is_open()) {
         std::cerr << "ERROR: Failed to open " << json_path << "\n";

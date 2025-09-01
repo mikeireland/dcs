@@ -82,3 +82,4 @@ watchdog==4.0.2
 wcwidth==0.2.13
 xaosim==1.0.11
 zmq==0.0.0
+shmview==0.0.10
