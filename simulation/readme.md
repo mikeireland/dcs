@@ -22,9 +22,24 @@ Then install requirements
 
 > pip install -r requirements.txt
 
-then we have to build the MDM server and shm_creator_sim C++ programs. 
+if you haven't already got fits, toml, lib64, eigen, boost, fmt (note commander won't build for fmt version > 8), zmq and json installed for C++ then also run 
 
 > sudo apt install nlohmann-json3-dev
+> sudo apt install libcfitsio-dev
+> sudo apt install libeigen3-dev
+> sudo apt install libboost-dev libboost-program-options-dev
+> sudo apt install libfmt-dev
+> sudo apt install libzmq3-dev 
+> sudo apt install libb64-dev
+for toml just get and copy the header file (see https://github.com/marzer/tomlplusplus): 
+cd ~/Downloads
+wget https://raw.githubusercontent.com/marzer/tomlplusplus/master/toml.hpp
+sudo cp toml.hpp /usr/local/include/
+
+
+make commander (this is the CLI / ZMQ interface to send commands to the RTC program)
+
+then we have to build the MDM server and shm_creator_sim C++ programs. 
 
 > cd dcs/simulation
 
@@ -61,7 +76,13 @@ To make the baldr program (If it hasn't already been done)
 > make clean
 > make
 
-To start the Baldr RTC (this requires configuration files in usr/etc/local/baldr/..): 
+the RTC requires some configuration directories (rtc_config, dm_basis) that can be downloaded from here :
+
+https://drive.google.com/drive/folders/10gLbWAqWNPTUInG8lj-v51TZ_C-rEc9p?usp=drive_link, https://drive.google.com/drive/folders/11jhet17IN1qhzyiW1fTddPeBSj6rZ-4E?usp=drive_link 
+
+ask Ben (email below) if you cant access the baldr_sim_files folder here. Once these directories are downloaded they should be copied to /usr/local/etc/baldr
+
+To start the Baldr RTC (this requires configuration files in /usr/local/etc/baldr..): 
 > cd dcs/baldr
 > ./baldr --beam 1 --mask J3 --mode bright --socket tcp://*:6662
 
