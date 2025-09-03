@@ -304,6 +304,7 @@ void test(uint beam, double value, uint n) {
     beam_mutex.unlock();   
 }
 
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -327,6 +328,7 @@ COMMANDER_REGISTER(m)
     m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
     m.def("offset_gain", set_offset_gain, "Set the phase delay offset gain", "gain"_arg=0.0);
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
+    //m.def("gd_offsets")
  }
 
 int main(int argc, char* argv[]) {

@@ -434,7 +434,7 @@ void fringe_tracker(){
                 add_to_delay_lines(-control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
-            else if (offload_mode == OFFLOAD_GD) //!!! Was -1...
+            else if (offload_mode == OFFLOAD_GD) ///!!! Was -1.0, but has an issues
                 add_to_delay_lines(-0.5*control_a.gd * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
