@@ -93,12 +93,14 @@ if args.method == 'I2A':
         rep = s.recv_json()
 
         # update the field (example!)
-        s.send_string('set_rtc_field "inj_signal.freq_hz",0.04')
-        rep = s.recv_json()
-        # s.send_string(f'set_rtc_field "matrices.I2A",{I2A}')
+        # s.send_string('set_rtc_field "inj_signal.freq_hz",0.04')
         # rep = s.recv_json()
+        s.send_string(f'set_rtc_field "matrices.I2A",{I2A.tolist()}')
+        rep = s.recv_json()
 
-        print( rep )
+        print( "sucess?", rep['ok'] )
+        if not rep['ok'] :
+            print( '  error: ', rep['error'] )
 
         # close connection
         s.setsockopt(zmq.LINGER, 0)   # don't wait on unsent msgs
