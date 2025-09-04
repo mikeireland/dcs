@@ -89,7 +89,7 @@ void move_piezos(){
             dl_value = 2048 + (int)( (next_offload(i) + search_offset(i)) / OPD_PER_PIEZO_UNIT);
             sprintf(message, "a%d %d\n", i, dl_value);
             recv(controllinoSocket, buffer, sizeof(buffer), 0);
-            //std::cout << "Received from controllino: " << buffer << std::endl;
+            std::cout << "Received from controllino: " << buffer << std::endl;
             send(controllinoSocket, message, strlen(message), 0);
             std::cout << "Sending to controllino: " << message << std::endl;
             usleep(CONTROLLINO_USLEEP);
