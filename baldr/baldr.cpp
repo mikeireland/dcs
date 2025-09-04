@@ -53,7 +53,7 @@ std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 
 
 std::string telemFormat = "fits";//"json";
-std::string telem_save_path = "/home/rtc/Downloads/"; //"/home/asg/Music/";
+std::string telem_save_path = "/home/benjamin/Downloads/";//"/home/rtc/Downloads/"; //"/home/asg/Music/";
 
 // Your basis file location
 static constexpr const char* kDMBaseFITS =
@@ -3516,6 +3516,9 @@ nlohmann::json capture_telem_list_json(const nlohmann::json& args) {
 
 
 // Probe interaction data by applying a sequence of modal aberrations and capturing N samples.
+
+// TO DO: Add all method to get all telemetry .. need to update save_probe_result_fits
+
 // Args (JSON):
 //   array form: [aberrations, basis, state, field, N, deadtime_ms(optional)]
 //     - aberrations: e.g. [[5, 0.05], [12, -0.03], ...]   (idx, amplitude)
@@ -4130,7 +4133,12 @@ static int save_probe_result_fits(const nlohmann::json& jr, const std::string& f
 static nlohmann::json build_probe_args_for_method(const std::string& method) {
     using json = nlohmann::json;
 
+    // method auto naming convention 
+    // cust_<loop_state>_<basis>_<signal>_<samples>
+    // then the code will infer the loop state basis signal and samples from this input string convention
+
     if (method == "method_1") {
+        // testing 123
         // probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",3,5000]
         // aa = util.get_DM_command_in_2D( np.mean( d[1].data['DATA'][0].reshape(3,-1), axis=0 ) )
         json aberr = json::array();
@@ -4161,6 +4169,47 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
         return json::array({ aberr, "zonal", "OL", "img", 4, 5000 });
     }
 
+
+    if (method == "I2A_CL"){
+        
+        // building interaction matrix for Baldr 
+        json aberr = json::array();
+
+        for (int iii : {50, 53, 86, 89}) { // the four inner corners (4 rows in)
+            aberr.push_back(json::array({iii,  0.04}));
+            aberr.push_back(json::array({iii, -0.04}));
+        }
+        return json::array({ aberr, "zonal", "CL", "img", 10, 5000 });
+    }
+    if (method == "IM_OL"){
+        
+        // building interaction matrix for Baldr 
+        json aberr = json::array();
+
+        for (int iii = 0; iii < 140; ++iii){
+            aberr.push_back(json::array({iii,  0.04}));
+            aberr.push_back(json::array({iii, -0.04}));
+        }
+
+        return json::array({ aberr, "zonal", "OL", "img", 3, 5000 });
+
+    } 
+
+    if (method == "IM_CL"){
+        
+        // building interaction matrix for Baldr 
+        json aberr = json::array();
+
+        for (int iii = 0; iii < 140; ++iii){
+            aberr.push_back(json::array({iii,  0.04}));
+            aberr.push_back(json::array({iii, -0.04}));
+        }
+
+        return json::array({ aberr, "zonal", "CL", "img", 8, 5000 });
+
+    } 
+
+
     //+++++++++++++++++++++++++++++++++++++
     //+++++++++++++++++++++++++++++++++++++
     // Add more named methods here…
@@ -4173,6 +4222,8 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
 // Commander-facing wrapper:
 // Accepts: ["method_1", "/path/or/dir/optional"]
 //      e.g ["method_1","/home/rtc/Downloads/test.fits"]
+// TO do : standard naming convention e.g. last _ seperated string is basis and last is telemetry
+// I2A, IM, I0
 static nlohmann::json run_probe_method(nlohmann::json args) {
     using json = nlohmann::json;
 
