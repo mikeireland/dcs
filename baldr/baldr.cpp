@@ -53,7 +53,7 @@ std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 
 
 std::string telemFormat = "fits";//"json";
-std::string telem_save_path = "/home/benjamin/Downloads/";//"/home/rtc/Downloads/"; //"/home/asg/Music/";
+std::string telem_save_path = "/home/rtc/Downloads/"; //"/home/benjamin/Downloads/"//"/home/asg/Music/";
 
 // Your basis file location
 static constexpr const char* kDMBaseFITS =
@@ -101,6 +101,23 @@ bool mds_zmq_initialized = false;
 
 
 std::atomic<uint64_t> g_inj_cfg_epoch{0};
+
+
+// Forward declaration (implemented in telemetry.cpp)
+std::vector<std::string> list_all_numeric_telem_fields();
+
+// From telemetry.cpp:
+bool write_fields_to_fits(const std::string& path,
+                          const std::vector<std::string>& fields,
+                          std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)> extract,
+                          long nsteps);
+
+bool telem_extract_matrix_lastN(const bdr_telem& telem,
+                                std::mutex& telemetry_mutex,
+                                std::string_view field,
+                                std::size_t N,
+                                Eigen::MatrixXd& M,
+                                std::string& why);
 
 
 // 20-8-25
@@ -3022,6 +3039,42 @@ json reload_config(json args) {
 
 //////////////////
 
+// 
+namespace { // anonymous namespace fpr probe_methods saving
+// #include <algorithm>
+// #include <cctype>
+// #include <string>
+// #include <string_view>
+// #include <vector>
+// #include <nlohmann/json.hpp>
+
+inline bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    return std::equal(a.begin(), a.end(), b.begin(),
+        [](char x, char y){
+            return std::tolower(static_cast<unsigned char>(x)) ==
+                   std::tolower(static_cast<unsigned char>(y));
+        });
+}
+
+// Accepts "all", a single name, or ["name1","name2",...]
+inline std::vector<std::string> parse_field_list(const nlohmann::json& jfield) {
+    if (jfield.is_string()) {
+        std::string s = jfield.get<std::string>();
+        if (iequals(s, "all")) return list_all_numeric_telem_fields();
+        return {std::move(s)};
+    }
+    if (jfield.is_array()) {
+        std::vector<std::string> out;
+        out.reserve(jfield.size());
+        for (const auto& x : jfield) out.push_back(x.get<std::string>());
+        return out;
+    }
+    throw std::runtime_error(
+        "`field` must be a string ('all' or a field name) or a list of strings.");
+}
+} // end anonymous namespace
+
 
 namespace dm {
 
@@ -3474,6 +3527,7 @@ capture_telem_list(const std::string& field, size_t N, long long dead_ms, bool c
                 else if (field=="u_HO")     dump_vecbuf(rtc_config.telem.u_HO);
                 else if (field=="c_LO")     dump_vecbuf(rtc_config.telem.c_LO);
                 else if (field=="c_HO")     dump_vecbuf(rtc_config.telem.c_HO);
+                else if (field=="c_inj")    dump_vecbuf(rtc_config.telem.c_inj);  // <-- add this
                 break;
             case 1: // scalar<double>
                 if      (field=="timestamp") dump_dblbuf(rtc_config.telem.timestamp);
@@ -3515,58 +3569,153 @@ nlohmann::json capture_telem_list_json(const nlohmann::json& args) {
 }
 
 
-// Probe interaction data by applying a sequence of modal aberrations and capturing N samples.
+/// upgrading the above (but keeping for backwards compatibility) to include list of filds
+// Capture N samples for multiple fields ("all" | one name | list of names)
+std::unordered_map<std::string, std::vector<std::vector<double>>>
+capture_telem_multi(const std::vector<std::string>& fields, size_t N, long long dead_ms, bool change_capacity = true)
+{
+    std::unordered_map<std::string, std::vector<std::vector<double>>> out;
+    if (N == 0 || fields.empty()) return out;
 
-// TO DO: Add all method to get all telemetry .. need to update save_probe_result_fits
+    size_t old_cap = 0;
 
-// Args (JSON):
-//   array form: [aberrations, basis, state, field, N, deadtime_ms(optional)]
-//     - aberrations: e.g. [[5, 0.05], [12, -0.03], ...]   (idx, amplitude)
-//     - basis:       string (e.g. "zernike", "fourier_12x12", ...)
-//     - state:       "OL" or "CL"
-//     - field:       telemetry field (e.g. "signal", "img", "e_HO", ...)
-//     - N:           number of sequential samples per aberration
-//     - deadtime_ms: optional; if <0 will be computed from fps & N; else used as-is
-//   object form: {"aberrations":[...], "basis":"...", "state":"OL|CL", "field":"...",
-//                 "N":123, "deadtime_ms":0}
-//
-// Behavior:
-//   - If state=="OL": uses ol_set_mode ["HO", basis, idx, amp] to apply, then captures N samples.
-//   - If state=="CL": builds HO set_point = amp * dm144_to_140(basis[idx]) and sets it via ctrl_set.
-//   - Capacity of all telemetry buffers is set to N once, then restored at the end.
-//   - For each aberration, state is restored (OL offsets or HO set_point) after capture.
-//
-// Returns JSON:
-//   {"ok":true, "basis":..., "state":"OL|CL", "field":..., "N":..., "deadtime_ms":..., 
-//    "probes":[ {"idx":i, "amp":a, "data":[ [...], [...], ... ]}, ... ] }
-//
-// Requires helpers already in this file:
-//   - dm::get_basis(std::string) -> std::shared_ptr<const std::vector<Eigen::VectorXd>>
-//   - dm144_to_140(const Eigen::Ref<const Eigen::VectorXd>&)
-//   - eigen_vector_to_json(const Eigen::VectorXd&)
-//   - ctrl_get(json), ctrl_set(json)
-//   - ol_set_mode(json)
-//   - capture_telem_list_json(json)  // we pass [field, N, 0, false]
-//   - telemetry_mutex, rtc_config
-//   - g_ol_offsets, set_openloop_offset_LO/HO(), ol_init_if_needed()
+    // Optionally change capacity once for all fields
+    if (change_capacity) {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        old_cap = rtc_config.telem.signal.capacity(); // all ring buffers share capacity
+        rtc_config.telem.setCapacity(N);
+    }
+
+    // Compute a default wait to roughly fill N samples if needed
+    if (dead_ms < 0) {
+        const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
+        const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2; // 120% margin
+        dead_ms = (long long)std::llround(std::min(10000.0, std::max(0.0, ms)));
+    }
+    if (dead_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
+
+    // Snapshot all requested fields under one mutex
+    {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+
+        auto dump_vecbuf = [&](const boost::circular_buffer<Eigen::VectorXd>& buf,
+                               std::vector<std::vector<double>>& dst) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            dst.clear(); dst.reserve(take);
+            for (size_t i = 0; i < take; ++i) {
+                const Eigen::VectorXd& v = buf[start + i];
+                dst.emplace_back(v.data(), v.data() + v.size());
+            }
+        };
+        auto dump_dblbuf = [&](const boost::circular_buffer<double>& buf,
+                               std::vector<std::vector<double>>& dst) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            dst.clear(); dst.reserve(take);
+            for (size_t i = 0; i < take; ++i)
+                dst.push_back(std::vector<double>{ buf[start + i] });
+        };
+        auto dump_intbuf = [&](const boost::circular_buffer<int>& buf,
+                               std::vector<std::vector<double>>& dst) {
+            const size_t have  = buf.size();
+            const size_t take  = std::min(N, have);
+            const size_t start = have >= take ? (have - take) : 0;
+            dst.clear(); dst.reserve(take);
+            for (size_t i = 0; i < take; ++i)
+                dst.push_back(std::vector<double>{ static_cast<double>(buf[start + i]) });
+        };
+
+        for (const auto& field : fields) {
+            auto& dst = out[field]; // creates entry
+            const int kind = telem_field_kind(field);
+            if (kind < 0) {
+                // Unknown field: erase entry and continue (or throw if you prefer)
+                out.erase(field);
+                continue;
+            }
+            switch (kind) {
+                case 0: // vector fields
+                    if      (field=="img")        dump_vecbuf(rtc_config.telem.img, dst);
+                    else if (field=="img_dm")     dump_vecbuf(rtc_config.telem.img_dm, dst);
+                    else if (field=="signal")     dump_vecbuf(rtc_config.telem.signal, dst);
+                    else if (field=="e_LO")       dump_vecbuf(rtc_config.telem.e_LO, dst);
+                    else if (field=="u_LO")       dump_vecbuf(rtc_config.telem.u_LO, dst);
+                    else if (field=="e_HO")       dump_vecbuf(rtc_config.telem.e_HO, dst);
+                    else if (field=="u_HO")       dump_vecbuf(rtc_config.telem.u_HO, dst);
+                    else if (field=="c_LO")       dump_vecbuf(rtc_config.telem.c_LO, dst);
+                    else if (field=="c_HO")       dump_vecbuf(rtc_config.telem.c_HO, dst);
+                    else if (field=="c_inj")      dump_vecbuf(rtc_config.telem.c_inj, dst); // new
+                    break;
+                case 1: // scalar<double>
+                    if      (field=="timestamp")  dump_dblbuf(rtc_config.telem.timestamp, dst);
+                    else if (field=="rmse_est")   dump_dblbuf(rtc_config.telem.rmse_est,  dst);
+                    else if (field=="snr")        dump_dblbuf(rtc_config.telem.snr,       dst);
+                    break;
+                case 2: // scalar<int>
+                    if      (field=="LO_servo_mode") dump_intbuf(rtc_config.telem.LO_servo_mode, dst);
+                    else if (field=="HO_servo_mode") dump_intbuf(rtc_config.telem.HO_servo_mode, dst);
+                    break;
+            }
+        }
+    }
+
+    if (change_capacity) {
+        std::lock_guard<std::mutex> lk(telemetry_mutex);
+        rtc_config.telem.setCapacity(old_cap);
+    }
+
+    return out;
+}
+
+
+nlohmann::json capture_telem_multi_json(const nlohmann::json& args) {
+    using json = nlohmann::json;
+    try {
+        // Usage: [fields_spec, N, dead_ms=0, change_capacity=true]
+        if (!args.is_array() || args.size() < 2 || args.size() > 4)
+            return json{{"ok", false}, {"error", "usage: [fields, N, dead_ms=0, change_capacity=true]"}};
+
+        // fields_spec can be "all" | "<name>" | ["a","b",...]
+        std::vector<std::string> fields = parse_field_list(args.at(0));
+
+        const size_t N          = args.at(1).get<size_t>();
+        long long dead_ms       = (args.size() >= 3) ? args.at(2).get<long long>() : 0;
+        bool change_capacity    = (args.size() >= 4) ? args.at(3).get<bool>() : true;
+
+        auto data = capture_telem_multi(fields, N, dead_ms, change_capacity);
+        return json{{"ok", true}, {"fields", fields}, {"N", N}, {"data", std::move(data)}};
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("capture_telem_multi_json: ") + e.what()}};
+    }
+}
+
+
+// new multi field 
 nlohmann::json probe_interaction_data(nlohmann::json args)
 {
     using json = nlohmann::json;
 
     // -------- parse --------
     std::vector<std::pair<long long,double>> aberr;
-    std::string basis, state, field;
+    std::string basis, state;
+    std::vector<std::string> fields;    // supports "all" | name | ["a","b",...]
+    std::string field_single;           // legacy single-field JSON path
     size_t N = 0;
     long long dead_ms = -1;
 
     try {
         if (args.is_array()) {
-            // [ [[idx,amp],...], basis, state, field, N, deadtime? ]
-            if (args.size() < 5) return json{{"ok",false},{"error","usage: [[[idx,amp],...],basis,state,field,N,deadtime?]"}};
-            basis = args.at(1).get<std::string>();
-            state = args.at(2).get<std::string>();
-            field = args.at(3).get<std::string>();
-            N     = args.at(4).get<size_t>();
+            // [ [[idx,amp],...], basis, state, field|'all'|[...], N, deadtime? ]
+            if (args.size() < 5)
+                return json{{"ok",false},{"error","usage: [[[idx,amp],...], basis, state, field|'all'|[...], N, deadtime?]"}};
+
+            basis  = args.at(1).get<std::string>();
+            state  = args.at(2).get<std::string>();
+            fields = parse_field_list(args.at(3));           // NEW: accepts "all" | name | ["a","b",...]
+            N      = args.at(4).get<size_t>();
             if (args.size() >= 6) dead_ms = args.at(5).get<long long>();
 
             const auto& arr = args.at(0);
@@ -3578,14 +3727,17 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
                 aberr.emplace_back(idx, amp);
             }
         } else if (args.is_object()) {
-            basis = args.at("basis").get<std::string>();
-            state = args.at("state").get<std::string>();
-            field = args.at("field").get<std::string>();
-            N     = args.at("N").get<size_t>();
+            basis  = args.at("basis").get<std::string>();
+            state  = args.at("state").get<std::string>();
+            N      = args.at("N").get<size_t>();
+            if (auto it = args.find("field"); it != args.end()) fields = parse_field_list(*it);
+            else                                                fields = list_all_numeric_telem_fields();
             if (args.contains("deadtime_ms")) dead_ms = args.at("deadtime_ms").get<long long>();
+
             const auto& arr = args.at("aberrations");
             if (!arr.is_array()) return json{{"ok",false},{"error","aberrations must be array"}};
             for (const auto& t : arr) {
+                if (!t.is_array() || t.size()!=2) return json{{"ok",false},{"error","each aberration must be [idx,amp]"}};
                 long long idx = t.at(0).get<long long>();
                 double amp    = t.at(1).get<double>();
                 aberr.emplace_back(idx, amp);
@@ -3597,6 +3749,15 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
         return json{{"ok",false},{"error",std::string("parse: ")+e.what()}};
     }
 
+    const bool single_field_mode = (fields.size() == 1);
+    if (single_field_mode) field_single = fields[0];
+
+    // Compute outfile safely (object may provide it; arrays won’t)
+    std::string outfile = "probe_result.fits";
+    if (args.is_object() && args.contains("outfile")) {
+        try { outfile = args.at("outfile").get<std::string>(); } catch (...) {}
+    }
+
     // -------- prepare global telemetry capacity ONCE --------
     size_t old_cap = 0;
     {
@@ -3604,7 +3765,6 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
         old_cap = rtc_config.telem.signal.capacity();
         rtc_config.telem.setCapacity(N);
     }
-
     auto restore_capacity = [&](){
         std::lock_guard<std::mutex> lk(telemetry_mutex);
         if (rtc_config.telem.signal.capacity() != old_cap)
@@ -3616,7 +3776,7 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
     out["ok"]          = true;
     out["basis"]       = basis;
     out["state"]       = state;
-    out["field"]       = field;
+    if (single_field_mode) out["field"] = field_single; else out["fields"] = fields;
     out["N"]           = static_cast<long long>(N);
     out["deadtime_ms"] = dead_ms;
     out["n_probes"]    = static_cast<long long>(aberr.size());
@@ -3624,7 +3784,7 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
 
     try {
         for (const auto& [idx_ll, amp] : aberr) {
-            // apply mode
+            // Apply mode
             if (state == "OL" || state == "ol" || state == "Ol") {
                 json japply = ol_set_mode(json::array({"HO", basis, idx_ll, amp}));
                 if (!japply.value("ok", false)) {
@@ -3632,7 +3792,6 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
                     return json{{"ok",false},{"error","ol_set_mode failed"},{"detail",japply}};
                 }
             } else if (state == "CL" || state == "cl" || state == "Cl") {
-                // lookup basis and set controller set_point
                 auto modes_ptr = dm::get_basis(basis);
                 if (!modes_ptr) {
                     restore_capacity();
@@ -3643,11 +3802,9 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
                     restore_capacity();
                     return json{{"ok",false},{"error","index out of range"},{"idx",idx_ll},{"n_modes",(long)modes.size()}};
                 }
-
                 Eigen::VectorXd mode144 = modes[static_cast<size_t>(idx_ll)];
                 mode144 *= amp;
                 Eigen::VectorXd mode140 = dm144_to_140(mode144);
-
                 json jset = ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(mode140)}));
                 if (!jset.value("ok", false)) {
                     restore_capacity();
@@ -3660,36 +3817,256 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
 
             // dead time
             if (dead_ms < 0) {
-                // infer from fps and N (same logic as capture_telem_list when dead_ms<0)
                 const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
-                const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2;
+                const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2; // 120% margin
                 std::this_thread::sleep_for(std::chrono::milliseconds((long long)std::llround(std::min(5000.0, std::max(0.0, ms)))));
             } else if (dead_ms > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
             }
 
-            // capture without changing capacity again
-            std::vector<std::vector<double>> frames = capture_telem_list(field, N, /*dead_ms*/dead_ms, /*change_capacity*/false);
+            // Capture ONLY for legacy single-field mode
+            if (single_field_mode) {
+                std::vector<std::vector<double>> frames =
+                    capture_telem_list(field_single, N, /*dead_ms*/dead_ms, /*change_capacity*/false);
 
-            // --- IMPORTANT: put under "samples" (what the FITS writer expects) ---
-            json probe = json::object();
-            probe["index"]    = idx_ll;
-            probe["amplitude"]= amp;
-            probe["samples"]  = json::array();     // array of arrays
-            for (const auto& v : frames) probe["samples"].push_back(v);
+                json probe = json::object();
+                probe["index"]     = idx_ll;
+                probe["amplitude"] = amp;
+                probe["samples"]   = json::array();
+                for (const auto& v : frames) probe["samples"].push_back(v);
 
-            out["probes"].push_back(std::move(probe));
+                out["probes"].push_back(std::move(probe));
+            } else {
+                json probe = json::object();
+                probe["index"]     = idx_ll;
+                probe["amplitude"] = amp;
+                out["probes"].push_back(std::move(probe));
+            }
         }
-    }
-    catch (const std::exception& e) {
+    } catch (const std::exception& e) {
         restore_capacity();
         return json{{"ok",false},{"error",std::string("probe loop: ")+e.what()}};
     }
 
-    // restore telemetry capacity
+    // -------- finalize --------
     restore_capacity();
+
+    if (!single_field_mode) {
+        // Multi-field / "all": write one FITS with one IMAGE HDU per field
+        try {
+            auto extractor = [&](std::string_view name, Eigen::MatrixXd& M, std::string& why) {
+                return telem_extract_matrix_lastN(rtc_config.telem, telemetry_mutex, name, N, M, why);
+            };
+            const bool ok = write_fields_to_fits(outfile, fields, extractor, static_cast<long>(N));
+            if (!ok) {
+                return json{{"ok",false},
+                            {"error","failed to write multi-field FITS (write_fields_to_fits)"},
+                            {"outfile",outfile},
+                            {"fields",fields},
+                            {"N",(long long)N}};
+            }
+            out["mode"]    = "multi-field";
+            out["outfile"] = outfile;
+            return out;
+        } catch (const std::exception& e) {
+            return json{{"ok",false},{"error",std::string("save failure: ")+e.what()}};
+        }
+    }
+
+    // Legacy single-field JSON return (unchanged)
+    out["mode"] = "single-field";
     return out;
 }
+// previous single field 
+
+// // Probe interaction data by applying a sequence of modal aberrations and capturing N samples.
+
+// // TO DO: Add all method to get all telemetry .. need to update save_probe_result_fits
+
+// // Args (JSON):
+// //   array form: [aberrations, basis, state, field, N, deadtime_ms(optional)]
+// //     - aberrations: e.g. [[5, 0.05], [12, -0.03], ...]   (idx, amplitude)
+// //     - basis:       string (e.g. "zernike", "fourier_12x12", ...)
+// //     - state:       "OL" or "CL"
+// //     - field:       telemetry field (e.g. "signal", "img", "e_HO", ...)
+// //     - N:           number of sequential samples per aberration
+// //     - deadtime_ms: optional; if <0 will be computed from fps & N; else used as-is
+// //   object form: {"aberrations":[...], "basis":"...", "state":"OL|CL", "field":"...",
+// //                 "N":123, "deadtime_ms":0}
+// //
+// // Behavior:
+// //   - If state=="OL": uses ol_set_mode ["HO", basis, idx, amp] to apply, then captures N samples.
+// //   - If state=="CL": builds HO set_point = amp * dm144_to_140(basis[idx]) and sets it via ctrl_set.
+// //   - Capacity of all telemetry buffers is set to N once, then restored at the end.
+// //   - For each aberration, state is restored (OL offsets or HO set_point) after capture.
+// //
+// // Returns JSON:
+// //   {"ok":true, "basis":..., "state":"OL|CL", "field":..., "N":..., "deadtime_ms":..., 
+// //    "probes":[ {"idx":i, "amp":a, "data":[ [...], [...], ... ]}, ... ] }
+// //
+// // Requires helpers already in this file:
+// //   - dm::get_basis(std::string) -> std::shared_ptr<const std::vector<Eigen::VectorXd>>
+// //   - dm144_to_140(const Eigen::Ref<const Eigen::VectorXd>&)
+// //   - eigen_vector_to_json(const Eigen::VectorXd&)
+// //   - ctrl_get(json), ctrl_set(json)
+// //   - ol_set_mode(json)
+// //   - capture_telem_list_json(json)  // we pass [field, N, 0, false]
+// //   - telemetry_mutex, rtc_config
+// //   - g_ol_offsets, set_openloop_offset_LO/HO(), ol_init_if_needed()
+// nlohmann::json probe_interaction_data(nlohmann::json args)
+// {
+//     using json = nlohmann::json;
+
+//     // -------- parse --------
+//     std::vector<std::pair<long long,double>> aberr;
+//     std::string basis, state, field;
+//     size_t N = 0;
+//     long long dead_ms = -1;
+
+//     try {
+//         if (args.is_array()) {
+//             // [ [[idx,amp],...], basis, state, field, N, deadtime? ]
+//             if (args.size() < 5) return json{{"ok",false},{"error","usage: [[[idx,amp],...],basis,state,field,N,deadtime?]"}};
+//             basis = args.at(1).get<std::string>();
+//             state = args.at(2).get<std::string>();
+//             field = args.at(3).get<std::string>();
+//             N     = args.at(4).get<size_t>();
+//             if (args.size() >= 6) dead_ms = args.at(5).get<long long>();
+
+//             const auto& arr = args.at(0);
+//             if (!arr.is_array()) return json{{"ok",false},{"error","aberrations must be array"}};
+//             for (const auto& t : arr) {
+//                 if (!t.is_array() || t.size()!=2) return json{{"ok",false},{"error","each aberration must be [idx,amp]"}};
+//                 long long idx = t.at(0).get<long long>();
+//                 double amp    = t.at(1).get<double>();
+//                 aberr.emplace_back(idx, amp);
+//             }
+//         } else if (args.is_object()) {
+//             basis = args.at("basis").get<std::string>();
+//             state = args.at("state").get<std::string>();
+//             N     = args.at("N").get<size_t>();
+//             //field = args.at("field").get<std::string>();
+
+//             std::vector<std::string> fields;
+//             try {
+//                 if (auto it = args.find("field"); it != args.end()) {
+//                     fields = parse_field_list(*it);          // accepts "all" | "name" | ["a","b",...]
+//                 } else {
+//                     // Decide your default: treat missing as "all" (recommended)
+//                     fields = list_all_numeric_telem_fields();
+//                 }
+//             } catch (const std::exception& e) {
+//                 return {{"ok", false}, {"error", e.what()}};
+//             }
+
+//             if (args.contains("deadtime_ms")) dead_ms = args.at("deadtime_ms").get<long long>();
+//             const auto& arr = args.at("aberrations");
+//             if (!arr.is_array()) return json{{"ok",false},{"error","aberrations must be array"}};
+//             for (const auto& t : arr) {
+//                 long long idx = t.at(0).get<long long>();
+//                 double amp    = t.at(1).get<double>();
+//                 aberr.emplace_back(idx, amp);
+//             }
+//         } else {
+//             return json{{"ok",false},{"error","bad args"}};
+//         }
+//     } catch (const std::exception& e) {
+//         return json{{"ok",false},{"error",std::string("parse: ")+e.what()}};
+//     }
+
+//     // -------- prepare global telemetry capacity ONCE --------
+//     size_t old_cap = 0;
+//     {
+//         std::lock_guard<std::mutex> lk(telemetry_mutex);
+//         old_cap = rtc_config.telem.signal.capacity();
+//         rtc_config.telem.setCapacity(N);
+//     }
+
+//     auto restore_capacity = [&](){
+//         std::lock_guard<std::mutex> lk(telemetry_mutex);
+//         if (rtc_config.telem.signal.capacity() != old_cap)
+//             rtc_config.telem.setCapacity(old_cap);
+//     };
+
+//     // -------- run probes --------
+//     json out;
+//     out["ok"]          = true;
+//     out["basis"]       = basis;
+//     out["state"]       = state;
+//     out["field"]       = field;
+//     out["N"]           = static_cast<long long>(N);
+//     out["deadtime_ms"] = dead_ms;
+//     out["n_probes"]    = static_cast<long long>(aberr.size());
+//     out["probes"]      = json::array();
+
+//     try {
+//         for (const auto& [idx_ll, amp] : aberr) {
+//             // apply mode
+//             if (state == "OL" || state == "ol" || state == "Ol") {
+//                 json japply = ol_set_mode(json::array({"HO", basis, idx_ll, amp}));
+//                 if (!japply.value("ok", false)) {
+//                     restore_capacity();
+//                     return json{{"ok",false},{"error","ol_set_mode failed"},{"detail",japply}};
+//                 }
+//             } else if (state == "CL" || state == "cl" || state == "Cl") {
+//                 // lookup basis and set controller set_point
+//                 auto modes_ptr = dm::get_basis(basis);
+//                 if (!modes_ptr) {
+//                     restore_capacity();
+//                     return json{{"ok",false},{"error","basis not found"},{"basis",basis}};
+//                 }
+//                 const auto& modes = *modes_ptr;
+//                 if (idx_ll < 0 || static_cast<size_t>(idx_ll) >= modes.size()) {
+//                     restore_capacity();
+//                     return json{{"ok",false},{"error","index out of range"},{"idx",idx_ll},{"n_modes",(long)modes.size()}};
+//                 }
+
+//                 Eigen::VectorXd mode144 = modes[static_cast<size_t>(idx_ll)];
+//                 mode144 *= amp;
+//                 Eigen::VectorXd mode140 = dm144_to_140(mode144);
+
+//                 json jset = ctrl_set(json::array({"HO","set_point", eigen_vector_to_json(mode140)}));
+//                 if (!jset.value("ok", false)) {
+//                     restore_capacity();
+//                     return json{{"ok",false},{"error","ctrl_set set_point failed"},{"detail",jset}};
+//                 }
+//             } else {
+//                 restore_capacity();
+//                 return json{{"ok",false},{"error","Invalid state (use 'OL' or 'CL')"},{"state",state}};
+//             }
+
+//             // dead time
+//             if (dead_ms < 0) {
+//                 // infer from fps and N (same logic as capture_telem_list when dead_ms<0)
+//                 const double fps = (rtc_config.fps > 1e-9 ? rtc_config.fps : 1000.0);
+//                 const double ms  = 1000.0 * (double)N / std::max(1e-9, fps) * 1.2;
+//                 std::this_thread::sleep_for(std::chrono::milliseconds((long long)std::llround(std::min(5000.0, std::max(0.0, ms)))));
+//             } else if (dead_ms > 0) {
+//                 std::this_thread::sleep_for(std::chrono::milliseconds(dead_ms));
+//             }
+
+//             // capture without changing capacity again
+//             std::vector<std::vector<double>> frames = capture_telem_list(field, N, /*dead_ms*/dead_ms, /*change_capacity*/false);
+
+//             // --- IMPORTANT: put under "samples" (what the FITS writer expects) ---
+//             json probe = json::object();
+//             probe["index"]    = idx_ll;
+//             probe["amplitude"]= amp;
+//             probe["samples"]  = json::array();     // array of arrays
+//             for (const auto& v : frames) probe["samples"].push_back(v);
+
+//             out["probes"].push_back(std::move(probe));
+//         }
+//     }
+//     catch (const std::exception& e) {
+//         restore_capacity();
+//         return json{{"ok",false},{"error",std::string("probe loop: ")+e.what()}};
+//     }
+
+//     // restore telemetry capacity
+//     restore_capacity();
+//     return out;
+// }
 
 // static nlohmann::json probe_interaction_data(nlohmann::json args) //(const nlohmann::json& args)
 // {
@@ -4128,6 +4505,45 @@ static int save_probe_result_fits(const nlohmann::json& jr, const std::string& f
     }
 }
 
+
+// // baldr.cpp
+// bool save_probe_result_fits(const std::string& path,
+//                             const ProbeResult& R,
+//                             const std::vector<std::string>& fields)
+// {
+//     // Probe uses the last R.n_steps samples from telemetry buffers.
+//     auto extractor = [&](std::string_view name, Eigen::MatrixXd& M, std::string& why) {
+//         return telem_extract_matrix_lastN(rtc_config.telem, telemetry_mutex, name, R.n_steps, M, why);
+//     };
+//     return write_fields_to_fits(path, fields, extractor, static_cast<long>(R.n_steps));
+// }
+
+// // Optional single-field wrapper for backwards compatibility
+// bool save_probe_result_fits(const std::string& path,
+//                             const ProbeResult& R,
+//                             std::string_view field)
+// {
+//     return save_probe_result_fits(path, R, std::vector<std::string>{std::string(field)});
+// }
+
+bool telem_extract_matrix_lastN(const bdr_telem& telem,
+                                std::mutex& telemetry_mutex,
+                                std::string_view field,
+                                std::size_t N,
+                                Eigen::MatrixXd& M,
+                                std::string& why);
+
+// New N-based multi-field saver
+bool save_probe_result_fits(const std::string& path,
+                            std::size_t N,
+                            const std::vector<std::string>& fields)
+{
+    auto extractor = [&](std::string_view name, Eigen::MatrixXd& M, std::string& why) {
+        return telem_extract_matrix_lastN(rtc_config.telem, telemetry_mutex, name, N, M, why);
+    };
+    return write_fields_to_fits(path, fields, extractor, static_cast<long>(N));
+}
+
 ///!!!! 
 // Build default args for a named method of applying aberrations/offsets in closed or open loop and recording telemetry.
 static nlohmann::json build_probe_args_for_method(const std::string& method) {
@@ -4144,7 +4560,7 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
         json aberr = json::array();
         aberr.push_back(json::array({65,  0.05}));
         aberr.push_back(json::array({2, -0.05}));
-        return json::array({ aberr, "zernike", "OL", "signal", 3, 5000 });
+        return json::array({ aberr, "zernike", "OL", "all", 3, 5000 });
     }
 
     if (method == "I2A") {
@@ -4224,6 +4640,7 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
 //      e.g ["method_1","/home/rtc/Downloads/test.fits"]
 // TO do : standard naming convention e.g. last _ seperated string is basis and last is telemetry
 // I2A, IM, I0
+//// newer function to check if we want to save all fields in probe, otherwise uses legacu functions for single field
 static nlohmann::json run_probe_method(nlohmann::json args) {
     using json = nlohmann::json;
 
@@ -4257,7 +4674,6 @@ static nlohmann::json run_probe_method(nlohmann::json args) {
         return json{{"ok", false}, {"error", e.what()}};
     }
 
-
     // --- Run the probe ---
     json result;
     try {
@@ -4269,7 +4685,7 @@ static nlohmann::json run_probe_method(nlohmann::json args) {
         return json{{"ok", false}, {"error", "probe_interaction_data failed"}, {"detail", result}};
     }
 
-    // --- Resolve output path ---
+    // --- Resolve output path we want to return ---
     std::string filepath;
     try {
         if (out_path.empty()) {
@@ -4305,7 +4721,55 @@ static nlohmann::json run_probe_method(nlohmann::json args) {
         return json{{"ok", false}, {"error", std::string("path resolution: ") + e.what()}};
     }
 
-    // --- Save to FITS ---
+    // --- Save / Move depending on mode ---
+    const std::string mode = result.value("mode", std::string{});
+    if (mode == "multi-field") {
+        // probe_interaction_data already wrote a FITS at result["outfile"].
+        const std::string src = result.value("outfile", std::string{});
+        if (src.empty()) {
+            return json{{"ok", false}, {"error", "multi-field result missing 'outfile'"}};
+        }
+
+        try {
+            if (src != filepath) {
+                std::error_code ec;
+                std::filesystem::create_directories(std::filesystem::path(filepath).parent_path(), ec);
+                // Try rename (atomic move), fall back to copy+remove
+                std::filesystem::rename(src, filepath, ec);
+                if (ec) {
+                    ec.clear();
+                    std::filesystem::copy_file(src, filepath,
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                    if (ec) {
+                        return json{{"ok", false},
+                                    {"error", "failed to move/copy outfile to target path"},
+                                    {"src", src}, {"dst", filepath}};
+                    }
+                    std::filesystem::remove(src); // best-effort cleanup; ignore errors
+                }
+            }
+        } catch (const std::exception& e) {
+            return json{{"ok", false},
+                        {"error", std::string("finalize (multi-field) failed: ") + e.what()},
+                        {"src", src}, {"dst", filepath}};
+        }
+
+        // Build success payload (include fields if present)
+        json out = {
+            {"ok", true},
+            {"method", method},
+            {"path", filepath},
+            {"n_probes", result.value("n_probes", 0)},
+            {"basis", result.value("basis", "")},
+            {"state", result.value("state", "")},
+            {"mode", "multi-field"}
+        };
+        if (result.contains("fields")) out["fields"] = result["fields"];
+        if (result.contains("N"))      out["N"]      = result["N"];
+        return out;
+    }
+
+    // Legacy single-field path: write BINTABLE from JSON
     int st = save_probe_result_fits(result, filepath);
     if (st != 0) {
         return json{
@@ -4324,9 +4788,116 @@ static nlohmann::json run_probe_method(nlohmann::json args) {
         {"basis", result.value("basis", "")},
         {"state", result.value("state", "")},
         {"field", result.value("field", "")},
-        {"N", result.value("N", 0)}
+        {"N", result.value("N", 0)},
+        {"mode", "single-field"}
     };
 }
+
+
+/// before multi field saves we used this function 
+// static nlohmann::json run_probe_method(nlohmann::json args) {
+//     using json = nlohmann::json;
+
+//     std::string method;
+//     std::string out_path;  // optional
+
+//     // --- Parse ---
+//     try {
+//         if (args.is_array()) {
+//             if (args.size() < 1 || args.size() > 2)
+//                 return json{{"ok", false}, {"error", "usage: [\"method_name\", optional_path]"}};
+//             method = args.at(0).get<std::string>();
+//             if (args.size() == 2) out_path = args.at(1).get<std::string>();
+//         } else if (args.is_object()) {
+//             if (!args.contains("method"))
+//                 return json{{"ok", false}, {"error", "missing 'method'"}};
+//             method = args.at("method").get<std::string>();
+//             if (args.contains("path")) out_path = args.at("path").get<std::string>();
+//         } else {
+//             return json{{"ok", false}, {"error", "bad args: expected array or object"}};
+//         }
+//     } catch (const std::exception& e) {
+//         return json{{"ok", false}, {"error", std::string("parse: ") + e.what()}};
+//     }
+
+//     // --- Build default probe args for the selected method ---
+//     json probe_args;
+//     try {
+//         probe_args = build_probe_args_for_method(method);
+//     } catch (const std::exception& e) {
+//         return json{{"ok", false}, {"error", e.what()}};
+//     }
+
+
+//     // --- Run the probe ---
+//     json result;
+//     try {
+//         result = probe_interaction_data(probe_args);
+//     } catch (const std::exception& e) {
+//         return json{{"ok", false}, {"error", std::string("probe_interaction_data threw: ") + e.what()}};
+//     }
+//     if (!result.value("ok", false)) {
+//         return json{{"ok", false}, {"error", "probe_interaction_data failed"}, {"detail", result}};
+//     }
+
+//     // --- Resolve output path ---
+//     std::string filepath;
+//     try {
+//         if (out_path.empty()) {
+//             // default base: telem_save_path (if set) or fallback dir
+//             auto now = std::chrono::system_clock::now();
+//             std::time_t tt = std::chrono::system_clock::to_time_t(now);
+//             char tbuf[32];
+//             std::strftime(tbuf, sizeof(tbuf), "%Y%m%d_%H%M%S", std::localtime(&tt));
+
+//             std::filesystem::path base = telem_save_path.empty()
+//                 ? std::filesystem::path("/usr/local/var/baldr/probes")
+//                 : std::filesystem::path(telem_save_path);
+
+//             std::filesystem::create_directories(base);
+//             filepath = (base / ("probe_" + method + "_" + std::string(tbuf) + ".fits")).string();
+//         } else {
+//             std::filesystem::path p(out_path);
+//             if (p.has_extension()) {
+//                 // Treat as full filename
+//                 std::filesystem::create_directories(p.parent_path());
+//                 filepath = p.string();
+//             } else {
+//                 // Treat as directory
+//                 std::filesystem::create_directories(p);
+//                 auto now = std::chrono::system_clock::now();
+//                 std::time_t tt = std::chrono::system_clock::to_time_t(now);
+//                 char tbuf[32];
+//                 std::strftime(tbuf, sizeof(tbuf), "%Y%m%d_%H%M%S", std::localtime(&tt));
+//                 filepath = (p / ("probe_" + method + "_" + std::string(tbuf) + ".fits")).string();
+//             }
+//         }
+//     } catch (const std::exception& e) {
+//         return json{{"ok", false}, {"error", std::string("path resolution: ") + e.what()}};
+//     }
+
+//     // --- Save to FITS ---
+//     int st = save_probe_result_fits(result, filepath);
+//     if (st != 0) {
+//         return json{
+//             {"ok", false},
+//             {"error", "save_probe_result_fits failed"},
+//             {"status", st},
+//             {"path", filepath}
+//         };
+//     }
+
+//     return json{
+//         {"ok", true},
+//         {"method", method},
+//         {"path", filepath},
+//         {"n_probes", result.value("n_probes", 0)},
+//         {"basis", result.value("basis", "")},
+//         {"state", result.value("state", "")},
+//         {"field", result.value("field", "")},
+//         {"N", result.value("N", 0)}
+//     };
+// }
 
 //////////////////
 

@@ -515,6 +515,24 @@ struct bdr_telem {
     boost::circular_buffer<double> rmse_est;   // <-- NEW
     boost::circular_buffer<double> snr;         // <-- NEW
 
+    // Single source of truth for "numeric telemetry fields we can save".
+    static inline constexpr std::array<std::string_view, 15> kNumericSavableFields = {
+        "timestamp",
+        "LO_servo_mode",
+        "HO_servo_mode",
+        "img",
+        "img_dm",
+        "signal",
+        "e_LO",
+        "u_LO",
+        "e_HO",
+        "u_HO",
+        "c_LO",
+        "c_HO",
+        "c_inj",
+        "rmse_est",
+        "snr"
+    };
     // Constructor that sets a fixed capacity for each ring buffer.
     bdr_telem(size_t capacity = 100) // 100 capacity is about 3 MB in the buffer
       : counter(0),
