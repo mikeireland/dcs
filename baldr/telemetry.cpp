@@ -13,6 +13,10 @@
 #include <mutex>
 #include <filesystem> //C++ 17
 
+#include <functional>
+#include <cstdio>
+
+
 // long unsigned int telemetry_cnt=0;
 // // Add local (to telemetry) variables here
 
@@ -30,6 +34,168 @@ extern std::mutex telemetry_mutex;
 // A helper function to convert telemetry data into JSON.
 // For example, here we assume each telemetry field is a ring buffer of Eigen::VectorXd,
 // and for the timestamp we have a ring buffer of doubles.
+
+
+//forward declaration
+// adding in to allow generic field saves in probe method (which is different to dumping/saving telemetry buffer )
+// Extractor signature: given a field name, fill M with (rows = steps, cols = field_len).
+using FieldExtractor = std::function<bool(std::string_view /*field*/,
+                                          Eigen::MatrixXd& /*M*/,
+                                          std::string& /*why_not*/)>;
+
+bool write_fields_to_fits(const std::string& path,
+                          const std::vector<std::string>& fields,
+                          FieldExtractor extract,
+                          long nsteps,
+                          const std::vector<std::pair<std::string, std::string>>& header_strs,
+                          const std::vector<std::pair<std::string, long>>&    header_longs,
+                          const std::vector<std::pair<std::string, double>>&  header_doubles);
+
+/// we define redefine this late so should delete after testing
+// using FieldExtractor = std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)>;
+
+// bool write_fields_to_fits(const std::string& path,
+//                           const std::vector<std::string>& fields,
+//                           FieldExtractor extract,
+//                           long nsteps);
+
+static bool telem_extract_matrix(const bdr_telem& telem,
+                                 std::string_view field,
+                                 Eigen::MatrixXd& M,
+                                 std::string& why)
+{
+    const std::size_t N = telem.timestamp.size(); // rows = number of samples
+
+    auto fill_scalar_double = [&](const boost::circular_buffer<double>& buf) -> bool {
+        if (buf.size() != N) { why = "inconsistent scalar<double> buffer size"; return false; }
+        M.resize(static_cast<Eigen::Index>(N), 1);
+        for (std::size_t i = 0; i < N; ++i) M(static_cast<Eigen::Index>(i), 0) = buf[i];
+        return true;
+    };
+    auto fill_scalar_int = [&](const boost::circular_buffer<int>& buf) -> bool {
+        if (buf.size() != N) { why = "inconsistent scalar<int> buffer size"; return false; }
+        M.resize(static_cast<Eigen::Index>(N), 1);
+        for (std::size_t i = 0; i < N; ++i) M(static_cast<Eigen::Index>(i), 0) = static_cast<double>(buf[i]);
+        return true;
+    };
+    auto fill_vector = [&](const boost::circular_buffer<Eigen::VectorXd>& buf) -> bool {
+        if (buf.size() != N) { why = "inconsistent vector buffer size"; return false; }
+        if (N == 0) { M.resize(0, 0); return true; }
+        const Eigen::Index L = static_cast<Eigen::Index>(buf[0].size());
+        M.resize(static_cast<Eigen::Index>(N), L);
+        for (std::size_t i = 0; i < N; ++i) {
+            if (buf[i].size() != L) { why = "ragged vector lengths"; return false; }
+            M.row(static_cast<Eigen::Index>(i)) = buf[i].transpose(); // row = step
+        }
+        return true;
+    };
+
+    if      (field == "timestamp")     return fill_scalar_double(telem.timestamp);
+    else if (field == "LO_servo_mode") return fill_scalar_int(telem.LO_servo_mode);
+    else if (field == "HO_servo_mode") return fill_scalar_int(telem.HO_servo_mode);
+    else if (field == "img")           return fill_vector(telem.img);
+    else if (field == "img_dm")        return fill_vector(telem.img_dm);
+    else if (field == "signal")        return fill_vector(telem.signal);
+    else if (field == "e_LO")          return fill_vector(telem.e_LO);
+    else if (field == "u_LO")          return fill_vector(telem.u_LO);
+    else if (field == "e_HO")          return fill_vector(telem.e_HO);
+    else if (field == "u_HO")          return fill_vector(telem.u_HO);
+    else if (field == "c_LO")          return fill_vector(telem.c_LO);
+    else if (field == "c_HO")          return fill_vector(telem.c_HO);
+    else if (field == "c_inj")         return fill_vector(telem.c_inj);
+    else if (field == "rmse_est")      return fill_scalar_double(telem.rmse_est);
+    else if (field == "snr")           return fill_scalar_double(telem.snr);
+
+    why = "unknown field";
+    return false;
+}
+
+
+// //refactor that i wont do for now 
+// bool write_telemetry_to_fits(const std::string& path,
+//                              const bdr_telem& telem,
+//                              const std::vector<std::string>& fields)
+// {
+//     auto extractor = [&](std::string_view name, Eigen::MatrixXd& M, std::string& why) {
+//         return telem_extract_matrix(telem, name, M, why);
+//     };
+//     const long nsteps = static_cast<long>(telem.timestamp.size());
+//     return write_fields_to_fits(path, fields, extractor, nsteps);
+// }
+
+// // Convenience overload: write ALL numeric telemetry fields
+// bool write_telemetry_to_fits(const std::string& path, const bdr_telem& telem)
+// {
+//     std::vector<std::string> fields;
+//     fields.reserve(bdr_telem::kNumericSavableFields.size());
+//     for (auto sv : bdr_telem::kNumericSavableFields) fields.emplace_back(sv);
+//     return write_telemetry_to_fits(path, telem, fields);
+// }
+
+// Extract the last N samples of a telemetry field into a matrix M (rows=N, cols=field_len).
+// Thread-safe: grabs telemetry_mutex while reading.
+bool telem_extract_matrix_lastN(const bdr_telem& telem,
+                                std::mutex& telemetry_mutex,
+                                std::string_view field,
+                                std::size_t N,
+                                Eigen::MatrixXd& M,
+                                std::string& why)
+{
+    std::lock_guard<std::mutex> lk(telemetry_mutex);
+
+    auto fill_scalar_double_lastN = [&](const boost::circular_buffer<double>& buf)->bool{
+        const std::size_t have = buf.size();
+        const std::size_t take = std::min(N, have);
+        const std::size_t start = have - take;
+        M.resize(static_cast<Eigen::Index>(take), 1);
+        for (std::size_t i = 0; i < take; ++i) M(static_cast<Eigen::Index>(i), 0) = buf[start + i];
+        return true;
+    };
+    auto fill_scalar_int_lastN = [&](const boost::circular_buffer<int>& buf)->bool{
+        const std::size_t have = buf.size();
+        const std::size_t take = std::min(N, have);
+        const std::size_t start = have - take;
+        M.resize(static_cast<Eigen::Index>(take), 1);
+        for (std::size_t i = 0; i < take; ++i) M(static_cast<Eigen::Index>(i), 0) = static_cast<double>(buf[start + i]);
+        return true;
+    };
+    auto fill_vector_lastN = [&](const boost::circular_buffer<Eigen::VectorXd>& buf)->bool{
+        const std::size_t have = buf.size();
+        const std::size_t take = std::min(N, have);
+        const std::size_t start = have - take;
+        if (take == 0) { M.resize(0,0); return true; }
+        const Eigen::Index L = static_cast<Eigen::Index>(buf[start].size());
+        M.resize(static_cast<Eigen::Index>(take), L);
+        for (std::size_t i = 0; i < take; ++i) {
+            const auto& v = buf[start + i];
+            if (v.size() != L) { why = "ragged vector lengths"; return false; }
+            M.row(static_cast<Eigen::Index>(i)) = v.transpose();
+        }
+        return true;
+    };
+
+    if      (field == "timestamp")     return fill_scalar_double_lastN(telem.timestamp);
+    else if (field == "LO_servo_mode") return fill_scalar_int_lastN(telem.LO_servo_mode);
+    else if (field == "HO_servo_mode") return fill_scalar_int_lastN(telem.HO_servo_mode);
+    else if (field == "img")           return fill_vector_lastN(telem.img);
+    else if (field == "img_dm")        return fill_vector_lastN(telem.img_dm);
+    else if (field == "signal")        return fill_vector_lastN(telem.signal);
+    else if (field == "e_LO")          return fill_vector_lastN(telem.e_LO);
+    else if (field == "u_LO")          return fill_vector_lastN(telem.u_LO);
+    else if (field == "e_HO")          return fill_vector_lastN(telem.e_HO);
+    else if (field == "u_HO")          return fill_vector_lastN(telem.u_HO);
+    else if (field == "c_LO")          return fill_vector_lastN(telem.c_LO);
+    else if (field == "c_HO")          return fill_vector_lastN(telem.c_HO);
+    else if (field == "c_inj")         return fill_vector_lastN(telem.c_inj);
+    else if (field == "rmse_est")      return fill_scalar_double_lastN(telem.rmse_est);
+    else if (field == "snr")           return fill_scalar_double_lastN(telem.snr);
+
+    why = "unknown field";
+    return false;
+}
+////
+
+
 json telemetry_to_json(const bdr_telem &telemetry) {
     json j;
     j["counter"] = telemetry.counter;
@@ -64,7 +230,7 @@ json telemetry_to_json(const bdr_telem &telemetry) {
     j["u_HO"] = eigen_vec_to_json(telemetry.u_HO);
     j["c_LO"] = eigen_vec_to_json(telemetry.c_LO);
     j["c_HO"] = eigen_vec_to_json(telemetry.c_HO);
-
+    j["c_inj"] = eigen_vec_to_json(telemetry.c_inj);     // NEW:
     j["rmse_est"] = telemetry.rmse_est;
     j["snr"] = telemetry.snr;
 
@@ -88,9 +254,12 @@ json telemetry_to_json(const bdr_telem &telemetry) {
 //  11. U_HO      (Eigen::VectorXd flattened)
 //  12. C_LO      (Eigen::VectorXd flattened)
 //  13. C_HO      (Eigen::VectorXd flattened)
+//  14. C_INJ     (Eigen::VectorXd flattened)
+//  15. rmse_est   <double>
+//. 16. snr        <double>
 
-// It creates a binary table with 13 columns: COUNTER, TIMESTAMPS,
-// LO_SERVO_MODE, HO_SERVO_MODE, IMG, IMG_DM, SIGNAL, E_LO, U_LO, E_HO, U_HO, C_LO, and C_HO.
+// It creates a binary table with 16 columns: COUNTER, TIMESTAMPS,
+// LO_SERVO_MODE, HO_SERVO_MODE, IMG, IMG_DM, SIGNAL, E_LO, U_LO, E_HO, U_HO, C_LO, C_HO, C_INJ, 
 int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filename) {
     fitsfile *fptr = nullptr;
     int status = 0;
@@ -114,13 +283,14 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     long len_u_HO   = getVecLength(telemetry.u_HO);
     long len_c_LO   = getVecLength(telemetry.c_LO);
     long len_c_HO   = getVecLength(telemetry.c_HO);
+    long len_c_inj  = getVecLength(telemetry.c_inj); // NEW
 
     auto makeFormat = [](long len) -> std::string {
         return std::to_string(len) + "D";
     };
     
     //const int ncols = 13;
-    const int ncols = 15;
+    const int ncols = 16; // +1 for C_INJ //const int ncols = 15;
     char *ttype[ncols] = {
         const_cast<char*>("COUNTER"),
         const_cast<char*>("TIMESTAMPS"),
@@ -135,6 +305,7 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
         const_cast<char*>("U_HO"),
         const_cast<char*>("C_LO"),
         const_cast<char*>("C_HO"),
+        const_cast<char*>("C_INJ"),     // NEW (col 14)
         const_cast<char*>("RMSE_EST"), //<--- New
         const_cast<char*>("SNR")     
     };
@@ -153,8 +324,9 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     snprintf(tform[10], sizeof(tform[10]), "%s", makeFormat(len_u_HO).c_str());
     snprintf(tform[11], sizeof(tform[11]), "%s", makeFormat(len_c_LO).c_str());
     snprintf(tform[12], sizeof(tform[12]), "%s", makeFormat(len_c_HO).c_str());
-    snprintf(tform[13], sizeof(tform[13]), "1D");  // RMSE_EST
-    snprintf(tform[14], sizeof(tform[14]), "1D");  // SNR
+    snprintf(tform[13], sizeof(tform[13]), "%s", makeFormat(len_c_inj).c_str()); // NEW (C_INJ)
+    snprintf(tform[14], sizeof(tform[14]), "1D");  // RMSE_EST
+    snprintf(tform[15], sizeof(tform[15]), "1D");  // SNR
 
     char* tform_ptr[ncols];
     for (int i = 0; i < ncols; ++i) {
@@ -173,8 +345,11 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
         const_cast<char*>(""),
         const_cast<char*>(""),
         const_cast<char*>(""),
+        const_cast<char*>(""), 
         const_cast<char*>(""),
-        const_cast<char*>("")
+        const_cast<char*>(""),         /// C_INJ
+        const_cast<char*>(""),        // 15 RMSE_EST
+        const_cast<char*>("")         // 16 SNR
     };
     
     if (fits_create_file(&fptr, ("!" + filename).c_str(), &status))
@@ -223,6 +398,7 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     auto u_HOCol   = flattenBuffer(telemetry.u_HO);
     auto c_LOCol   = flattenBuffer(telemetry.c_LO);
     auto c_HOCol   = flattenBuffer(telemetry.c_HO);
+    auto c_injCol  = flattenBuffer(telemetry.c_inj); // NEW
 
     // Helper: write per-row vector
     auto writeVectorColumn = [&](int colnum, const std::vector<std::vector<double>>& buffer) {
@@ -242,16 +418,17 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     writeVectorColumn(11, u_HOCol);
     writeVectorColumn(12, c_LOCol);
     writeVectorColumn(13, c_HOCol);
+    writeVectorColumn(14, c_injCol); // NEW
 
-    // Write RMSE_EST
+    // RMSE_EST and SNR shift by +1
     std::vector<double> rmse_est_vec(telemetry.rmse_est.begin(), telemetry.rmse_est.end());
-    if (fits_write_col(fptr, TDOUBLE, 14, 1, 1, nrows, rmse_est_vec.data(), &status))
+    if (fits_write_col(fptr, TDOUBLE, 15, 1, 1, nrows, rmse_est_vec.data(), &status))
         throw std::runtime_error("Error writing RMSE_EST column");
 
-    // Write SNR
     std::vector<double> snr_vec(telemetry.snr.begin(), telemetry.snr.end());
-    if (fits_write_col(fptr, TDOUBLE, 15, 1, 1, nrows, snr_vec.data(), &status))
+    if (fits_write_col(fptr, TDOUBLE, 16, 1, 1, nrows, snr_vec.data(), &status))
         throw std::runtime_error("Error writing SNR column");
+
     
     
     // Close the file
@@ -264,6 +441,152 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
     return 0;
 }
 
+
+
+
+/**
+ * Write a single FITS file containing one IMAGE extension (HDU) per field.
+ * - Primary HDU: empty (0-D) image; carries global metadata (e.g., NSTEPS).
+ * - For each field:
+ *     EXTNAME=<field>, NSTEP=<rows>, NCOLS=<cols>
+ *     Data written as DOUBLE_IMG with CFITSIO dims [cols, rows].
+ *
+ * @param path   Output .fits path. Existing file is clobbered.
+ * @param fields Ordered list of field names to write (each becomes one HDU).
+ * @param extract Callback that materializes (rows x cols) matrix for a field.
+ * @param nsteps  For global metadata only (rows sanity).
+ *
+ * @return true on success; false on any CFITSIO or extractor error.
+ */
+
+bool write_fields_to_fits(const std::string& path,
+                          const std::vector<std::string>& fields,
+                          FieldExtractor extract,
+                          long nsteps,
+                          const std::vector<std::pair<std::string, std::string>>& header_strs,
+                          const std::vector<std::pair<std::string, long>>&    header_longs,
+                          const std::vector<std::pair<std::string, double>>&  header_doubles)
+{
+    int status = 0;
+    fitsfile* f = nullptr;
+
+    std::string fname = "!" + path;
+    fits_create_file(&f, fname.c_str(), &status);
+    if (status) { fits_report_error(stderr, status); return false; }
+
+    // Primary HDU (no data)
+    fits_create_img(f, DOUBLE_IMG, 0, nullptr, &status);
+    if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+    // Global keys
+    fits_write_key(f, TLONG, "NSTEPS", &nsteps, (char*)"rows = steps for matrices", &status);
+
+    // NEW: write extra primary-HDU headers
+    for (const auto& kv : header_strs) {
+        const char* key = kv.first.c_str();
+        const char* val = kv.second.c_str();
+        fits_write_key(f, TSTRING, const_cast<char*>(key), (void*)val, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+    for (const auto& kv : header_longs) {
+        const char* key = kv.first.c_str();
+        long        v   = kv.second;
+        fits_write_key(f, TLONG, const_cast<char*>(key), (void*)&v, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+    for (const auto& kv : header_doubles) {
+        const char* key = kv.first.c_str();
+        double      v   = kv.second;
+        fits_write_key(f, TDOUBLE, const_cast<char*>(key), (void*)&v, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+
+    // ... keep your loop that creates one IMAGE HDU per field (EXTNAME/NSTEP/NCOLS + data) ...
+    for (const auto& name : fields) {
+        Eigen::MatrixXd M;
+        std::string why;
+        if (!extract(name, M, why)) {
+            std::fprintf(stderr, "write_fields_to_fits: cannot extract '%s': %s\n",
+                         name.c_str(), why.c_str());
+            fits_close_file(f, &status);
+            return false;
+        }
+        const long rows = static_cast<long>(M.rows());
+        const long cols = static_cast<long>(M.cols());
+        long naxes[2] = { cols, rows };
+        fits_create_img(f, DOUBLE_IMG, 2, naxes, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+        char extname[72]; std::snprintf(extname, sizeof(extname), "%s", name.c_str());
+        fits_write_key(f, TSTRING, "EXTNAME", extname, (char*)"telemetry field", &status);
+        fits_write_key(f, TLONG,   "NSTEP",   (void*)&rows, (char*)"rows = steps", &status);
+        fits_write_key(f, TLONG,   "NCOLS",   (void*)&cols, (char*)"cols = field length", &status);
+
+        const long nelem = static_cast<long>(M.size());
+        fits_write_img(f, TDOUBLE, 1, nelem, const_cast<double*>(M.data()), &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+
+    fits_close_file(f, &status);
+    if (status) { fits_report_error(stderr, status); return false; }
+    return true;
+}
+
+
+// bool write_fields_to_fits(const std::string& path,
+//                           const std::vector<std::string>& fields,
+//                           FieldExtractor extract,
+//                           long nsteps)
+// {
+//     int status = 0;
+//     fitsfile* f = nullptr;
+
+//     // "!" prefix: overwrite existing file
+//     std::string fname = "!" + path;
+//     fits_create_file(&f, fname.c_str(), &status);
+//     if (status) { fits_report_error(stderr, status); return false; }
+
+//     // Primary HDU (no data). Add global metadata here.
+//     fits_create_img(f, DOUBLE_IMG, 0, nullptr, &status);
+//     if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+//     // Global keys (optional: add CREATOR, DATE, etc.)
+//     fits_write_key(f, TLONG, "NSTEPS", &nsteps, (char*)"rows = steps for matrices", &status);
+
+//     for (const auto& name : fields) {
+//         Eigen::MatrixXd M;
+//         std::string why;
+//         if (!extract(name, M, why)) {
+//             std::fprintf(stderr, "write_fields_to_fits: cannot extract '%s': %s\n",
+//                          name.c_str(), why.c_str());
+//             fits_close_file(f, &status);
+//             return false;
+//         }
+
+//         // CFITSIO expects dims as [NAXIS1, NAXIS2] = [cols, rows]
+//         const long rows = static_cast<long>(M.rows());
+//         const long cols = static_cast<long>(M.cols());
+
+//         long naxes[2] = { cols, rows };
+//         fits_create_img(f, DOUBLE_IMG, 2, naxes, &status);
+//         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+//         // Label the extension and store simple per-field metadata
+//         char extname[72]; std::snprintf(extname, sizeof(extname), "%s", name.c_str());
+//         fits_write_key(f, TSTRING, "EXTNAME", extname, (char*)"telemetry field", &status);
+//         fits_write_key(f, TLONG,   "NSTEP",   (void*)&rows, (char*)"rows = steps", &status);
+//         fits_write_key(f, TLONG,   "NCOLS",   (void*)&cols, (char*)"cols = field length", &status);
+
+//         // Eigen defaults to column-major, contiguous: safe to write directly
+//         const long nelem = static_cast<long>(M.size());
+//         fits_write_img(f, TDOUBLE, 1, nelem, const_cast<double*>(M.data()), &status);
+//         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+//     }
+
+//     fits_close_file(f, &status);
+//     if (status) { fits_report_error(stderr, status); return false; }
+//     return true;
+// }
 
 
 void telemetry(){
@@ -331,6 +654,15 @@ void telemetry(){
     }
 }
 
+// reading the vector in bdr_telem that lists the numeric telemetry fields
+std::vector<std::string> list_all_numeric_telem_fields() {
+    std::vector<std::string> out;
+    out.reserve(bdr_telem::kNumericSavableFields.size());
+    for (std::string_view sv : bdr_telem::kNumericSavableFields) {
+        out.emplace_back(sv);
+    }
+    return out;
+}
 
 
 /// previous to for_ben

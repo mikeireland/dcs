@@ -16,9 +16,31 @@
 #include <cstdint>
 #include <stdexcept>
 
+//20-8-25
+#include <memory>
+#include "controllers/controller.h"
+
+
 #include "burst_window.h"
 
 //#include <ImageStreamIO/ImageStreamIO.h>
+
+namespace dm {
+
+// Read-only list of command-space modes (each is length = DM actuator count)
+using ModeList = std::vector<Eigen::VectorXd>;
+
+// Ensure a basis FITS is loaded if none is loaded yet (thread-safe).
+bool ensure_loaded_from(const std::string& fits_path);
+
+// Convenience: ensure using the default FITS path compiled in baldr.cpp.
+bool ensure_loaded_default();
+
+// Lookup a loaded basis by (case-insensitive) key. Returns nullptr if missing.
+std::shared_ptr<const ModeList> get_basis(const std::string& basis_key_lower);
+
+} // namespace dm
+
 
 //----------Defines-----------
 
@@ -31,6 +53,16 @@
 #define SERVO_STOP -1
 #define SERVO_CLOSE 1
 #define SERVO_OPEN 0
+
+// add this prototype BEFORE bdr_rtc_config definition
+std::unique_ptr<Controller>
+make_controller(const std::string& type, const bdr_controller& cfg);
+
+
+
+
+//declare the helper so others can call it
+void mark_injection_changed();
 
 //----------Constant Arrays-----------
 
@@ -320,65 +352,100 @@ struct bdr_matricies {
 
 //-----------------------------------------------------
 // bdr_controller: AO controller settings.
+// 20-8-25
 struct bdr_controller {
-    // For now, only gains. In a complete system you might add anti-windup limits, etc.
-    Eigen::VectorXd kp;
-    Eigen::VectorXd ki;
-    Eigen::VectorXd kd;
-    Eigen::VectorXd lower_limits;
-	Eigen::VectorXd upper_limits;
-	Eigen::VectorXd set_point;
-    void validate() const {
-        if (kp.size() == 0 || ki.size() == 0 || kd.size() == 0)
-            throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
-        if ( (kp.size() != ki.size()) || (kp.size() != kd.size()))
-            throw std::runtime_error("bdr_controller: gain vector sizes mismatch.");
-    }
-    // Constructor with default vector size of 5.
-    bdr_controller(int vsize = 140)
-        : kp(Eigen::VectorXd::Zero(vsize)),
-          ki(Eigen::VectorXd::Zero(vsize)),
-          kd(Eigen::VectorXd::Zero(vsize)),
-          lower_limits(Eigen::VectorXd::Constant(vsize, -2)),
-          upper_limits(Eigen::VectorXd::Constant(vsize, 2)),
-          set_point(Eigen::VectorXd::Zero(vsize))
-        {}
-};
-
-
-
-// Declaration of the PIDController class. needs to be after bdr_controller struct since it uses it in the constructor
-class PIDController {
-public:
-    // Constructors.
-    PIDController(const Eigen::VectorXd& kp_in,
-                  const Eigen::VectorXd& ki_in,
-                  const Eigen::VectorXd& kd_in,
-                  const Eigen::VectorXd& lower_limit_in,
-                  const Eigen::VectorXd& upper_limit_in,
-                  const Eigen::VectorXd& setpoint_in);
-    PIDController(const bdr_controller& config_in);
-    PIDController();
-
-    // Process the measured input to produce control output.
-    Eigen::VectorXd process(const Eigen::VectorXd& measured);
-
-    // Utility functions.
-    void set_all_gains_to_zero();
-    void reset();
-
-    // Public members 
     Eigen::VectorXd kp;
     Eigen::VectorXd ki;
     Eigen::VectorXd kd;
     Eigen::VectorXd lower_limits;
     Eigen::VectorXd upper_limits;
     Eigen::VectorXd set_point;
-    std::string ctrl_type;
-    Eigen::VectorXd output;
-    Eigen::VectorXd integrals;
-    Eigen::VectorXd prev_errors;
+
+    bdr_controller(int vsize = 140)
+        : kp(Eigen::VectorXd::Zero(vsize)),
+          ki(Eigen::VectorXd::Zero(vsize)),
+          kd(Eigen::VectorXd::Zero(vsize)),
+          lower_limits(Eigen::VectorXd::Constant(vsize, -2.0)),
+          upper_limits(Eigen::VectorXd::Constant(vsize, +2.0)),
+          set_point(Eigen::VectorXd::Zero(vsize)) {}
+
+    void validate() const {
+        const auto n = kp.size();
+        if (n == 0 || ki.size() == 0 || kd.size() == 0)
+            throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
+
+        // All vectors must be same size
+        if (ki.size()!=n || kd.size()!=n ||
+            lower_limits.size()!=n || upper_limits.size()!=n || set_point.size()!=n)
+            throw std::runtime_error("bdr_controller: vector size mismatch.");
+
+        // Ensure lower <= upper elementwise
+        for (Eigen::Index i=0;i<n;++i) {
+            if (lower_limits[i] > upper_limits[i])
+                throw std::runtime_error("bdr_controller: lower_limits > upper_limits at index " + std::to_string(i));
+        }
+    }
 };
+
+// struct bdr_controller {
+//     // For now, only gains. In a complete system you might add anti-windup limits, etc.
+//     Eigen::VectorXd kp;
+//     Eigen::VectorXd ki;
+//     Eigen::VectorXd kd;
+//     Eigen::VectorXd lower_limits;
+// 	Eigen::VectorXd upper_limits;
+// 	Eigen::VectorXd set_point;
+//     void validate() const {
+//         if (kp.size() == 0 || ki.size() == 0 || kd.size() == 0)
+//             throw std::runtime_error("bdr_controller: one or more gain vectors are empty.");
+//         if ( (kp.size() != ki.size()) || (kp.size() != kd.size()))
+//             throw std::runtime_error("bdr_controller: gain vector sizes mismatch.");
+//     }
+//     // Constructor with default vector size of 5.
+//     bdr_controller(int vsize = 140)
+//         : kp(Eigen::VectorXd::Zero(vsize)),
+//           ki(Eigen::VectorXd::Zero(vsize)),
+//           kd(Eigen::VectorXd::Zero(vsize)),
+//           lower_limits(Eigen::VectorXd::Constant(vsize, -2)),
+//           upper_limits(Eigen::VectorXd::Constant(vsize, 2)),
+//           set_point(Eigen::VectorXd::Zero(vsize))
+//         {}
+// };
+
+
+//20-8-25
+// // Declaration of the PIDController class. needs to be after bdr_controller struct since it uses it in the constructor
+// class PIDController {
+// public:
+//     // Constructors.
+//     PIDController(const Eigen::VectorXd& kp_in,
+//                   const Eigen::VectorXd& ki_in,
+//                   const Eigen::VectorXd& kd_in,
+//                   const Eigen::VectorXd& lower_limit_in,
+//                   const Eigen::VectorXd& upper_limit_in,
+//                   const Eigen::VectorXd& setpoint_in);
+//     PIDController(const bdr_controller& config_in);
+//     PIDController();
+
+//     // Process the measured input to produce control output.
+//     Eigen::VectorXd process(const Eigen::VectorXd& measured);
+
+//     // Utility functions.
+//     void set_all_gains_to_zero();
+//     void reset();
+
+//     // Public members 
+//     Eigen::VectorXd kp;
+//     Eigen::VectorXd ki;
+//     Eigen::VectorXd kd;
+//     Eigen::VectorXd lower_limits;
+//     Eigen::VectorXd upper_limits;
+//     Eigen::VectorXd set_point;
+//     std::string ctrl_type;
+//     Eigen::VectorXd output;
+//     Eigen::VectorXd integrals;
+//     Eigen::VectorXd prev_errors;
+// };
 
 
 //-----------------------------------------------------
@@ -444,9 +511,28 @@ struct bdr_telem {
     boost::circular_buffer<Eigen::VectorXd> u_HO;
     boost::circular_buffer<Eigen::VectorXd> c_LO;
     boost::circular_buffer<Eigen::VectorXd> c_HO;
+    boost::circular_buffer<Eigen::VectorXd> c_inj; //<-- NEW NEW 
     boost::circular_buffer<double> rmse_est;   // <-- NEW
     boost::circular_buffer<double> snr;         // <-- NEW
 
+    // Single source of truth for "numeric telemetry fields we can save".
+    static inline constexpr std::array<std::string_view, 15> kNumericSavableFields = {
+        "timestamp",
+        "LO_servo_mode",
+        "HO_servo_mode",
+        "img",
+        "img_dm",
+        "signal",
+        "e_LO",
+        "u_LO",
+        "e_HO",
+        "u_HO",
+        "c_LO",
+        "c_HO",
+        "c_inj",
+        "rmse_est",
+        "snr"
+    };
     // Constructor that sets a fixed capacity for each ring buffer.
     bdr_telem(size_t capacity = 100) // 100 capacity is about 3 MB in the buffer
       : counter(0),
@@ -462,6 +548,7 @@ struct bdr_telem {
         u_HO(capacity),
         c_LO(capacity),
         c_HO(capacity),
+        c_inj(capacity), 
         rmse_est(capacity),   // <-- initialize
         snr(capacity)         // <-- initialize
     {}
@@ -480,6 +567,7 @@ struct bdr_telem {
         u_HO.set_capacity(newCapacity);
         c_LO.set_capacity(newCapacity);
         c_HO.set_capacity(newCapacity);
+        c_inj.set_capacity(newCapacity); // <-- NEW NEW 
         rmse_est.set_capacity(newCapacity);  // <-- new
         snr.set_capacity(newCapacity); // <-- new
     }
@@ -527,6 +615,31 @@ struct bdr_filters {
 
 };
 
+// Signal injection (command-space) ---
+struct bdr_signal_cfg {
+    bool        enabled        = false;     // master on/off
+    //std::string space          = "command";   // we replace this with apply_to // fixed: we inject via dm -> dm command space
+    std::string basis          = "zonal";   // name used by dm::get_basis(...)
+    int         basis_index    = 0;         // which mode to inject
+    double      amplitude      = 0.05;      // scalar gain applied to unit-normalized mode
+    std::string waveform       = "sine";    // "sine","square","step","chirp","prbs","none"
+    double      freq_hz        = 10.0;      // for sine/square
+    double      phase_deg      = 0.0;       // phase offset
+    double      duty           = 0.5;       // for square (0..1)
+    double      t_start_s      = 0.0;       // start time gate
+    double      t_stop_s       = 0.0;       // 0 => no stop
+    int         latency_frames = 0;         // simulate pipeline delay
+    int         hold_frames    = 1;         // sample-and-hold; 1 => update every frame
+    uint32_t    prbs_seed      = 0xACE1u;   // initial seed (PRBS)
+    // Chirp options:
+    double      chirp_f0       = 1.0;
+    double      chirp_f1       = 50.0;
+    double      chirp_T        = 5.0;       // seconds of sweep window
+
+    std::string branch         = "HO";        // "LO" | "HO" | "ALL" <- what control branch to apply the injected signals
+    std::string apply_to       = "command";   // "command" | "setpoint" <- what signal space to inject them intop
+};
+
 //-----------------------------------------------------
 // Master configuration struct for RTC.
 struct bdr_rtc_config {
@@ -541,11 +654,14 @@ struct bdr_rtc_config {
     bdr_cam cam;
     bdr_telem telem;
     bdr_filters filters;
+    bdr_signal_cfg inj_signal;   // <--- NEW
 
     // // Derived run time parameters (need to be re-calculated if we reload a config)
-    PIDController ctrl_LO ;
-    PIDController ctrl_HO ;
-
+    //PIDController ctrl_LO ;
+    //PIDController ctrl_HO ;
+    // NEW 20-8-25:
+    std::unique_ptr<Controller> ctrl_LO;
+    std::unique_ptr<Controller> ctrl_HO;
 
     // some pre inits
     //Eigen::VectorXd img ; // image from SHM (size could change)
@@ -581,12 +697,18 @@ struct bdr_rtc_config {
 
 
     void initDerivedParameters() {
-        if (state.controller_type == "PID") {
-            ctrl_LO = PIDController(ctrl_LO_config);
-            ctrl_HO = PIDController(ctrl_HO_config);
-        } else {
-            throw std::runtime_error("Invalid controller_type");
-        }
+
+        // 20-8-25: Initialize controllers based on the state.
+        ctrl_LO_config.validate();
+        ctrl_HO_config.validate();
+        ctrl_LO = make_controller(state.controller_type, ctrl_LO_config);
+        ctrl_HO = make_controller(state.controller_type, ctrl_HO_config);
+        // if (state.controller_type == "PID") {
+        //     ctrl_LO = PIDController(ctrl_LO_config);
+        //     ctrl_HO = PIDController(ctrl_HO_config);
+        // } else {
+        //     throw std::runtime_error("Invalid controller_type");
+        // }
 
         zeroCmd = Eigen::VectorXd::Zero(matrices.sza);
 
@@ -743,6 +865,10 @@ struct EncodedImage
 };
 
 
+//20-8-25
+// Make a concrete controller from type string and PID-like config.
+std::unique_ptr<Controller>
+make_controller(const std::string& type, const bdr_controller& cfg);
 
 
 //-------End of Commander structs------
@@ -779,6 +905,28 @@ extern std::atomic<int> servo_mode_HO;
 //extern int servo_mode_LO;
 //extern int servo_mode_HO;
 // extern vector::<int> telescopes;
+
+// change signal epoch to mark changes in signal injection config
+extern std::atomic<uint64_t> g_inj_cfg_epoch;
+
+/////// new stuff for onsky interactions (19/8/25)
+// --- Open-loop offsets published atomically as one struct ---
+// --- Open-loop offsets published atomically as one struct ---
+// --- Open-loop offsets published atomically as one struct ---
+struct OLOffsets {
+    Eigen::VectorXd lo;  // LO branch DM-command offset (length = DM command vector)
+    Eigen::VectorXd ho;  // HO branch DM-command offset (length = DM command vector)
+};
+
+// Global handle (RTC reads via atomic_load on this pointer)
+extern std::shared_ptr<const OLOffsets> g_ol_offsets;
+
+// convenience loader (no need for a separate extern/definition)
+// inline std::shared_ptr<const OLOffsets> load_openloop_offsets() {
+//     return std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+// }
+
+/////// end new stuf 
 
 // Servo parameters. These are the parameters that will be adjusted by the commander
 

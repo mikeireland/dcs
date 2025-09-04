@@ -7,6 +7,14 @@
 
 #include <fstream>
 
+// adding for signal injection. 
+#include <random>
+#include <deque>
+#include <algorithm>   // transform, clamp
+#include <cctype>      // tolower
+#include <cmath>       // M_PI (or define your own PI)
+#include <memory>      // shared_ptr
+#include <stdexcept>   // runtime_error
 
 using json = nlohmann::json;
 
@@ -76,21 +84,32 @@ Eigen::VectorXd u_LO;
 
 Eigen::VectorXd c_LO;
 Eigen::VectorXd c_HO;
+Eigen::VectorXd c_inj;
 Eigen::VectorXd dmCmd;
+
+Eigen::VectorXd ol_lo; 
+Eigen::VectorXd ol_ho; 
 
 std::vector<Eigen::VectorXd> SS;  // size M, oldest at S[0], newest at S[M-1]
 
+
 //// getting telemetry in AIV 
-IMAGE shm_sig, shm_eLO, shm_eHO;
-constexpr int shm_telem_samples = 20;  // Number of telemetry samples exported to SHM
-thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
+// IMAGE shm_sig, shm_eLO, shm_eHO;
+// constexpr int shm_telem_samples = 20;  // Number of telemetry samples exported to SHM
+// thread_local static std::size_t shm_telem_cnt  = 0; // for counting our set window to write telem to shm. 
 
 
 // dm rms model
 double dm_rms_est_1 ; // from secondary obstruction
 double dm_rms_est_2 ; // from exterior pixels 
 
-const size_t boxcar = 5; // how many samples we average
+// delete cause we define later from baldr boxcar global variable
+//const size_t boxcar = 5; // how many samples we average
+
+
+
+// Timing helper
+using Clock = std::chrono::high_resolution_clock;
 
 
 template<typename Buffer>
@@ -270,6 +289,296 @@ void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
 
 
 
+// -- specific helpers for signal injection in command space 
+namespace {
+
+using clock_t = std::chrono::steady_clock;
+
+static inline std::string to_lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    return s;
+}
+
+struct InjCache {
+    bool ready = false;
+
+    // identity of what we cached for
+    std::string basis_key;   // lower-cased basis name
+    int         basis_index = -1;
+    int         nAct = 0;
+
+    // precomputed vectors
+    Eigen::VectorXd p_all;   // nAct
+    Eigen::VectorXd p_lo;    // nAct
+    Eigen::VectorXd p_ho;    // nAct
+    Eigen::VectorXd v_lo;    // size 2
+    Eigen::VectorXd v_ho;    // size nHO
+};
+
+static InjCache g_inj_cache;
+
+struct SignalInjRuntime {
+    bool inited = false;
+
+    // Basis vector (unit-normalized in command space, length = nAct)
+    Eigen::VectorXd basis_vec;
+
+    // PRBS state
+    uint32_t lfsr = 0xACE1u;
+
+    // White-noise RNG (unused here but handy if you add "white")
+    std::mt19937_64 rng{0xdeadbeef};
+
+    // Timing + frame cadence
+    clock_t::time_point t0;
+    long long frame_idx = 0;
+
+    // Sample-and-hold + latency
+    double last_sample = 0.0;     // held scalar
+    std::deque<double> latency_q; // size = latency_frames
+    // NEW: scalar actually sent this frame after latency
+    double last_out_scalar = 0.0;      // <— added this when we moved to allow branch and space (not just dm) injection options
+} g_inj;
+
+
+/**
+ * Build a command-space basis vector:
+
+ */
+inline void get_basis_mode(const bdr_rtc_config &rtc_config,
+                           const std::string   &basis_name,
+                           int                  basis_index,
+                           Eigen::VectorXd     &basis_vec_out)
+{
+    const int nAct = static_cast<int>(rtc_config.zeroCmd.size());
+    if (basis_vec_out.size() != nAct) basis_vec_out.resize(nAct);
+
+    // lower-case key to match dm::get_basis convention
+    std::string key = basis_name;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+
+    // Ensure basis file is loaded
+    if (!dm::ensure_loaded_default()) {
+        throw std::runtime_error("RTC get_basis_mode: failed to load default DM basis file.");
+    }
+
+    // Fetch basis list
+    auto modes_ptr = dm::get_basis(key);
+    if (!modes_ptr) {
+        throw std::runtime_error("RTC get_basis_mode: basis \"" + basis_name + "\" not found.");
+    }
+
+    // Index validation
+    const int nModes = static_cast<int>(modes_ptr->size());
+    if (basis_index < 0 || basis_index >= nModes) {
+        throw std::runtime_error(
+            "RTC get_basis_mode: index " + std::to_string(basis_index) +
+            " out of range for basis \"" + basis_name + "\" (0.." + std::to_string(nModes-1) + ")."
+        );
+    }
+
+    // Size validation
+    const Eigen::VectorXd &mode = (*modes_ptr)[static_cast<size_t>(basis_index)];
+    if (mode.size() != nAct) {
+        throw std::runtime_error(
+            "RTC get_basis_mode: size mismatch for basis \"" + basis_name + "\" index " +
+            std::to_string(basis_index) + ": mode has " + std::to_string(mode.size()) +
+            " elements, expected " + std::to_string(nAct) + " (DM actuators)."
+        );
+    }
+
+    // Use the raw mode exactly as stored (NO normalization)
+    basis_vec_out = mode;
+}
+
+
+// Minimal Tikhonov-regularized LS solve: argmin_v ||A v - b||^2 + \lambda||v||^2
+static Eigen::VectorXd tikhonov_ls(const Eigen::MatrixXd& A,
+                                   const Eigen::VectorXd& b,
+                                   double lambda = 1e-8)
+{
+    // (AᵀA + λI) v = Aᵀ b
+    const int m = static_cast<int>(A.cols());
+    Eigen::MatrixXd AtA = A.transpose() * A;
+    AtA.diagonal().array() += lambda;
+    Eigen::VectorXd Atb = A.transpose() * b;
+    return AtA.ldlt().solve(Atb);
+}
+
+static void rebuild_injection_cache(const bdr_rtc_config& cfg)
+{
+    // Ensure basis_vec is current (no normalization!)
+    get_basis_mode(cfg, cfg.inj_signal.basis, cfg.inj_signal.basis_index, g_inj.basis_vec);
+
+    const int nAct = static_cast<int>(cfg.zeroCmd.size());
+    g_inj_cache.ready       = false;         // will set true at end
+    g_inj_cache.nAct        = nAct;
+    g_inj_cache.basis_key   = to_lower_copy(cfg.inj_signal.basis);
+    g_inj_cache.basis_index = cfg.inj_signal.basis_index;
+
+    // Actuator-space target for injection
+    g_inj_cache.p_all = g_inj.basis_vec;     // same size as DM
+
+    // LO: project onto colspace(M2C_LO) and compute setpoint vector
+    if (cfg.matrices.M2C_LO.rows() != nAct) {
+        throw std::runtime_error("M2C_LO row mismatch vs zeroCmd size.");
+    }
+    // could add : if cfg.inj_signal.ls_method == "tikhonov" ...else other mthds
+    g_inj_cache.v_lo = tikhonov_ls(cfg.matrices.M2C_LO, g_inj_cache.p_all, 1e-8); // size 2
+    g_inj_cache.p_lo = cfg.matrices.M2C_LO * g_inj_cache.v_lo;                     // actuator equiv
+
+    // HO: project onto colspace(M2C_HO) and compute setpoint vector
+    if (cfg.matrices.M2C_HO.rows() != nAct) {
+        throw std::runtime_error("M2C_HO row mismatch vs zeroCmd size.");
+    }
+    g_inj_cache.v_ho = tikhonov_ls(cfg.matrices.M2C_HO, g_inj_cache.p_all, 1e-8); // size nHO
+    g_inj_cache.p_ho = cfg.matrices.M2C_HO * g_inj_cache.v_ho;                     // actuator equiv
+
+    g_inj_cache.ready = true;
+}
+
+
+// Convert degrees to radians
+inline double deg2rad(double d) { return d * M_PI / 180.0; }
+
+// PRBS31: taps 31,28 -> returns ±1
+inline int prbs31_step(uint32_t &l) {
+    uint32_t bit = ((l >> 30) ^ (l >> 27)) & 1u;
+    l = (l << 1) | bit;
+    return (l & 1u) ? +1 : -1;
+}
+
+// Elapsed seconds since t0
+inline double now_s() {
+    static const auto t0 = clock_t::now();
+    std::chrono::duration<double> dt = clock_t::now() - t0;
+    return dt.count();
+}
+
+
+// reset injection signal runtime
+void reset_signal_injection_runtime() {
+    g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
+    //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
+}
+
+/**
+ * Sample the scalar carrier at relative time t (seconds) per the waveform.
+ * amplitude multiplies the unit-normalized basis mode.
+ */
+inline double sample_waveform(const bdr_signal_cfg &cfg, double t)
+{
+    const double A   = cfg.amplitude;
+    const double ph  = deg2rad(cfg.phase_deg);
+    const double f   = cfg.freq_hz > 0.0 ? cfg.freq_hz : 0.0;
+    const double dut = std::clamp(cfg.duty, 0.0, 1.0);
+
+    if (cfg.waveform == "sine") {
+        return A * std::sin(2.0 * M_PI * f * t + ph);
+    }
+    else if (cfg.waveform == "square") {
+        if (f <= 0.0) return 0.0;
+        const double T = 1.0 / f;
+        const double tau = std::fmod(t + (ph / (2.0 * M_PI * f)), T); // phase shift as time
+        return (tau / T < dut) ? A : 0.0;  // 0/A PWM style (not ±A)
+    }
+    else if (cfg.waveform == "step") {
+        return A; // constant after gate opens
+    }
+    else if (cfg.waveform == "chirp") {
+        // Linear chirp: f(t) = f0 + k t, k = (f1 - f0)/T
+        // Phase φ(t) = 2π [ f0 t + 0.5 k t^2 ] + ph, limited to window [0, T]
+        double T = std::max(cfg.chirp_T, 1e-6);
+        double t_clip = std::clamp(t, 0.0, T);
+        double k = (cfg.chirp_f1 - cfg.chirp_f0) / T;
+        double phi = 2.0 * M_PI * (cfg.chirp_f0 * t_clip + 0.5 * k * t_clip * t_clip) + ph;
+        return A * std::sin(phi);
+    }
+    else if (cfg.waveform == "prbs") {
+        int s = prbs31_step(g_inj.lfsr); // ±1
+        return A * static_cast<double>(s);
+    }
+    // "none" or unknown
+    return 0.0;
+}
+
+/**
+ * Compute c_inj (length nAct) for this frame:
+ * - Gated by t_start_s / t_stop_s
+ * - Sample-and-hold every hold_frames
+ * - Latency in frames via a scalar FIFO
+ */
+inline void compute_c_inj(const bdr_rtc_config &rtc_config,
+                          Eigen::Ref<Eigen::VectorXd> c_inj_out)
+{
+    const auto &cfg = rtc_config.inj_signal;           // <-- bdr_signal_cfg lives here
+    const int nAct  = static_cast<int>(rtc_config.zeroCmd.size());
+
+    // Default: no injection
+    c_inj_out.setZero();
+
+    if (!cfg.enabled) return;
+    //if (cfg.space != "dm") return;             // so far we only implmented this for dm command space 
+
+    // Lazy one-time init
+    if (!g_inj.inited) {
+        g_inj.t0 = clock_t::now();
+        g_inj.frame_idx = 0;
+        g_inj.lfsr = cfg.prbs_seed ? cfg.prbs_seed : 0xACE1u;
+        g_inj.latency_q.clear();
+        g_inj.latency_q.resize(static_cast<size_t>(std::max(0, cfg.latency_frames)), 0.0);
+        get_basis_mode(rtc_config, cfg.basis, cfg.basis_index, g_inj.basis_vec);
+        g_inj.inited = true;
+    }
+
+    // Time gating
+    const double t_abs = now_s();
+    if (t_abs < cfg.t_start_s) { 
+        // still before start; shift latency queue with zeros to keep alignment
+        if (!g_inj.latency_q.empty()) { g_inj.latency_q.pop_front(); g_inj.latency_q.push_back(0.0); }
+        g_inj.frame_idx++;
+        return;
+    }
+    if (cfg.t_stop_s > 0.0 && t_abs > cfg.t_stop_s) {
+        // after stop; flush zeros through latency
+        if (!g_inj.latency_q.empty()) { g_inj.latency_q.pop_front(); g_inj.latency_q.push_back(0.0); }
+        g_inj.frame_idx++;
+        return;
+    }
+
+    // Sample-and-hold: only refresh the scalar every 'hold_frames'
+    double scalar = g_inj.last_sample;
+    const int H = std::max(1, cfg.hold_frames);
+    if ((g_inj.frame_idx % H) == 0) {
+        const double t_rel = t_abs - cfg.t_start_s;
+        scalar = sample_waveform(cfg, t_rel);
+        g_inj.last_sample = scalar;
+    }
+
+    // Apply latency (scalar FIFO)
+    double delayed_scalar = scalar;
+    if (!g_inj.latency_q.empty()) {
+        g_inj.latency_q.pop_front();
+        g_inj.latency_q.push_back(scalar);
+        delayed_scalar = g_inj.latency_q.front();
+    }
+
+    g_inj.last_out_scalar = delayed_scalar;   // <— added this when we moved to allow branch and space (not just dm) injection options
+
+    // c_inj = delayed_scalar * basis_vec
+    if (g_inj.basis_vec.size() != nAct) {
+        // defensive (e.g. DM size changed)
+        get_basis_mode(rtc_config, cfg.basis, cfg.basis_index, g_inj.basis_vec);
+    }
+    c_inj_out = delayed_scalar * g_inj.basis_vec;
+
+
+    g_inj.frame_idx++;
+}
+
+} // namespace
 
 // // The main RTC function
 void rtc(){
@@ -290,14 +599,15 @@ void rtc(){
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_LO.size() << std::endl;
     std::cout << "ctrl M2C_HO size: " << rtc_config.matrices.M2C_HO.size() << std::endl;
 
-    std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // comment out while upgrading controller class 20-8-25. Uncomment later after verified (may need to change some things)
+    // std::cout << "ctrl kp LO size: " << rtc_config.ctrl_LO.kp.size() << std::endl;
+    // std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
+    // std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
+    // std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
+    // std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
+    // std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
+    // std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
 
-    std::cout << "ctrl kp size: " << rtc_config.ctrl_HO.kp.size() << std::endl;
-    std::cout << "Controller ki size: " << rtc_config.ctrl_LO.ki.size() << std::endl;
-    std::cout << "Controller kd size: " << rtc_config.ctrl_LO.kd.size() << std::endl;
-    std::cout << "Controller lower_limits size: " << rtc_config.ctrl_LO.lower_limits.size() << std::endl;
-    std::cout << "Controller upper_limits size: " << rtc_config.ctrl_LO.upper_limits.size() << std::endl;
-    std::cout << "Controller set_point size: " << rtc_config.ctrl_LO.set_point.size() << std::endl;
     std::cout << "M2C_HO" << rtc_config.matrices.M2C_HO.size() << std::endl;
 
     std::cout << "secondary pixels size: " << rtc_config.pixels.secondary_pixels.size() << std::endl;
@@ -313,6 +623,7 @@ void rtc(){
     std::cout << "I2A.cols() : " << rtc_config.matrices.I2A.cols() << std::endl;
     std::cout << "I2A.rows() : " << rtc_config.matrices.I2A.rows() << std::endl;
 
+
     if (dm_rtc.md) {
         int dm_naxis = dm_rtc.md->naxis;
         int dm_width = dm_rtc.md->size[0];
@@ -324,6 +635,8 @@ void rtc(){
         std::cerr << "Error: No metadata available in the dm shared memory image." << std::endl;
     }
 
+
+
     if (subarray.md) {
         int img_naxis = subarray.md->naxis;
         int img_width = subarray.md->size[0];
@@ -332,21 +645,27 @@ void rtc(){
         std::cout << "Shared memory size: " << img_width << " x " << img_height << " pixels ("
                 << img_totalElements << " elements)" << std::endl;
     } else {
+        //std::cout << "here" << std::endl;
         std::cerr << "Error: No metadata available in the subarray shared memory image." << std::endl;
     }
 
+
+    
     //// getting telemetry in AIV 
 
-    std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
+    // std::cerr << "setting up telemetery SHM for offline plotting" << std::endl;
 
-    // Allocate shapes
-    uint32_t size_sig[2] = {140, shm_telem_samples};
-    uint32_t size_eLO[2] = {2, shm_telem_samples};
-    uint32_t size_eHO[2] = {140, shm_telem_samples};
-    // Create SHM images with no semaphores and no keywords
-    ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
-    ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
-    ImageStreamIO_createIm(&shm_eHO, "eHO_telem", 2, size_eHO, _DATATYPE_FLOAT, 1, 0);
+    // // Allocate shapes
+    // uint32_t size_sig[2] = {140, shm_telem_samples};
+    // uint32_t size_eLO[2] = {2, shm_telem_samples};
+    // uint32_t size_eHO[2] = {140, shm_telem_samples};
+    // // Create SHM images with no semaphores and no keywords
+    // ImageStreamIO_createIm(&shm_sig, "sig_telem", 2, size_sig, _DATATYPE_FLOAT, 1, 0);
+    // ImageStreamIO_createIm(&shm_eLO, "eLO_telem", 2, size_eLO, _DATATYPE_FLOAT, 1, 0);
+    // ImageStreamIO_createIm(&shm_eHO, "eHO_telem", 2, size_eHO, _DATATYPE_FLOAT, 1, 0);
+
+
+
 
     ////////////////////////////////////////////////////
     /// parameters below are calculated at run time (derived from rtc_config) so 
@@ -414,8 +733,15 @@ void rtc(){
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-
+    // init disturbance injection command
+    c_inj.resize(rtc_config.zeroCmd.size());
+    c_inj.setZero();
     
+    //static open loop offsets in LO and HO 
+    ol_lo.resize(rtc_config.zeroCmd.size());
+    ol_ho.resize(rtc_config.zeroCmd.size());
+    ol_lo.setZero();
+    ol_ho.setZero();
     ///////////////////////////////////////
 
 
@@ -472,6 +798,8 @@ void rtc(){
     catch_up_with_sem(&subarray, semid);
     catch_up_with_sem(&dm_rtc0, 1); // necessary?
 
+
+    std::cout << "RTC started" << std::endl;
     while(servo_mode.load() != SERVO_STOP){
 
         //std::cout << servo_mode_LO << std::endl;
@@ -528,11 +856,18 @@ void rtc(){
         // // Cast it to double—and store into a VectorXd:
         // Eigen::VectorXd img = rawArr.cast<double>();
         
+        //-----1. S T A R T  C L O C K -----//
+        // auto start1 = Clock::now();
+
         int32_t *raw = subarray.array.SI32;
         Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
         Eigen::VectorXd img = rawArr.cast<double>();
 
 
+        // auto end1   = Clock::now();
+        // auto us1    = std::chrono::duration_cast<std::chrono::nanoseconds>(end1 - start1).count();
+        // std::cout << "[TIMER] Process image took " << us1 << " ns\n";
+        //----- E N D  C L O C K -----//
 
         //std::cout  << img.size() << std::endl;
         //uint64_t totalFramesWritten = subarray.md->cnt0;
@@ -543,8 +878,10 @@ void rtc(){
         //     << "Frame #" << totalFramesWritten 
         //     << " landed in buffer slot " << lastSliceIndex 
         //     << std::endl;
-            
-
+        
+        //-----2. C L O C K -----//
+        // auto start2 = Clock::now();
+        
         // model of residual rms in DM units using secondary obstruction 
         dm_rms_est_1 = rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
 
@@ -557,6 +894,15 @@ void rtc(){
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
 
+        // auto end2   = Clock::now();
+        // auto us2    = std::chrono::duration_cast<std::chrono::nanoseconds>(end2 - start2).count();
+        // std::cout << "[TIMER] I2A projection took " << us2 << " ns\n";
+        //----- E N D  C L O C K -----//
+        
+        
+
+        //-----3. C L O C K -----//
+        // auto start3 = Clock::now();
         
         //  Compute the averaged signal, telem size can change mid rtc so check! 
         size_t M = rtc_config.telem.signal.size();
@@ -567,7 +913,7 @@ void rtc(){
         
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
-
+        
         // uncomment and build July 2025 AIV
         //this boxcar weighted average is a first attempt - later evolve to
         //burst window in full unfiltered non-destructive read mode with slope est. 
@@ -577,10 +923,144 @@ void rtc(){
         }
 
         
+        // auto end3   = Clock::now();
+        // auto us3    = std::chrono::duration_cast<std::chrono::nanoseconds>(end3 - start3).count();
+        // std::cout << "[TIMER] signal and boxcar took " << us3 << " ns\n";
+        //----- E N D  C L O C K -----//
+        
+        
+
+        // ------------- START OF SIGNAL INJECTION SECTION -----------
+        // ============================================================
+
+        /* in rtc_config we have a nested bdr_signal_cfg struc which defined 
+        what and where signals are injected into the controller. Either this can
+        be in HO, LO or all branches and can be applied to the plant (command space)
+        or to the setpoints. Here we check if cached signals need to be updated */
+
+        //-----4. C L O C K -----//
+        // auto start4 = Clock::now();
+
+        // React to config changes
+        static uint64_t seen_epoch = 0;
+        if (g_inj_cfg_epoch.load(std::memory_order_relaxed) != seen_epoch) {
+            seen_epoch = g_inj_cfg_epoch.load(std::memory_order_relaxed);
+            reset_signal_injection_runtime();   // clears runtime (basis cached in g_inj)
+            g_inj_cache.ready = false;          // force cache rebuild on use
+        }
+
+        // Compute this frame’s carrier once (don’t add to dm yet)
+        Eigen::VectorXd ctmp(rtc_config.zeroCmd.size());
+        compute_c_inj(rtc_config, ctmp);        // fills g_inj.last_out_scalar; ctmp not used directly
+
+        // Rebuild cache if basis/basis_index changed
+        const auto basis_key_now = to_lower_copy(rtc_config.inj_signal.basis);
+        if (!g_inj_cache.ready ||
+            g_inj_cache.basis_index != rtc_config.inj_signal.basis_index ||
+            g_inj_cache.basis_key   != basis_key_now) {
+            rebuild_injection_cache(rtc_config);   // computes p_all/p_lo/p_ho and v_lo/v_ho
+        }
+
+        // If injecting at SETPOINT, update controller setpoints BEFORE processing
+        Eigen::VectorXd du_lo, du_ho;                 // for telemetry/safety later
+        Eigen::VectorXd c_inj_applied = Eigen::VectorXd::Zero(ctmp.size()); // actuator-space equiv
+
+        if (rtc_config.inj_signal.enabled &&
+            rtc_config.inj_signal.apply_to == "setpoint")
+        {
+            const double a = g_inj.last_out_scalar;
+            std::lock_guard<std::mutex> lock(ctrl_mutex);
+
+            if ((rtc_config.inj_signal.branch == "LO" || rtc_config.inj_signal.branch == "ALL") &&
+                servo_mode_LO.load() == SERVO_CLOSE)
+            {
+                du_lo = a * g_inj_cache.v_lo;
+                const auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("set_point"));
+                Eigen::VectorXd new_sp = (sp + du_lo).eval();                 // force materialization
+                rtc_config.ctrl_LO->set_parameter("set_point", new_sp);
+
+                // actuator-equivalent for telemetry only:
+                c_inj_applied += rtc_config.matrices.M2C_LO * du_lo;
+            }
+
+            if ((rtc_config.inj_signal.branch == "HO" || rtc_config.inj_signal.branch == "ALL") &&
+                servo_mode_HO.load() == SERVO_CLOSE)
+            {
+                du_ho = a * g_inj_cache.v_ho;
+                const auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("set_point"));
+                Eigen::VectorXd new_sp = (sp + du_ho).eval();                 // force materialization
+                rtc_config.ctrl_HO->set_parameter("set_point", new_sp);
+
+                c_inj_applied += rtc_config.matrices.M2C_HO * du_ho;
+            }
+        }
+
+        // auto end4   = Clock::now();
+        // auto us4    = std::chrono::duration_cast<std::chrono::nanoseconds>(end4 - start4).count();
+        // std::cout << "[TIMER] signal injection checks took " << us4 << " ns\n";
+        //----- E N D  C L O C K -----//
+
+        // if (rtc_config.inj_signal.enabled &&
+        //     rtc_config.inj_signal.apply_to == "setpoint")
+        // {
+        //     const double a = g_inj.last_out_scalar;
+
+        //     std::lock_guard<std::mutex> lock(ctrl_mutex);  // protect ctrl_* parameter updates
+
+        //     if (rtc_config.inj_signal.branch == "LO" || rtc_config.inj_signal.branch == "ALL") {
+        //         du_lo = a * g_inj_cache.v_lo;            // size 2
+        //         // Update setpoint for LO BEFORE ctrl_LO->process(e_LO)
+        //         auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("set_point"));
+        //         rtc_config.ctrl_LO->set_parameter("set_point", sp + du_lo);
+
+        //         // actuator-equivalent for telemetry/safety
+        //         c_inj_applied += rtc_config.matrices.M2C_LO * du_lo;
+        //     }
+
+        //     if (rtc_config.inj_signal.branch == "HO" || rtc_config.inj_signal.branch == "ALL") {
+        //         du_ho = a * g_inj_cache.v_ho;            // size nHO
+        //         auto sp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("set_point"));
+        //         rtc_config.ctrl_HO->set_parameter("set_point", sp + du_ho);
+
+        //         c_inj_applied += rtc_config.matrices.M2C_HO * du_ho;
+        //     }
+        // } 
+
+
+        // ------------- END OF SIGNAL INJECTION SECTION -----------
+        // ============================================================
+
+
+        //-----5. C L O C K -----//
+        // auto start5 = Clock::now();
+
+        // open loop static offsets - distint from injection signals which are dynamic and applied in different places (e.g. setpoints)
+        ol_lo.setZero(); // set zero each iteration and only populate if in open loop and offsets exist
+        ol_ho.setZero();  
+        auto off = std::atomic_load_explicit(&g_ol_offsets, std::memory_order_acquire);
+        if (off) {
+            if (servo_mode_LO.load() == SERVO_OPEN) ol_lo = off->lo;
+            if (servo_mode_HO.load() == SERVO_OPEN) ol_ho = off->ho;
+        }
+
+        // auto end5   = Clock::now();
+        // auto us5    = std::chrono::duration_cast<std::chrono::nanoseconds>(end5 - start5).count();
+        // std::cout << "[TIMER] checking static OL signal took " << us5 << " ns\n";
+        //----- E N D  C L O C K -----//
+
+        //-----6. C L O C K -----//
+        auto start6 = Clock::now();
+
         //  Project into LO/HO as before, but now using the smoother sig_avg
         e_LO = rtc_config.I2M_LO_runtime * sig;
 
         e_HO = rtc_config.I2M_HO_runtime * sig;
+
+
+        // auto end6   = Clock::now();
+        // auto us6    = std::chrono::duration_cast<std::chrono::nanoseconds>(end6 - start6).count();
+        // std::cout << "[TIMER] error calc took " << us6 << " ns\n";
+        //----- E N D  C L O C K -----//
 
         //-------------------------------
         // try this 
@@ -625,6 +1105,9 @@ void rtc(){
         // if auto mode change state based on signals
 
 
+        //-----7. C L O C K -----//
+        // auto start7 = Clock::now();
+
         // LO CALCULATIONS 
         if (servo_mode_LO.load() == SERVO_CLOSE){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_CLOSE) {
@@ -636,7 +1119,7 @@ void rtc(){
 
             //std::cout << "HERE NOW, LO IN CLOSED LOOP" << std::endl;
 
-            u_LO = rtc_config.ctrl_LO.process( e_LO );
+            u_LO = rtc_config.ctrl_LO->process( e_LO );
 
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
 
@@ -649,12 +1132,18 @@ void rtc(){
             if (!rtc_config.telem.LO_servo_mode.empty() && rtc_config.telem.LO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting LO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_LO.reset();
+                rtc_config.ctrl_LO->reset();
             }
   
-            u_LO = 0 * e_LO ;
 
+            u_LO = 0 * e_LO;
+            
             c_LO = rtc_config.matrices.M2C_LO * u_LO;
+
+            
+
+
+            //c_LO = rtc_config.matrices.M2C_LO * u_LO;
             
         }
 
@@ -665,7 +1154,7 @@ void rtc(){
 
             }
 
-            u_HO = rtc_config.ctrl_HO.process( e_HO );
+            u_HO = rtc_config.ctrl_HO->process( e_HO );
             
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
@@ -677,15 +1166,24 @@ void rtc(){
             if (!rtc_config.telem.HO_servo_mode.empty() && rtc_config.telem.HO_servo_mode.back() != SERVO_OPEN) {
                 std::cout << "reseting HO controller" << std::endl;
                 //reset controllers
-                rtc_config.ctrl_HO.reset();
+                rtc_config.ctrl_HO->reset();
             }
   
 
             u_HO = 0 * e_HO ;
-          
             c_HO = rtc_config.matrices.M2C_HO * u_HO;
+
+            
+            
+            //c_HO = rtc_config.matrices.M2C_HO * u_HO;
             
         }
+
+        // auto end7   = Clock::now();
+        // auto us7    = std::chrono::duration_cast<std::chrono::nanoseconds>(end7 - start7).count();
+        // std::cout << "[TIMER] ctrl signal processing took " << us7 << " ns\n";
+
+        //----- E N D  C L O C K -----//
 
 
         // === HO Safety Check: Zero gains for misbehaving actuators ===
@@ -697,10 +1195,18 @@ void rtc(){
             for (int i = 0; i < u_HO.size(); ++i) {
                 if (std::abs(u_HO(i)) > ho_threshold) {
                     //std::cout << "[SAFETY] HO actuator " << i << " exceeded threshold with value " << u_HO(i) << std::endl;
-
-                    // Reset controller state
-                    rtc_config.ctrl_HO.integrals(i) = 0.0;
-                    rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    //// 20-8-25
+                    // // Reset controller state
+                    // rtc_config.ctrl_HO.integrals(i) = 0.0;
+                    // rtc_config.ctrl_HO.prev_errors(i) = 0.0;
+                    {
+                    auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("integrals"));
+                    auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("prev_errors"));
+                    I(i) = 0.0;
+                    E(i) = 0.0;
+                    rtc_config.ctrl_HO->set_parameter("integrals", I);
+                    rtc_config.ctrl_HO->set_parameter("prev_errors", E);
+                    }
 
                     // Track misbehavior
                     naughty_list[i]++;
@@ -708,9 +1214,21 @@ void rtc(){
                     // Disable gains only once when crossing threshold
                     if (naughty_list[i] == 100) {
                         std::cout << "[SAFETY] Disabling gains for actuator " << i << " after 100 violations" << std::endl;
-                        rtc_config.ctrl_HO.kp(i) = 0.0;
-                        rtc_config.ctrl_HO.ki(i) = 0.0;
-                        rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        //// 20-8-25
+                        // rtc_config.ctrl_HO.kp(i) = 0.0;
+                        // rtc_config.ctrl_HO.ki(i) = 0.0;
+                        // rtc_config.ctrl_HO.kd(i) = 0.0;
+
+                        {
+                        auto kp = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kp"));
+                        auto ki = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("ki"));
+                        auto kd = std::get<Eigen::VectorXd>(rtc_config.ctrl_HO->get_parameter("kd"));
+                        kp(i) = ki(i) = kd(i) = 0.0;
+                        rtc_config.ctrl_HO->set_parameter("kp", kp);
+                        rtc_config.ctrl_HO->set_parameter("ki", ki);
+                        rtc_config.ctrl_HO->set_parameter("kd", kd);
+                        }
 
                         disabled_this_frame = true;
                     }
@@ -728,11 +1246,21 @@ void rtc(){
 
         
         if (c_LO.cwiseAbs().maxCoeff() > 0.2) {
+            // 20-8-25
             // Reset controller state
-            for (int i = 0; i < u_LO.size(); ++i) {
-                rtc_config.ctrl_LO.integrals(i) = 0.0;
-                rtc_config.ctrl_LO.prev_errors(i) = 0.0;
-            }
+            // for (int i = 0; i < u_LO.size(); ++i) {
+            //     rtc_config.ctrl_LO.integrals(i) = 0.0;
+            //     rtc_config.ctrl_LO.prev_errors(i) = 0.0;
+            // }
+            std::lock_guard<std::mutex> lk(ctrl_mutex);  // if you already guard controller access
+            auto I = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("integrals"));
+            auto E = std::get<Eigen::VectorXd>(rtc_config.ctrl_LO->get_parameter("prev_errors"));
+            I.setZero();
+            E.setZero();
+            rtc_config.ctrl_LO->set_parameter("integrals", I);
+            rtc_config.ctrl_LO->set_parameter("prev_errors", E);
+        
+
 
             updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
             ImageStreamIO_sempost(&dm_rtc0, 1);
@@ -741,8 +1269,34 @@ void rtc(){
         }
 
 
+
+        // injecting disturbances in command space 
+        // This handles: enabled flag, t_start/t_stop, hold_frames, latency_frames,
+        // waveform selection (sine/square/step/chirp/prbs), basis lookup & normalization.
+        //compute_c_inj(rtc_config, c_inj);
+
+        //-----8. C L O C K -----//
+        // auto start8 = Clock::now();
+        
+        // If injecting in COMMAND space, build actuator vector AFTER controller outputs
+        if (rtc_config.inj_signal.enabled &&
+            rtc_config.inj_signal.apply_to == "command")
+        {
+            const double a = g_inj.last_out_scalar;
+
+            if      (rtc_config.inj_signal.branch == "ALL") c_inj_applied = a * g_inj_cache.p_all;
+            else if (rtc_config.inj_signal.branch == "LO")  c_inj_applied = a * g_inj_cache.p_lo;
+            else                                            c_inj_applied = a * g_inj_cache.p_ho;
+        }
+
+        // auto end8   = Clock::now();
+        // auto us8    = std::chrono::duration_cast<std::chrono::nanoseconds>(end8 - start8).count();
+        // std::cout << "[TIMER] command space signal injection checks " << us8 << " ns\n";
+
+        //----- E N D  C L O C K -----//
+
         /// ============= FINAL DM CMD ==============
-        dmCmd = -1 * (c_LO + c_HO);
+        dmCmd = -1 * (c_LO + c_HO) + c_inj_applied + ol_lo + ol_ho ; //  ol are open loop offsets distinct from injected signals for system ID (c_inj_applied). ol_* are more usefull for static matrix calibrations for example. See baldr.cpp commander functions relating to interactions.
         /// =========================================
 
         // remove piston 
@@ -805,10 +1359,17 @@ void rtc(){
 
         // ******************** UPDATE DM ******************************
 
+        //-----9. C L O C K -----//
+        // auto start9 = Clock::now();
+
         updateDMSharedMemory(dm_rtc, dmCmd);
 
         // Signal the master DM process to update itself.
         ImageStreamIO_sempost(&dm_rtc0, 1);
+
+        // auto end9   = Clock::now();
+        // auto us9    = std::chrono::duration_cast<std::chrono::nanoseconds>(end9 - start9).count();
+        // std::cout << "[TIMER] update DM SHM and post sem " << us9 << " ns\n";
 
         //BCB
         //updateDMSharedMemory( dmCmd ) ;
@@ -818,6 +1379,11 @@ void rtc(){
         // ************************************************************
         // Struc of ring buffers to keep history and offload to telemetry thread if requestec 
         if (true){
+
+            //-----10. C L O C K -----//
+            auto start10 = Clock::now();
+
+            
             std::lock_guard<std::mutex> lock(telemetry_mutex);
             // Get the current time as a double (microseconds)
             current_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -859,7 +1425,9 @@ void rtc(){
             //std::cout << ", c_HO size: " << c_HO.size() << std::endl;
             rtc_config.telem.c_HO.push_back(c_HO);          // 'c_HO' is Eigen::VectorXd
 
-
+            // just first iteration to test save fits function update! 
+            rtc_config.telem.c_inj.push_back(c_inj_applied); // <-- NEW
+            
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
 
             // === COMPUTE SNR inside the pupil ===
@@ -892,42 +1460,48 @@ void rtc(){
 
             // Increment the counter.
             rtc_config.telem.counter++;
+
+            // auto end10   = Clock::now();
+            // auto us10    = std::chrono::duration_cast<std::chrono::nanoseconds>(end10 - start10).count();
+            // std::cout << "[TIMER] update telemetry ring buffer " << us10 << " ns\n";
+
+
         }
 
         //// getting telemetry in AIV 
-        // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
-        if (true){
+        // // write telemetry to some shared memory , latecny of this NOT tested. TBD if we keep this method
+        // if (true){
 
-            std::lock_guard<std::mutex> lock(telemetry_mutex);
+        //     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-            //int shm_idx = shm_telem_cnt % shm_telem_samples;
+        //     //int shm_idx = shm_telem_cnt % shm_telem_samples;
 
-            // Get write pointers
-            float* buf_sig = (float*) shm_sig.array.F;
-            float* buf_eLO = (float*) shm_eLO.array.F;
-            float* buf_eHO = (float*) shm_eHO.array.F;
+        //     // Get write pointers
+        //     float* buf_sig = (float*) shm_sig.array.F;
+        //     float* buf_eLO = (float*) shm_eLO.array.F;
+        //     float* buf_eHO = (float*) shm_eHO.array.F;
 
-            // Compute offset for this frame
-            size_t offset_sig = 140 * (shm_telem_cnt % shm_telem_samples);
-            size_t offset_eLO = 2 * (shm_telem_cnt % shm_telem_samples);
-            size_t offset_eHO = 140 * (shm_telem_cnt % shm_telem_samples);
+        //     // Compute offset for this frame
+        //     size_t offset_sig = 140 * (shm_telem_cnt % shm_telem_samples);
+        //     size_t offset_eLO = 2 * (shm_telem_cnt % shm_telem_samples);
+        //     size_t offset_eHO = 140 * (shm_telem_cnt % shm_telem_samples);
 
-            // Write current frame
-            memcpy(&buf_sig[offset_sig], sig.data(), 140 * sizeof(float));
-            memcpy(&buf_eLO[offset_eLO], e_LO.data(), 2 * sizeof(float));
-            memcpy(&buf_eHO[offset_eHO], e_HO.data(), 140 * sizeof(float));
+        //     // Write current frame
+        //     memcpy(&buf_sig[offset_sig], sig.data(), 140 * sizeof(float));
+        //     memcpy(&buf_eLO[offset_eLO], e_LO.data(), 2 * sizeof(float));
+        //     memcpy(&buf_eHO[offset_eHO], e_HO.data(), 140 * sizeof(float));
 
-            // Update metadata
-            shm_sig.md->cnt0++;
-            shm_sig.md->cnt1++;
-            shm_eLO.md->cnt0++;
-            shm_eLO.md->cnt1++;
-            shm_eHO.md->cnt0++;
-            shm_eHO.md->cnt1++;
+        //     // Update metadata
+        //     shm_sig.md->cnt0++;
+        //     shm_sig.md->cnt1++;
+        //     shm_eLO.md->cnt0++;
+        //     shm_eLO.md->cnt1++;
+        //     shm_eHO.md->cnt0++;
+        //     shm_eHO.md->cnt1++;
 
-            // Increment index
-            shm_telem_cnt++;
-        }
+        //     // Increment index
+        //     shm_telem_cnt++;
+        // }
 
         // -------------------- DEAD TIME BEGINS HERE 
         // schedule next wakeup
@@ -940,7 +1514,7 @@ void rtc(){
         //     auto over = now - next_tick;
         //     //std::cerr<<"Loop overran by "
         //     //       << std::chrono::duration_cast<std::chrono::microseconds>(over).count()
-        //     //       <<" μs\n";
+        //     //       <<" us\n";
         // }
         
         //end = std::chrono::steady_clock::now();
