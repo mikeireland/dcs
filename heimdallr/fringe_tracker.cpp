@@ -89,7 +89,6 @@ void initialise_baselines(){
     gd_filtered.setZero();
     baselines.gd.setZero();
     baselines.pd.setZero();
-    baselines.jump_needed.setZero();
     baselines.gd_snr.setZero();
     baselines.pd_snr.setZero();
     baselines.n_gd_boxcar=MAX_N_GD_BOXCAR;
@@ -188,8 +187,8 @@ void reset_search(){
     pid_settings.kd = 0.0;
     pid_settings.integral = 0.0;
     pid_settings.dl_feedback_gain = 0.0;
-    pid_settings.pd_offset_gain = 0.0;
     pid_settings.gd_gain = pid_settings.kp / MAX_N_GD_BOXCAR;
+    pid_settings.offload_gd_gain = 1.0;
     pid_settings.mutex.unlock();
 }
 
@@ -313,7 +312,6 @@ void fringe_tracker(){
         baselines.ix_gd_boxcar = (gd_ix + 1) % baselines.n_gd_boxcar;
         baselines.ix_pd_boxcar = (pd_ix + 1) % baselines.n_pd_boxcar;
 
-#ifndef DEBUG
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
         // Fill a Vector of baseline group and phase delay.
@@ -331,41 +329,13 @@ void fringe_tracker(){
 
         // The covariance matrix of baselines_gd and baselines_pd is given by a diagonal
         // matrix with the inverse of the SNR squared on the diagonal. We need to find the 
-        // covariance of the telescope group and phase delays. !!! Unused in main loop (but copied)
-        // to search logic below.
+        // covariance of the telescope group and phase delays. 
+        // !!! Unused in main loop but could be useful?
 
         //cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
         //cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
         
-
-        // Here we have a conservative phase jump.
-        // !!! We actually need to use the smaller uncertainties that come
-        // after fitting, and use telescope rather than baseline delays. It can also only
-        // occur if the condition remains true for a while, e.g. N_TO_JUMP frames of low
-        // enough delay error.
-        /*
-        Eigen::Matrix<double, N_BL, 1> bl_pd_offset = M_lacour * control_a.pd_offset;
-        if (cnt_since_init > MAX_N_PS_BOXCAR) for (int bl=0; bl<N_BL; bl++){
-            double delay_error = std::sqrt(1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI +
-                gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl));
-            //fmt::print("B{} pd_snr: {:.1e} gd_snr: {:.1e} delay_error: {:.3f}\n", bl,
-            //    baselines[bl].pd_snr, baselines[bl].gd_snr, delay_error);
-            if (delay_error < 0.4) 
-            {
-                if ((std::fabs(gd_filtered(bl)-pd_filtered(bl)+bl_pd_offset(bl)) > 0.8) &&
-                (std::fabs(gd_filtered(bl)-pd_filtered(bl)+bl_pd_offset(bl))/delay_error > 3.0)){
-                    baselines.jump_needed(bl) += 1;
-                    if (baselines.jump_needed(bl) > N_TO_JUMP){
-                        fmt::print("Phase jump: B{} pd: {:.3f} pdf: {:.3f} gd: {:.3f} delay_error: {:.3f} offset: {:3f}\n", bl,
-                            baselines.pd(bl), pd_filtered(bl), gd_filtered(bl), delay_error, bl_pd_offset(bl));
-                        pd_filtered(bl) += std::round(gd_filtered(bl)-pd_filtered(bl));
-                        baselines.jump_needed(bl) = 0;
-                    }
-                } else  baselines.jump_needed(bl) = 0;
-            }
-        }
-        */
-
+        // Now project the filtered gd and pd onto telescope space.
         control_a.gd = M_lacour_dag * gd_filtered;
         control_a.pd = M_lacour_dag * pd_filtered;
 
@@ -426,23 +396,22 @@ void fringe_tracker(){
 
         // Apply the DL offload if enough time has passed since the last offload. !!! Remove 2 zeros.
         clock_gettime(CLOCK_REALTIME, &now);
-        if (now.tv_sec > last_dl_offload.tv_sec || 
-            (now.tv_sec == last_dl_offload.tv_sec && now.tv_nsec - last_dl_offload.tv_nsec > offload_time_ms*1000000)){
+        // Find time since last offload in milli-seconds as a double.
+        double time_since_last_offload_ms = (now.tv_sec - last_dl_offload.tv_sec) * 1000.0 +
+            (now.tv_nsec - last_dl_offload.tv_nsec) * 0.001;
+
+        if (time_since_last_offload_ms > offload_time_ms){
             if (offload_mode == OFFLOAD_NESTED){
                 fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
                     control_u.dl_offload(2), control_u.dl_offload(3));
                 add_to_delay_lines(-control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
-            else if (offload_mode == OFFLOAD_GD) ///!!! Was -1.0, but has an issues
-                add_to_delay_lines(-0.5*control_a.gd * config["wave"]["K1"].value_or(2.05));
+            else if (offload_mode == OFFLOAD_GD) 
+                add_to_delay_lines(-pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             last_dl_offload = now;
         }
-
-        // Servo over! Compute the phase delay offsets, by servoing to the difference betwee
-        // pd and gd.
-        //control_a.pd_offset += (control_a.gd - control_a.pd) * pid_settings.pd_offset_gain;
-    
+   
         // Now we sanity check by computing the bispectrum and closure phases.
         // K1 and K2, in case of tracking on resolved objects... 
         for (int cp=0; cp<N_CP; cp++){

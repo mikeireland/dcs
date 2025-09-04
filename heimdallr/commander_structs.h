@@ -25,7 +25,6 @@ template <> struct adl_serializer<Status> {
         j["pd_tel"] = p.pd_tel;
         j["gd_snr"] = p.gd_snr;
         j["pd_snr"] = p.pd_snr;
-        j["pd_offset"] = p.pd_offset;
         j["closure_phase_K1"] = p.closure_phase_K1;
         j["closure_phase_K2"] = p.closure_phase_K2;
         j["v2_K1"] = p.v2_K1;
@@ -44,8 +43,7 @@ template <> struct adl_serializer<Status> {
         j.at("gd_tel").get_to(p.gd_tel);
         j.at("pd_tel").get_to(p.pd_tel);
         j.at("gd_snr").get_to(p.gd_snr);
-        j.at("pd_snr").get_to(p.pd_snr);
-        j.at("pd_offset").get_to(p.pd_offset);
+        j.at("pd_snr").get_to(p.pd_snr);\
         j.at("closure_phase_K1").get_to(p.closure_phase_K1);
         j.at("closure_phase_K2").get_to(p.closure_phase_K2);
         j.at("v2_K1").get_to(p.v2_K1);

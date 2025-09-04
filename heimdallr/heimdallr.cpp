@@ -222,9 +222,9 @@ void set_ggain(double gain) {
     pid_settings.mutex.unlock();
 }
 
-void set_offset_gain(double gain) {
+void set_offload_gd_gain(double gain) {
     pid_settings.mutex.lock();
-    pid_settings.pd_offset_gain = gain;
+    pid_settings.offload_gd_gain = gain / MAX_N_GD_BOXCAR;
     pid_settings.mutex.unlock();
 }
 
@@ -256,7 +256,6 @@ Status get_status() {
     status.v2_K2 = std::vector<double>(N_BL);
     status.closure_phase_K1 = std::vector<double>(N_CP);
     status.closure_phase_K2 = std::vector<double>(N_CP);
-    status.pd_offset = std::vector<double>(N_TEL);
     status.dl_offload = std::vector<double>(N_TEL);
     status.dm_piston = std::vector<double>(N_TEL);
     status.pd_av = std::vector<double>(N_BL);
@@ -278,7 +277,6 @@ Status get_status() {
     for (int i = 0; i < N_TEL; i++) {
         status.gd_tel[i] = control_a.gd(i);
         status.pd_tel[i] = control_a.pd(i);
-        status.pd_offset[i] = control_a.pd_offset(i);
         status.dm_piston[i] = control_u.dm_piston(i);
         status.dl_offload[i] = control_u.dl_offload(i);
     }
@@ -325,11 +323,10 @@ COMMANDER_REGISTER(m)
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
+    m.def("offload_gd_gain", set_offload_gd_gain, "Set the gain when operating GD only in steps", "gain"_arg=0.0);
     m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
-    m.def("offset_gain", set_offset_gain, "Set the phase delay offset gain", "gain"_arg=0.0);
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
-    //m.def("gd_offsets")
- }
+}
 
 int main(int argc, char* argv[]) {
     IMAGE K1, K2;
