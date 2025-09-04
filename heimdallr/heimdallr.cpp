@@ -132,7 +132,7 @@ void set_servo_mode(std::string mode) {
 
 // Set the offload time
 void set_offload_time(uint time) {
-    if (time < 100 || time > 10000) {
+    if (time < 10 || time > 10000) {
         std::cout << "Offload time out of range (0.01 to 10s)" << std::endl;
         return;
     }

@@ -1,5 +1,6 @@
 #include "heimdallr.h"
-#define OFFLOAD_DT 0.01
+#define OFFLOAD_USLEEP 1000  //Sleep for this long in the offload loop. Should be much shorter than the fastest offload.
+#define CONTROLLINO_USLEEP 1000
 #define HFO_DEADBAND 2.05 //Deadband of HFO motion in microns of OPD
 // Local globals.
 
@@ -91,7 +92,7 @@ void move_piezos(){
             //std::cout << "Received from controllino: " << buffer << std::endl;
             send(controllinoSocket, message, strlen(message), 0);
             std::cout << "Sending to controllino: " << message << std::endl;
-            usleep(1000);
+            usleep(CONTROLLINO_USLEEP);
         }
     }
     last_offload = next_offload + search_offset;
@@ -156,8 +157,8 @@ void dl_offload(){
     set_delay_lines(Eigen::Vector4d::Zero());
 
     while (keep_offloading) {
-        // Wait for the next offload - 100Hz
-        usleep(OFFLOAD_DT*1000000);
+        // Wait for the next offload - nominally 200Hz max
+        usleep(OFFLOAD_USLEEP);
 
         if (search_ix < search_length) {
             double max_snr = 0.0;
@@ -180,7 +181,7 @@ void dl_offload(){
             } else {
                 // Move the piezo to the next position
                 //search_offset(search_dl) = search_start + search_ix * search_delta;
-                next_offload(search_dl) = search_start + search_ix * search_delta*OFFLOAD_DT;
+                next_offload(search_dl) = search_start + search_ix * search_delta*(OFFLOAD_USLEEP/1e6);
                 // Indicate that there is another piezo offload to do.
                 offloads_to_do++;
                 search_ix++;
