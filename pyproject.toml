@@ -1,0 +1,16 @@
+[project]
+name = "dcs"
+version = "0.0.1"
+readme = "README.md"
+requires-python =">=3.8"
+license = {file = "LICENSE"}
+
+[project.scripts] 
+h-autoalign = "dcs.cmd_scripts.h_autoalign:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dcs"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
