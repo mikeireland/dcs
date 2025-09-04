@@ -138,7 +138,6 @@ struct ControlU{
 // This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
 struct ControlA{
     Eigen::Vector4d gd, pd, pd_phasor_boxcar_avg;
-    Eigen::Vector4d pd_offset;
 };
 
 struct Baselines{
@@ -165,8 +164,9 @@ struct PIDSettings{
     double kd;
     double integral;
     double dl_feedback_gain;
-    double pd_offset_gain; //!!! Unused
     double gd_gain;
+    // Gain when operating GD only in steps - strictly not part of PID.
+    double offload_gd_gain; 
 };
 
 //-------Commander structs-------------
@@ -185,7 +185,6 @@ struct Status
     std::vector<double> gd_bl, pd_bl;
     std::vector<double> gd_tel, pd_tel;
     std::vector<double> gd_snr, pd_snr;
-    std::vector<double> pd_offset;
     std::vector<double> closure_phase_K1, closure_phase_K2;
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;

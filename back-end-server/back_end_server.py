@@ -2,7 +2,7 @@
 This back-end-server takes commands from wag, and based on a database of:
 command, server, internal_command for checking what is possible:
 
-This is the MultiDeviceServer.py
+This is the back_end_server.py
 
 The server has to implement a nubmber of commands, and after each successful command, it should return:
 {
