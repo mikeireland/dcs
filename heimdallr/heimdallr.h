@@ -146,7 +146,6 @@ struct Baselines{
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];
-    Eigen::Matrix<uint, N_BL, 1> jump_needed;
     int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
 };
 
@@ -208,6 +207,7 @@ extern ControlA control_a;
 extern Baselines baselines;
 extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
+extern double gd_to_K1;
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;

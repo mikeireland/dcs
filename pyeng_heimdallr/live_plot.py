@@ -66,7 +66,7 @@ class App(QtWidgets.QMainWindow):
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(200)
+        self.timer.start(100)
 
     # ------------------------------------------------------
     def refresh(self):
@@ -233,9 +233,18 @@ class MyMainWidget(QWidget):
         py = 10 + np.arange(3) * (10 + plh)
         self.gView_plot_vis_k1.setGeometry(QRect(10, py[0], plw, plh))
         self.gView_plot_vis_k1.setYRange(0, 0.8)
+        self.gView_plot_vis_k1.setBackground('w')
+        self.gView_plot_vis_k1.showGrid(x=True, y=True, alpha=0.3)
+
         self.gView_plot_vis_k2.setGeometry(QRect(10, py[1], plw, plh))
         self.gView_plot_vis_k2.setYRange(0, 0.8)
+        self.gView_plot_vis_k2.setBackground('w')
+        self.gView_plot_vis_k2.showGrid(x=True, y=True, alpha=0.3)
+
         self.gView_plot_gdlay.setGeometry(QRect(10, py[2], plw, plh))
+        self.gView_plot_gdlay.setBackground('w')
+        self.gView_plot_gdlay.showGrid(x=True, y=True, alpha=0.3)
+
         self.logplot_vis_k1 = []
         self.logplot_vis_k2 = []
         self.logplot_gdlay = []
@@ -243,25 +252,33 @@ class MyMainWidget(QWidget):
         colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255),
                   (255, 255, 0), (255, 0, 255), (0, 255, 255)]
 
+        # electric rainbow burst (ndg, blu, grn, ylw,rng, red)
+        palette6 = [(100, 52, 233), (44,124,229), (73,204,92),
+                    (248,196,33), (251,102,64), (248,37,83)]
+
+        # tropical summer vibes (dgrn, trk, grn, ylw, orng, dorng)
+        palette6 = [(38, 70, 83), (42,157,143), (138,177,125),
+                    (233,196,106), (244,162,97), (231,111,81)]
+
         for ii in range(6):
             self.logplot_vis_k1.append(self.gView_plot_vis_k1.plot(
                 [0, self.wfs.log_len], [ii, ii],
-                pen=colors[ii], name=f"v2 #{ii+1}"))
+                pen=pg.mkPen(palette6[ii], width=2), name=f"v2 #{ii+1}"))
 
         for ii in range(6):
             self.logplot_vis_k2.append(self.gView_plot_vis_k2.plot(
                 [0, self.wfs.log_len], [ii, ii],
-                pen=colors[ii], name=f"v2 #{ii+1}"))
+                pen=pg.mkPen(palette6[ii], width=2), name=f"v2 #{ii+1}"))
 
         # for ii in range(3):
         #     self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
         #         [0, self.wfs.log_len], [ii, ii],
-        #         pen=colors[ii], name=f"OPD #{ii+1}"))
+        #         pen=pg.mkPen(palette4[ii], width=2), name=f"OPD #{ii+1}"))
 
         for ii in range(6):
             self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
                 [0, self.wfs.log_len], [ii, ii],
-                pen=colors[ii], name=f"OPD #{ii+1}"))
+                pen=pg.mkPen(palette6[ii], width=2), name=f"OPD #{ii+1}"))
 
         self.pB_start.clicked.connect(self.wfs_start)
         self.pB_stop.clicked.connect(self.wfs_stop)

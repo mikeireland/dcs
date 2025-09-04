@@ -224,7 +224,7 @@ void set_ggain(double gain) {
 
 void set_offload_gd_gain(double gain) {
     pid_settings.mutex.lock();
-    pid_settings.offload_gd_gain = gain / MAX_N_GD_BOXCAR;
+    pid_settings.offload_gd_gain = gain;
     pid_settings.mutex.unlock();
 }
 
@@ -302,6 +302,24 @@ void test(uint beam, double value, uint n) {
     beam_mutex.unlock();   
 }
 
+// Zero the Group Delay offsets, once a fringe peak is found.
+void zero_gd_offsets(void){
+    baseline_mutex.lock();
+    for (int bl=0; bl<N_BL; bl++)
+        // Set the offsets to the group delay
+        baselines.gd_phasor_offset(bl) = std::conj(baselines.gd_phasor(bl)); 
+    baseline_mutex.unlock();
+}
+
+// Return the phasor offsets to 3 decimal places
+std::vector<double> return_gd_offsets(void){
+    std::vector<double> gd_offsets(6);
+    baseline_mutex.lock();
+    for (int bl=0;bl<N_BL; bl++)
+        gd_offsets[bl] = std::round(std::arg(baselines.gd_phasor_offset(bl)) * gd_to_K1 * 1000)/1000.0;
+    baseline_mutex.unlock();
+    return gd_offsets;
+}
 
 COMMANDER_REGISTER(m)
 {
@@ -326,11 +344,14 @@ COMMANDER_REGISTER(m)
     m.def("offload_gd_gain", set_offload_gd_gain, "Set the gain when operating GD only in steps", "gain"_arg=0.0);
     m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
+    m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
+    m.def("return_gd_offsets", return_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
 }
 
 int main(int argc, char* argv[]) {
     IMAGE K1, K2;
-    int new_nice = nice(-10);
+    //Set the nice value.
+    if (nice(-10)==-1) std::cout << "Re-niceing process likely didn't work. New nice value -1." << std::endl;
     // Read in the configuration file
     if (argc < 2) {
         std::cout << "Usage: " << argv[0] << " <config file>.toml [options]" << std::endl;

@@ -160,6 +160,7 @@ void initialise_baselines(){
     }
 }
 
+
 // Reset the search
 void reset_search(){
     // This function resets the search for the delay line and piezo.
@@ -398,7 +399,7 @@ void fringe_tracker(){
         clock_gettime(CLOCK_REALTIME, &now);
         // Find time since last offload in milli-seconds as a double.
         double time_since_last_offload_ms = (now.tv_sec - last_dl_offload.tv_sec) * 1000.0 +
-            (now.tv_nsec - last_dl_offload.tv_nsec) * 0.001;
+            (now.tv_nsec - last_dl_offload.tv_nsec) * 0.000001;
 
         if (time_since_last_offload_ms > offload_time_ms){
             if (offload_mode == OFFLOAD_NESTED){
@@ -407,8 +408,10 @@ void fringe_tracker(){
                 add_to_delay_lines(-control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
-            else if (offload_mode == OFFLOAD_GD) 
+            else if (offload_mode == OFFLOAD_GD) {
+                fmt::print("Adding {} to GD\n", -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05));
                 add_to_delay_lines(-pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
+            }
             last_dl_offload = now;
         }
    
@@ -436,7 +439,5 @@ void fringe_tracker(){
             bispectra_K2[cp].ix_bs_boxcar = (bispectra_K2[cp].ix_bs_boxcar + 1) % bispectra_K2[cp].n_bs_boxcar;
             //std::cout << "CP: " << cp << " Phase: " << bispectra[cp].closure_phase << std::endl;
         }
-
-#endif
     }
 }

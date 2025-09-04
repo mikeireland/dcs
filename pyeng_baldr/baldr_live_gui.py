@@ -10,7 +10,7 @@ import pyqtgraph as pg
 
 from functools import partial
 
-SERVER_ADDR = "tcp://127.0.0.1:6662"  # <-- set to your baldr server
+SERVER_ADDR = "tcp://127.0.0.1:6663"  # <-- set to your baldr server
 
 # -------------------- Commander ZMQ helper --------------------
 class CommanderClient:

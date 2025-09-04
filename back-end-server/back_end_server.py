@@ -107,11 +107,13 @@ import zmq
 import json
 import datetime
 import time
+import baldr_back_end_server
 
 class BackEndServer:
     def __init__(self, port=7004, \
             server_ports = {"hdlr": 6660, "hdlr_align": 6661, "baldr": 6662, "cam_server": 6667, "DM_server": 6666}):
         self.port = port
+        self.baldr_commands = baldr_back_end_server.BaldrCommands() #This is the Ben way.
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://*:{self.port}")
@@ -170,10 +172,12 @@ class BackEndServer:
             return self.abort(command)
         elif command_name == "expstatus":
             return self.expstatus(command)
-        elif command_name == "heimdallr_bb_align":
+        elif command_name == "hldr_bb_align":
             return self.heimdallr_bb_align(command)
         elif command_name == "fringe_search":
             return self.fringe_search(command)
+        elif command_name[:4] =="bld_":
+            return self.baldr_commands.run_command(command_name[4:])
         else:
             return self.create_response(f"ERROR: Unknown command '{command_name}'")
 

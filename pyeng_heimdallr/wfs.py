@@ -46,6 +46,17 @@ pst[amask] = 0.02  # 0.2 DM piston on GUI -> 10 ADU units # optical gain ~ 3µm 
 
 im_offset = 1000.0
 
+# ------------------------------------------------
+# a simple unwrapping procedure for RT processing?
+# ------------------------------------------------
+def unwrap(val, prev):
+    if np.abs(val - prev) < np.pi:
+        return val
+    elif val > prev:
+        return val - 2*np.pi
+    else:
+        return val + 2*np.pi
+
 class Heimdallr():
     # =========================================================================
     def __init__(self):
@@ -71,7 +82,7 @@ class Heimdallr():
         # so a custom PINV is requested here
         self.PINV = np.round(np.linalg.pinv(
             np.delete(self.hdlr1.kpi.BLM, 2, axis=1)), 2)
-        
+
         # self.PINV = np.round(np.linalg.pinv(self.hdlr1.kpi.BLM), 2)
 
         self.hdlr1.update_img_properties(
@@ -114,7 +125,7 @@ class Heimdallr():
         self.cloop_on = False
         self.disps = np.zeros(self.ndm)
 
-        self.gain = 0.01
+        self.gain = 0.001
 
     # =========================================================================
     def calc_wfs_data(self):
@@ -135,13 +146,35 @@ class Heimdallr():
         if norm2 != 0:
             self.hdlr2.extract_data(k2d)
 
+        # memorizing previous state
+        try:
+            self.opd_prev_k1 = self.opd_now_k1.copy()
+            self.opd_prev_k2 = self.opd_now_k1.copy()
+            self._prev_gd_rad = self._gd_rad.copy()
+            self.first_time = False
+        except:
+            self.first_time = True
+            print("First time")
+            pass
+
         self.opd_now_k1 = self.PINV.dot(np.angle(self.hdlr1.cvis[0]))
         self.opd_now_k2 = self.PINV.dot(np.angle(self.hdlr2.cvis[0]))
-        tmp = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
-        self.gdlay = tmp * self.dl_factor - self.gd_offset
+        self._gd_rad = np.angle(self.hdlr1.cvis[0] * self.hdlr2.cvis[0].conj())
+
+        if not self.first_time:
+            for ii in range(3):
+                self.opd_now_k1[ii] = unwrap(self.opd_now_k1[ii],
+                                             self.opd_prev_k1[ii])
+                self.opd_now_k2[ii] = unwrap(self.opd_now_k2[ii],
+                                             self.opd_prev_k2[ii])
+            for ii in range(6):
+                self._gd_rad[ii] = unwrap(self._gd_rad[ii],
+                                          self._prev_gd_rad[ii])
+
+        self.gdlay = self._gd_rad * self.dl_factor - self.gd_offset
 
         self.dms_cmds = self.PINV.dot(self.gdlay)
-               
+
         # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
         # self.dms_cmds -= self.dms_cmds[2] # everything relative to Beam 3
@@ -239,7 +272,7 @@ class Heimdallr():
             vis.append(np.abs(sensor.cvis[0]))
         vis = np.mean(np.array(vis), axis = 0)
         uvis = np.round(np.abs(vis)[bl_ii], 2)  # "useful" visibilities
-        best_vis = np.round(np.sqrt(np.mean(uvis**2)), 2)
+        best_vis = np.round(np.sqrt(np.mean(uvis**2)), 2)        
         print(f"HFO{beamid} x0  = {x0:8.2f}", end="")
         print(uvis, best_vis)
         found_one = 0

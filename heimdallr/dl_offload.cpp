@@ -1,6 +1,6 @@
 #include "heimdallr.h"
 #define OFFLOAD_DT 0.01
-#define HFO_DEADBAND 1.0 //Deadband of HFO motion in microns of OPD
+#define HFO_DEADBAND 2.05 //Deadband of HFO motion in microns of OPD
 // Local globals.
 
 int controllinoSocket;
@@ -61,9 +61,10 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
         for (int i = 0; i < N_TEL; i++) {
             total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i) + dl(i)));
         }
-        if (seconds_since_last < 1.0 || total_offload < HFO_DEADBAND) {
-            return;
-        }
+
+        //if (seconds_since_last < 1.0 || total_offload < HFO_DEADBAND) {
+        //    return;
+        //}
     }
 
     // This function adds the delay line values to the current delay line values.
@@ -124,10 +125,11 @@ void move_piezos(){
 }
 
 void move_hfo(){
-    // Only send if more than 1s since last offset
+    // Only send if more than 0.5 since last offset
     auto now = std::chrono::high_resolution_clock::now();
     double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
-    if (seconds_since_last < 1.0) {
+    if (seconds_since_last < 0.5) {
+        fmt::print("Not enough time for a new offload.\n");
         return;
     }
     // Check to find the total offload requested, adding all values of
@@ -136,7 +138,7 @@ void move_hfo(){
     for (int i = 0; i < N_TEL; i++) {
         total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i)));
     }
-    // If the total offload is less than 0.1mm, do not send
+    // If the total offload is less than the deadband of about  micron, do not send
     if (total_offload < HFO_DEADBAND) return;
 
     // This function sets the piezo delay line to the stored value.
