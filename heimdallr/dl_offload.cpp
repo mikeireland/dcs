@@ -53,33 +53,6 @@ void set_delay_lines(Eigen::Vector4d dl) {
 }
 
 void add_to_delay_lines(Eigen::Vector4d dl) {
-    // Only add if more than 1s since last HFO offset and total offload > HFO_DEADBAND
-    auto now = std::chrono::high_resolution_clock::now();
-    double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
-    double total_offload = 0.0;
-    if (delay_line_type == "hfo"){
-        for (int i = 0; i < N_TEL; i++) {
-            total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i) + dl(i)));
-        }
-
-        //if (seconds_since_last < 1.0 || total_offload < HFO_DEADBAND) {
-        //    return;
-        //}
-    }
-
-    // This function adds the delay line values to the current delay line values.
-    // The value is in K1 wavelengths. The assumption is that whatever is added 
-    // here is completed almost instantly. If the actuator can't handle that, then
-    // we must ignore this addition.
-
-    // Apply a delay-line type deadband (needed for HFO motors)
-   /* if (delay_line_type == "hfo"){
-        dl -= hfo_running_average * Eigen::Vector4d::Ones(4,1);
-        for (int i = 0; i < N_TEL; i++) 
-            if (std::abs(dl(i)) < HFO_DEADBAND) dl(i)=0;
-        // If we are moving all delay lines in the same direction, record this.
-        hfo_running_average += dl.mean(); 
-    }*/
     next_offload += dl;
     offloads_to_do++;
 }
