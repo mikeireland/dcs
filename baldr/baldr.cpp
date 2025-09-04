@@ -107,10 +107,19 @@ std::atomic<uint64_t> g_inj_cfg_epoch{0};
 std::vector<std::string> list_all_numeric_telem_fields();
 
 // From telemetry.cpp:
+// bool write_fields_to_fits(const std::string& path,
+//                           const std::vector<std::string>& fields,
+//                           std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)> extract,
+//                           long nsteps);
+
+////updated
 bool write_fields_to_fits(const std::string& path,
                           const std::vector<std::string>& fields,
                           std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)> extract,
-                          long nsteps);
+                          long nsteps,
+                          const std::vector<std::pair<std::string, std::string>>& header_strs = {},
+                          const std::vector<std::pair<std::string, long>>&    header_longs = {},
+                          const std::vector<std::pair<std::string, double>>&  header_doubles = {});
 
 bool telem_extract_matrix_lastN(const bdr_telem& telem,
                                 std::mutex& telemetry_mutex,
@@ -3698,6 +3707,8 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
 {
     using json = nlohmann::json;
 
+    bool all_requested = false;   // NEW: remember if caller asked for "all"
+
     // -------- parse --------
     std::vector<std::pair<long long,double>> aberr;
     std::string basis, state;
@@ -3714,7 +3725,14 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
 
             basis  = args.at(1).get<std::string>();
             state  = args.at(2).get<std::string>();
-            fields = parse_field_list(args.at(3));           // NEW: accepts "all" | name | ["a","b",...]
+
+            const auto& farg = args.at(3);
+            if (farg.is_string()) {
+                std::string s = farg.get<std::string>();
+                if (iequals(s, "all")) all_requested = true;              // <- NEW
+            }
+            fields = parse_field_list(farg);                               // "all" | name | ["a","b",...]
+            // fields = parse_field_list(args.at(3));           // NEW: accepts "all" | name | ["a","b",...]
             N      = args.at(4).get<size_t>();
             if (args.size() >= 6) dead_ms = args.at(5).get<long long>();
 
@@ -3730,8 +3748,21 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
             basis  = args.at("basis").get<std::string>();
             state  = args.at("state").get<std::string>();
             N      = args.at("N").get<size_t>();
-            if (auto it = args.find("field"); it != args.end()) fields = parse_field_list(*it);
-            else                                                fields = list_all_numeric_telem_fields();
+            // if (auto it = args.find("field"); it != args.end()) fields = parse_field_list(*it);
+            // else                                                fields = list_all_numeric_telem_fields();
+            // if (args.contains("deadtime_ms")) dead_ms = args.at("deadtime_ms").get<long long>();
+            if (auto it = args.find("field"); it != args.end()) { // have to deal with case of "all" input so FIELD headers isnt too long and just writes "all"
+                const auto& farg = *it;
+                if (farg.is_string()) {
+                    std::string s = farg.get<std::string>();
+                    if (iequals(s, "all")) all_requested = true;          // <- NEW
+                }
+                fields = parse_field_list(farg);
+            } else {
+                fields = list_all_numeric_telem_fields();
+                all_requested = true;                                      // <- NEW (missing field ⇒ treat as "all")
+            }
+
             if (args.contains("deadtime_ms")) dead_ms = args.at("deadtime_ms").get<long long>();
 
             const auto& arr = args.at("aberrations");
@@ -3854,10 +3885,73 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
     if (!single_field_mode) {
         // Multi-field / "all": write one FITS with one IMAGE HDU per field
         try {
+            // Build primary-HDU headers mirroring legacy JSON
+            std::vector<std::pair<std::string, std::string>> hdr_strs = {
+                {"BASIS", basis},
+                {"STATE", state}
+            };
+
+            if (all_requested) {
+                hdr_strs.emplace_back("FIELDS", "all");                    // <- NEW
+            } else if (fields.size() == 1) {
+                hdr_strs.emplace_back("FIELD", fields[0]);
+            } else {
+                // Comma-separated list only when user gave an explicit subset
+                std::string fields_csv;
+                for (size_t i = 0; i < fields.size(); ++i) {
+                    if (i) fields_csv += ",";
+                    fields_csv += fields[i];
+                }
+                hdr_strs.emplace_back("FIELDS", fields_csv);
+            }
+            // if (fields.size() == 1) {
+            //     hdr_strs.emplace_back("FIELD", fields[0]);
+            // } else {
+            //     // Comma-separated list of fields
+            //     std::string fields_csv;
+            //     for (size_t i = 0; i < fields.size(); ++i) {
+            //         if (i) fields_csv += ",";
+            //         fields_csv += fields[i];
+            //     }
+            //     hdr_strs.emplace_back("FIELDS", fields_csv);
+            // }
+            std::vector<std::pair<std::string, long>> hdr_longs = {
+                {"N",        static_cast<long>(N)},
+                {"DEADTIME", static_cast<long>(dead_ms)},
+                {"NPROBES",  static_cast<long>(aberr.size())}
+            };
+            std::vector<std::pair<std::string, double>> hdr_dbls; // none for now
+
             auto extractor = [&](std::string_view name, Eigen::MatrixXd& M, std::string& why) {
                 return telem_extract_matrix_lastN(rtc_config.telem, telemetry_mutex, name, N, M, why);
             };
-            const bool ok = write_fields_to_fits(outfile, fields, extractor, static_cast<long>(N));
+
+
+            // --- Camera + Boxcar headers for primary HDU ---
+            try {
+                const double gain = static_cast<double>(get_float_cam_param("gain raw"));
+                const double fps  = static_cast<double>(get_float_cam_param("fps raw"));
+                hdr_dbls.emplace_back("GAINRAW", gain);
+                hdr_dbls.emplace_back("FPSRAW",  fps);
+            } catch (...) {
+                // ignore if camera params unavailable
+                std::cerr << "[probe] camera params unavailable; skipping GAINRAW/FPSRAW\n";
+            }
+
+            try {
+                long nbox = static_cast<long>(std::llround(global_boxcar.load()));
+                hdr_longs.emplace_back("NBOXCAR", nbox);
+                // Optional float value too:
+                // hdr_dbls.emplace_back("GBOXCAR", static_cast<double>(global_boxcar.load()));
+            } catch (...) {
+                // ignore if unavailable
+                std::cerr << "[probe] boxcar unavailable; skipping NBOXCAR\n";
+            }
+            const bool ok = write_fields_to_fits(
+                outfile, fields, extractor, static_cast<long>(N),
+                hdr_strs, hdr_longs, hdr_dbls
+            );
+
             if (!ok) {
                 return json{{"ok",false},
                             {"error","failed to write multi-field FITS (write_fields_to_fits)"},
@@ -4437,6 +4531,43 @@ static int save_probe_result_fits(const nlohmann::json& jr, const std::string& f
             long vv = v;
             fits_update_key(fptr, TLONG, const_cast<char*>(key), &vv, nullptr, &status);
         };
+
+        // --- Camera + Boxcar headers (legacy BINTABLE) ---
+        try {
+            double gain = static_cast<double>(get_float_cam_param("gain raw"));
+            double fps  = static_cast<double>(get_float_cam_param("fps raw"));
+            fits_update_key(fptr, TDOUBLE, const_cast<char*>("GAINRAW"),
+                            &gain, const_cast<char*>("camera gain (raw units)"), &status);
+            fits_update_key(fptr, TDOUBLE, const_cast<char*>("FPSRAW"),
+                            &fps,  const_cast<char*>("camera fps (raw units)"),  &status);
+        } catch (...) {
+            //  ignore if camera params unavailable
+            std::cerr << "[probe] camera params unavailable; skipping GAINRAW/FPSRAW\n";
+
+        }
+
+        try {
+            // If your boxcar is a *length* (integer), prefer NBOXCAR as TLONG:
+            long nbox = 0;
+            try {
+                // If global_boxcar.load() returns a numeric window length:
+                nbox = static_cast<long>(std::llround(global_boxcar.load()));
+            } catch (...) {
+                // ignore and output warning
+                std::cerr << "[probe] boxcar unavailable; skipping NBOXCAR\n";
+            }
+            fits_update_key(fptr, TLONG, const_cast<char*>("NBOXCAR"),
+                            &nbox, const_cast<char*>("boxcar window length (samples)"), &status);
+
+            // Optionally also store a floating value (if you have one):
+            // double gbox = static_cast<double>(global_boxcar.load());
+            // fits_update_key(fptr, TDOUBLE, const_cast<char*>("GBOXCAR"),
+            //                 &gbox, const_cast<char*>("boxcar value"), &status);
+        } catch (...) {
+            //  ignore if camera params unavailable
+            std::cerr << "[probe] boxcar unavailable; skipping NBOXCAR\n";
+
+        }
 
         putstr("BASIS",    jr.value("basis",      std::string("")));
         putstr("STATE",    jr.value("state",      std::string("")));

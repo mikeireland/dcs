@@ -36,13 +36,28 @@ extern std::mutex telemetry_mutex;
 // and for the timestamp we have a ring buffer of doubles.
 
 
-///
-using FieldExtractor = std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)>;
+//forward declaration
+// adding in to allow generic field saves in probe method (which is different to dumping/saving telemetry buffer )
+// Extractor signature: given a field name, fill M with (rows = steps, cols = field_len).
+using FieldExtractor = std::function<bool(std::string_view /*field*/,
+                                          Eigen::MatrixXd& /*M*/,
+                                          std::string& /*why_not*/)>;
 
 bool write_fields_to_fits(const std::string& path,
                           const std::vector<std::string>& fields,
                           FieldExtractor extract,
-                          long nsteps);
+                          long nsteps,
+                          const std::vector<std::pair<std::string, std::string>>& header_strs,
+                          const std::vector<std::pair<std::string, long>>&    header_longs,
+                          const std::vector<std::pair<std::string, double>>&  header_doubles);
+
+/// we define redefine this late so should delete after testing
+// using FieldExtractor = std::function<bool(std::string_view, Eigen::MatrixXd&, std::string&)>;
+
+// bool write_fields_to_fits(const std::string& path,
+//                           const std::vector<std::string>& fields,
+//                           FieldExtractor extract,
+//                           long nsteps);
 
 static bool telem_extract_matrix(const bdr_telem& telem,
                                  std::string_view field,
@@ -427,11 +442,7 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
 }
 
 
-// adding in to allow generic field saves in probe method (which is different to dumping/saving telemetry buffer )
-// Extractor signature: given a field name, fill M with (rows = steps, cols = field_len).
-using FieldExtractor = std::function<bool(std::string_view /*field*/,
-                                          Eigen::MatrixXd& /*M*/,
-                                          std::string& /*why_not*/)>;
+
 
 /**
  * Write a single FITS file containing one IMAGE extension (HDU) per field.
@@ -447,26 +458,50 @@ using FieldExtractor = std::function<bool(std::string_view /*field*/,
  *
  * @return true on success; false on any CFITSIO or extractor error.
  */
+
 bool write_fields_to_fits(const std::string& path,
                           const std::vector<std::string>& fields,
                           FieldExtractor extract,
-                          long nsteps)
+                          long nsteps,
+                          const std::vector<std::pair<std::string, std::string>>& header_strs,
+                          const std::vector<std::pair<std::string, long>>&    header_longs,
+                          const std::vector<std::pair<std::string, double>>&  header_doubles)
 {
     int status = 0;
     fitsfile* f = nullptr;
 
-    // "!" prefix: overwrite existing file
     std::string fname = "!" + path;
     fits_create_file(&f, fname.c_str(), &status);
     if (status) { fits_report_error(stderr, status); return false; }
 
-    // Primary HDU (no data). Add global metadata here.
+    // Primary HDU (no data)
     fits_create_img(f, DOUBLE_IMG, 0, nullptr, &status);
     if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
 
-    // Global keys (optional: add CREATOR, DATE, etc.)
+    // Global keys
     fits_write_key(f, TLONG, "NSTEPS", &nsteps, (char*)"rows = steps for matrices", &status);
 
+    // NEW: write extra primary-HDU headers
+    for (const auto& kv : header_strs) {
+        const char* key = kv.first.c_str();
+        const char* val = kv.second.c_str();
+        fits_write_key(f, TSTRING, const_cast<char*>(key), (void*)val, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+    for (const auto& kv : header_longs) {
+        const char* key = kv.first.c_str();
+        long        v   = kv.second;
+        fits_write_key(f, TLONG, const_cast<char*>(key), (void*)&v, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+    for (const auto& kv : header_doubles) {
+        const char* key = kv.first.c_str();
+        double      v   = kv.second;
+        fits_write_key(f, TDOUBLE, const_cast<char*>(key), (void*)&v, nullptr, &status);
+        if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+    }
+
+    // ... keep your loop that creates one IMAGE HDU per field (EXTNAME/NSTEP/NCOLS + data) ...
     for (const auto& name : fields) {
         Eigen::MatrixXd M;
         std::string why;
@@ -476,22 +511,17 @@ bool write_fields_to_fits(const std::string& path,
             fits_close_file(f, &status);
             return false;
         }
-
-        // CFITSIO expects dims as [NAXIS1, NAXIS2] = [cols, rows]
         const long rows = static_cast<long>(M.rows());
         const long cols = static_cast<long>(M.cols());
-
         long naxes[2] = { cols, rows };
         fits_create_img(f, DOUBLE_IMG, 2, naxes, &status);
         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
 
-        // Label the extension and store simple per-field metadata
         char extname[72]; std::snprintf(extname, sizeof(extname), "%s", name.c_str());
         fits_write_key(f, TSTRING, "EXTNAME", extname, (char*)"telemetry field", &status);
         fits_write_key(f, TLONG,   "NSTEP",   (void*)&rows, (char*)"rows = steps", &status);
         fits_write_key(f, TLONG,   "NCOLS",   (void*)&cols, (char*)"cols = field length", &status);
 
-        // Eigen defaults to column-major, contiguous: safe to write directly
         const long nelem = static_cast<long>(M.size());
         fits_write_img(f, TDOUBLE, 1, nelem, const_cast<double*>(M.data()), &status);
         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
@@ -501,6 +531,62 @@ bool write_fields_to_fits(const std::string& path,
     if (status) { fits_report_error(stderr, status); return false; }
     return true;
 }
+
+
+// bool write_fields_to_fits(const std::string& path,
+//                           const std::vector<std::string>& fields,
+//                           FieldExtractor extract,
+//                           long nsteps)
+// {
+//     int status = 0;
+//     fitsfile* f = nullptr;
+
+//     // "!" prefix: overwrite existing file
+//     std::string fname = "!" + path;
+//     fits_create_file(&f, fname.c_str(), &status);
+//     if (status) { fits_report_error(stderr, status); return false; }
+
+//     // Primary HDU (no data). Add global metadata here.
+//     fits_create_img(f, DOUBLE_IMG, 0, nullptr, &status);
+//     if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+//     // Global keys (optional: add CREATOR, DATE, etc.)
+//     fits_write_key(f, TLONG, "NSTEPS", &nsteps, (char*)"rows = steps for matrices", &status);
+
+//     for (const auto& name : fields) {
+//         Eigen::MatrixXd M;
+//         std::string why;
+//         if (!extract(name, M, why)) {
+//             std::fprintf(stderr, "write_fields_to_fits: cannot extract '%s': %s\n",
+//                          name.c_str(), why.c_str());
+//             fits_close_file(f, &status);
+//             return false;
+//         }
+
+//         // CFITSIO expects dims as [NAXIS1, NAXIS2] = [cols, rows]
+//         const long rows = static_cast<long>(M.rows());
+//         const long cols = static_cast<long>(M.cols());
+
+//         long naxes[2] = { cols, rows };
+//         fits_create_img(f, DOUBLE_IMG, 2, naxes, &status);
+//         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+
+//         // Label the extension and store simple per-field metadata
+//         char extname[72]; std::snprintf(extname, sizeof(extname), "%s", name.c_str());
+//         fits_write_key(f, TSTRING, "EXTNAME", extname, (char*)"telemetry field", &status);
+//         fits_write_key(f, TLONG,   "NSTEP",   (void*)&rows, (char*)"rows = steps", &status);
+//         fits_write_key(f, TLONG,   "NCOLS",   (void*)&cols, (char*)"cols = field length", &status);
+
+//         // Eigen defaults to column-major, contiguous: safe to write directly
+//         const long nelem = static_cast<long>(M.size());
+//         fits_write_img(f, TDOUBLE, 1, nelem, const_cast<double*>(M.data()), &status);
+//         if (status) { fits_report_error(stderr, status); fits_close_file(f, &status); return false; }
+//     }
+
+//     fits_close_file(f, &status);
+//     if (status) { fits_report_error(stderr, status); return false; }
+//     return true;
+// }
 
 
 void telemetry(){
