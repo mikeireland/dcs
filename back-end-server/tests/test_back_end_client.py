@@ -98,9 +98,14 @@ def cmd_expstatus(args):
     pretty(send_once(args.host, args.port, msg, args.timeout))
 
 def cmd_report_jobs(args):
-    params = [{"name": "job_id", "value": args.job_id}] if args.job_id else []
+    job_id = getattr(args, "job_id", None)
+    timeout = getattr(args, "timeout", DEF_TIMEOUT_MS)
+    params = [{"name":"job_id","value": job_id}] if job_id else []
     msg = build_message("report_jobs", params)
-    pretty(send_once(args.host, args.port, msg, args.timeout))
+    pretty(send_once(args.host, args.port, msg, timeout))
+    # params = [{"name": "job_id", "value": args.job_id}] if args.job_id else []
+    # msg = build_message("report_jobs", params)
+    # pretty(send_once(args.host, args.port, msg, args.timeout))
 
 def cmd_abort_job(args):
     if not args.job_id:
@@ -263,9 +268,11 @@ python test_back_end_client.py --port 7010 abort_readout
 # Baldr RTS (beam required)
 python test_back_end_client.py --port 7010 rts open_baldr_lo --beam 2
 python test_back_end_client.py --port 7010 rts close_all --beam 0
+python test_back_end_client.py --port 7010 rts save_telemetry --beam 1
 
 # Burst test (bounded pool exercise)
 python test_back_end_client.py --port 7010 burst open_baldr_lo --beam 1 -n 20 --stagger 0.05
+
 
 # Jobs + abort a specific job
 python test_back_end_client.py --port 7010 report_jobs

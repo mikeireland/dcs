@@ -163,11 +163,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Type, Any
 
 from rts_base import AbstractRTSTask, RTSContext, RTSState, RTSErr
-from handlers.baldr_rts_handler import register as register_baldr_rts
+from handlers.baldr_rts_handlers import register as register_baldr_rts
 
 
+
+
+# port 7004 is used by nomachines! changed to 7010
 class BackEndServer:
-    def __init__(self, port=7004, \
+    def __init__(self, port=7010, \
             server_ports = {"hdlr": 6660, "hdlr_align": 6661, "baldr1": 6662,"baldr2":6663,"baldr3":6664,"baldr4":6665, "cam_server": 6667, "DM_server": 6666}):
         self.port = port
         #self.baldr_commands = baldr_back_end_server.BaldrCommands() #This is the Ben way.
@@ -243,6 +246,21 @@ class BackEndServer:
             task.err = int(RTSErr.RUNTIME)
             task.metadata["error"] = str(e)
 
+    def prune_jobs(self, keep_last: int = 500) -> int:
+        # for rts commands we keep log of jobs. for now we just set a hard limit on this length
+        # later we should classify them as active or not and only keep a working class record of 
+        # active jobs, and we can just pipe all jobs to some logfile that is not held internally 
+        # in this class. TO DO later (if needed)
+        n = len(self.jobs)
+        if n <= keep_last:
+            return 0
+        to_remove = n - keep_last
+        removed = 0
+        # dict preserves insertion order (oldest first)
+        for jid in list(self.jobs.keys())[:to_remove]:
+            self.jobs.pop(jid, None)
+            removed += 1
+        return removed
 
     def handle_rts(self, command: Dict[str, Any]) -> Dict[str, Any]:
         raw = (command.get("name") or "").lower()
@@ -258,7 +276,12 @@ class BackEndServer:
         fut = self._submit_bounded(self._run_task, task)
         if fut is None:
             return self.create_response("ERROR: busy")
-        self.jobs[job_id] = (task, fut)
+        self.jobs[job_id] = (task, fut)  #### 
+
+        ### we need better logging - maybe pipe to logFile and only keep activate jobs running locally
+        # for now we just prune forcefully! 
+        self.prune_jobs(keep_last = 500) 
+
         return self.create_response("OK")
 
     def run(self):
@@ -298,6 +321,8 @@ class BackEndServer:
             return self.abort(command)
         elif command_name == "expstatus":
             return self.expstatus(command)
+        elif command_name == 'report_jobs':
+            return self.report_jobs(command)
         elif command_name.startswith("bld_") or (command_name in self.rts_registry):
             # Fire-and-forget RTS
             return self.handle_rts(command)
