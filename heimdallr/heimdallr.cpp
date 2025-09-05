@@ -27,6 +27,8 @@ Bispectrum bispectra_K2[N_CP];
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 std::mutex baseline_mutex, beam_mutex;
 
+std::atomic<bool> zero_offload=false; // Atomic variable to zero the dl_offload
+
 //The forward Fourier transforms
 ForwardFt *K1ft, *K2ft;
 
@@ -81,7 +83,7 @@ std::string encode(const char* input, unsigned int size)
 }
 
 //----------commander functions from here---------------
-void linear_search(uint beam, double start, double stop, double rate) {
+void linear_search(uint beam, double start, double stop, double rate, uint search_dt_ms, double search_snr_threashold) {
     if (beam >= N_TEL) {
         std::cout << "Beam number (arg 0) out of range" << std::endl;
         return;
@@ -102,7 +104,7 @@ void linear_search(uint beam, double start, double stop, double rate) {
     baseline_mutex.unlock();
 
     // Start the search.
-    start_search(beam, start,  stop, rate);
+    start_search(beam, start,  stop, rate, search_dt_ms, search_snr_threashold);
     fmt::print("Starting search for beam {} from {} to {} at rate {}\n", 
         beam, start, stop, rate);
     return;
@@ -321,6 +323,15 @@ std::vector<double> return_gd_offsets(void){
     return gd_offsets;
 }
 
+void zero_dl_offload(void){
+    // Set the current positions of the delay lines to zero
+    beam_mutex.lock();
+    control_u.dl_offload.setZero();
+    beam_mutex.unlock();
+    // Set the atomic variable for dl_offload 
+    zero_offload=true;
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -328,7 +339,7 @@ COMMANDER_REGISTER(m)
     // You can register a function or any other callable object as
     // long as the signature is deductible from the type.
     m.def("linear_search", linear_search, "Execute a linear fringe search on a single beam.", 
-        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=1.0);
+        "beam"_arg, "start"_arg, "stop"_arg, "rate"_arg=1.0, "search_dt_ms"_arg=200, "search_snr_threshold"_arg=10.0);
     m.def("get_ps", get_ps, "Get the power spectrum in 2D", "filter"_arg="K1");
     m.def("servo", set_servo_mode, "Set the servo mode", "mode"_arg="off");
     m.def("offload", set_offload_mode, "Set the offload (slow servo) mode", "mode"_arg="off");
@@ -346,6 +357,7 @@ COMMANDER_REGISTER(m)
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
     m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
     m.def("return_gd_offsets", return_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
+    m.def("zero_dl", zero_dl, "Set the current positions of the delay lines to zero");
     // Set gd offsets 
 }
 

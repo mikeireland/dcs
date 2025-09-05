@@ -222,7 +222,7 @@ void fringe_tracker(){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
         // Wait for the next frame to be ready in K1
         while(K1ft->cnt == ft_cnt || K2ft->cnt == ft_cnt){
-            usleep(50); //!!! Need to be more sophisticated here
+            usleep(RT_USLEEP); //!!! Need to be more sophisticated here
         }
         // Check for missed frames
         if (K1ft->cnt > ft_cnt+2 || K2ft->cnt > ft_cnt+2){

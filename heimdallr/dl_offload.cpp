@@ -1,9 +1,13 @@
 #include "heimdallr.h"
-#define OFFLOAD_USLEEP 1000  //Sleep for this long in the offload loop. Should be much shorter than the fastest offload.
+// Sleep for this long in the offload loop. Should be much shorter than the fastest offload.
+// This should instead be done with a semaphore or condition variable.
+#define OFFLOAD_USLEEP 1000
+// usleep for the controllino - this is actually a wait because we are 
+// waiting for an external device.
 #define CONTROLLINO_USLEEP 1000
 #define HFO_DEADBAND 2.05 //Deadband of HFO motion in microns of OPD
-// Local globals.
 
+// Local globals.
 int controllinoSocket;
 Eigen::Vector4d next_offload;
 // This is non-zero to make sure if using the Piezos the DLs are centred.
@@ -14,7 +18,9 @@ int search_length = 0;
 int search_dl = 0;
 double search_delta = 0.5;
 double search_start = 0.0;
-double hfo_running_average = 0.0; //!!! delete this - simpler now !!!
+uint search_dt_ms = 200 // Time between search steps in ms
+double search_snr_threshold = 10.0; // SNR threshold to stop searching
+
 double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
 auto last_hfo = std::chrono::high_resolution_clock::now();
 // Add a local global to track last HFO offset send time
@@ -156,35 +162,59 @@ void dl_offload(){
 
     set_delay_lines(Eigen::Vector4d::Zero());
 
+    auto last_search_time = std::chrono::high_resolution_clock::now();
+
     while (keep_offloading) {
         // Wait for the next offload - nominally 200Hz max
         usleep(OFFLOAD_USLEEP);
 
-        if (search_ix < search_length) {
-            double max_snr = 0.0;
-            // Check all baselines associated with the current delay line,
-            // using beam_baselines[search_dl]
-            for (int i = 0; i < N_TEL-1; i++) {
-                // Get the SNR for the current baseline
-                double snr = baselines.pd_snr(beam_baselines[search_dl][i]);
-                if (snr > max_snr) {
-                    max_snr = snr;
+        // Check if we need to zero the dl_offload
+        if (zero_offload) {
+            if (delay_line_type == "hfo") {
+                // Read the current HFO positions and set the offsets to these values
+                for (int i = 0; i < N_TEL; i++) {
+                    std::string message = "read HFO" + std::to_string(i+1);
+                    std::string reply = send_mds_cmd(message);
+                    fmt::print(reply);
+                    hfo_offsets[i] = std::stod(reply);
+                    fmt::print("HFO{} offset: {}\n", i+1, hfo_offsets[i]);
+                    last_offload(i) = 0.0;
+                    next_offload(i) = 0.0;
                 }
             }
-            fmt::print("Search beam max SNR: {}\n", max_snr);
-            // Check if the SNR is above the threshold
-            if (max_snr > 10.0) {
-                // Set the search value to the current search offset !!! TODO - everything is next_offload for now.
-                //search_offset(search_dl) = search_start + search_ix * search_delta;
-                // Finish the search by setting search_length to 0
-                search_length = 0;
-            } else {
-                // Move the piezo to the next position
-                //search_offset(search_dl) = search_start + search_ix * search_delta;
-                next_offload(search_dl) = search_start + search_ix * search_delta*(OFFLOAD_USLEEP/1e6);
-                // Indicate that there is another piezo offload to do.
-                offloads_to_do++;
-                search_ix++;
+        }
+
+        auto now = std::chrono::high_resolution_clock::now();
+        // Only run search block if enough time has passed
+        if (search_ix < search_length) {
+            double ms_since_last = std::chrono::duration<double, std::milli>(now - last_search_time).count();
+            if (ms_since_last >= search_dt_ms) {
+                last_search_time = now;
+                double max_snr = 0.0;
+                // Check all baselines associated with the current delay line,
+                // using beam_baselines[search_dl]
+                for (int i = 0; i < N_TEL-1; i++) {
+                    // Get the SNR for the current baseline
+                    double snr = baselines.pd_snr(beam_baselines[search_dl][i]);
+                    if (snr > max_snr) {
+                        max_snr = snr;
+                    }
+                }
+                fmt::print("Search beam max SNR: {}\n", max_snr);
+                // Check if the SNR is above the threshold
+                if (max_snr > search_snr_threashold) {
+                    // Set the search value to the current search offset !!! TODO - everything is next_offload for now.
+                    //search_offset(search_dl) = search_start + search_ix * search_delta;
+                    // Finish the search by setting search_length to 0
+                    search_length = 0;
+                } else {
+                    // Move the piezo to the next position
+                    //search_offset(search_dl) = search_start + search_ix * search_delta;
+                    next_offload(search_dl) = search_start + search_ix * search_delta*(OFFLOAD_USLEEP/1e6);
+                    // Indicate that there is another piezo offload to do.
+                    offloads_to_do++;
+                    search_ix++;
+                }
             }
         } else search_offset(search_dl) = 0.0;
         if (offloads_to_do > offloads_done) {
