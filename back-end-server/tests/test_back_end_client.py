@@ -8,7 +8,7 @@ import zmq
 import threading
 
 DEF_HOST = "localhost"
-DEF_PORT = 7004
+DEF_PORT = 7010
 
 def now_iso():
     return dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
@@ -133,10 +133,10 @@ def main():
     args = ap.parse_args()
 
     if not args.cmd:
-        # default mini-sequence: ping → bld_openao → report_jobs
+        # default mini-sequence: ping - bld_openao - report_jobs
         print("-> ping")
         cmd_ping(args)
-        print("-> bld_openao")
+        print("-> bld_close_baldr_lo")
         args2 = argparse.Namespace(**vars(args), name="openao", raw=False, param=None)
         cmd_rts(args2)
         print("-> report_jobs")
