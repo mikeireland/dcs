@@ -199,7 +199,7 @@ class BackEndServer:
 
          # ---- RTS registry and execution bounds ----
         self.rts_registry: Dict[str, Type[AbstractRTSTask]] = {}
-        self.rts_ctx = RTSContext(mcs_notify=None)  # plug your MCS notifier when ready
+        self.rts_ctx = RTSContext(mcs_notify=None)  # plug a MCS notifier when ready
 
 
         """
@@ -207,6 +207,12 @@ class BackEndServer:
             avoid unbounded thread creation and memory growth,
             prevent the REP loop from blocking on long RTS actions,
             provide predictable back-pressure ("ERROR: busy" when saturated).
+
+            this was implemented to allow python scripts to be run directly from the back_end_server
+            perhaps I should have another bld_alignment server the back_end_server talks to to run
+            these scripts?
+
+            currently this will only say busy if there are more than N running or queued things
         """
         # Bounded thread-pool for RTS tasks 
         self.max_workers = 16          # tune per host
@@ -225,7 +231,7 @@ class BackEndServer:
         """Register an RTS command class by its short name (without 'bld_' prefix)."""
         self.rts_registry[name.lower()] = cls
 
-    def _submit_bounded(self, fn, *args, **kwargs):
+    def _submit_bounded(self, fn, *args, **kwargs):# only for rts commands 
         """Try to submit work if under the inflight cap; else return None (busy)."""
         if not self._inflight_sem.acquire(blocking=False):
             return None
@@ -233,7 +239,7 @@ class BackEndServer:
         fut.add_done_callback(lambda f: self._inflight_sem.release())
         return fut
 
-    def _run_task(self, task: AbstractRTSTask):
+    def _run_task(self, task: AbstractRTSTask): # only for rts commands 
         """Worker body: run + update DB, set final state on success/failure."""
         try:
             task.state = int(RTSState.RUNNING)

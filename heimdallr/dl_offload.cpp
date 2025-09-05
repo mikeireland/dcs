@@ -5,7 +5,7 @@
 // usleep for the controllino - this is actually a wait because we are 
 // waiting for an external device.
 #define CONTROLLINO_USLEEP 1000
-#define HFO_DEADBAND 2.05 //Deadband of HFO motion in microns of OPD
+#define HFO_DEADBAND 3.5 //Deadband of HFO motion in microns of OPD. This is a sum over all DLs
 
 // Local globals.
 int controllinoSocket;
@@ -18,7 +18,7 @@ int search_length = 0;
 int search_dl = 0;
 double search_delta = 0.5;
 double search_start = 0.0;
-uint search_dt_ms = 200 // Time between search steps in ms
+uint search_dt_ms = 200; // Time between search steps in ms
 double search_snr_threshold = 10.0; // SNR threshold to stop searching
 
 double hfo_offsets[N_TEL] = {0.0, 0.0, 0.0, 0.0};
@@ -60,6 +60,24 @@ void set_delay_lines(Eigen::Vector4d dl) {
 }
 
 void add_to_delay_lines(Eigen::Vector4d dl) {
+    // First, decide if we are ignoring this command
+    if (delay_line_type =="hfo"){
+        // Only send if more than 0.5 since last offset
+        auto now = std::chrono::high_resolution_clock::now();
+        double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
+        if (seconds_since_last < 0.5) {
+            fmt::print("Not enough time for a new offload.\n");
+            return;
+        }
+        // Check to find the total offload requested, adding all values of
+        // last_offload - (next_offload + search_offset). 
+        double total_offload = 0.0;
+        for (int i = 0; i < N_TEL; i++) {
+            total_offload += std::fabs(dl(i));
+        }
+        // If the total offload is less than the deadband of about  micron, do not send
+        if (total_offload < HFO_DEADBAND) return;
+    }
     next_offload += dl;
     offloads_to_do++;
 }
@@ -76,13 +94,15 @@ void set_delay_line(int dl, double value) {
     offloads_to_do++;
 }
 
-void start_search(uint search_dl_in, double start, double stop, double rate) {
+void start_search(uint search_dl_in, double start, double stop, double rate, uint dt_ms, double threshold) {
     // This function sets the search parameters for the delay line.
     search_ix = 0;
     search_length = (int)((stop - start) / rate);
     search_dl = search_dl_in;
     search_delta = rate;
     search_start = start;
+    search_dt_ms = dt_ms;
+    search_snr_threshold = threshold;
 }
 
 void move_piezos(){
@@ -105,22 +125,6 @@ void move_piezos(){
 }
 
 void move_hfo(){
-    // Only send if more than 0.5 since last offset
-    auto now = std::chrono::high_resolution_clock::now();
-    double seconds_since_last = std::chrono::duration<double>(now - last_hfo_offset).count();
-    if (seconds_since_last < 0.5) {
-        fmt::print("Not enough time for a new offload.\n");
-        return;
-    }
-    // Check to find the total offload requested, adding all values of
-    // last_offload - (next_offload + search_offset). 
-    double total_offload = 0.0;
-    for (int i = 0; i < N_TEL; i++) {
-        total_offload += std::fabs(last_offload(i) - (next_offload(i) + search_offset(i)));
-    }
-    // If the total offload is less than the deadband of about  micron, do not send
-    if (total_offload < HFO_DEADBAND) return;
-
     // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
         if ( last_offload(i)  != next_offload(i) + search_offset(i) ) {
@@ -132,7 +136,7 @@ void move_hfo(){
             last_offload(i) = next_offload(i) + search_offset(i);
         } 
     }
-    last_hfo_offset = now;
+    last_hfo_offset = std::chrono::high_resolution_clock::now();
 }
 
 // The main thread function
@@ -182,6 +186,7 @@ void dl_offload(){
                     next_offload(i) = 0.0;
                 }
             }
+            zero_offload=false;
         }
 
         auto now = std::chrono::high_resolution_clock::now();
@@ -202,7 +207,7 @@ void dl_offload(){
                 }
                 fmt::print("Search beam max SNR: {}\n", max_snr);
                 // Check if the SNR is above the threshold
-                if (max_snr > search_snr_threashold) {
+                if (max_snr > search_snr_threshold) {
                     // Set the search value to the current search offset !!! TODO - everything is next_offload for now.
                     //search_offset(search_dl) = search_start + search_ix * search_delta;
                     // Finish the search by setting search_length to 0
@@ -210,7 +215,7 @@ void dl_offload(){
                 } else {
                     // Move the piezo to the next position
                     //search_offset(search_dl) = search_start + search_ix * search_delta;
-                    next_offload(search_dl) = search_start + search_ix * search_delta*(OFFLOAD_USLEEP/1e6);
+                    next_offload(search_dl) = search_start + search_ix * search_delta;
                     // Indicate that there is another piezo offload to do.
                     offloads_to_do++;
                     search_ix++;

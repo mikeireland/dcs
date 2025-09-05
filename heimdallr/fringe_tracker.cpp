@@ -344,7 +344,7 @@ void fringe_tracker(){
         // Only in this part do we ultiply by the K1 wavelength 
         // config["wave"]["K1"].value_or(2.05)
 
-        // Just use a proportional servo on group delay with fixed gain of 0.5.
+        // Just use a proportional servo on group delay with fixed gain.
         if (servo_mode==SERVO_SIMPLE){
             // Compute the piezo control signal. T
             control_u.dm_piston += (pid_settings.kp * control_a.pd + 
@@ -409,7 +409,12 @@ void fringe_tracker(){
                 control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD) {
-                fmt::print("Adding {} to GD\n", -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05));
+                double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);
+                double o2 = -pid_settings.offload_gd_gain*control_a.gd(1) * config["wave"]["K1"].value_or(2.05);
+                double o3 = -pid_settings.offload_gd_gain*control_a.gd(2) * config["wave"]["K1"].value_or(2.05);
+                double o4 = -pid_settings.offload_gd_gain*control_a.gd(3) * config["wave"]["K1"].value_or(2.05);
+                double otot = std::fabs(o1) + std::fabs(o2) + std::fabs(o3) + std::fabs(o4);
+                fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot);
                 add_to_delay_lines(-pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;

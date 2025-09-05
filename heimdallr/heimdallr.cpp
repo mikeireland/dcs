@@ -357,7 +357,7 @@ COMMANDER_REGISTER(m)
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
     m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
     m.def("return_gd_offsets", return_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
-    m.def("zero_dl", zero_dl, "Set the current positions of the delay lines to zero");
+    m.def("zero_dl_offload", zero_dl_offload, "Set the current positions of the delay lines to zero");
     // Set gd offsets 
 }
 

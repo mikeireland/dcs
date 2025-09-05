@@ -119,6 +119,8 @@ class Heimdallr():
         self.gdlays = [[], [], [], [], [], []]  # the log of group delays
         self.vis_k1 = [[], [], [], [], [], []]  # log of K1 visibility
         self.vis_k2 = [[], [], [], [], [], []]  # log of K2 visibility
+        self.phi_k1 = [[], [], [], [], [], []]  # log of K1 phase
+        self.phi_k2 = [[], [], [], [], [], []]  # log of K2 phase
 
         self.calibrated = False
         self.calibrating = False
@@ -202,11 +204,15 @@ class Heimdallr():
         for ii in range(6):
             self.vis_k1[ii].append(np.abs(self.hdlr1.cvis[0][ii]))
             self.vis_k2[ii].append(np.abs(self.hdlr2.cvis[0][ii]))
+            self.phi_k1[ii].append(self._pd_k1[ii])
+            self.phi_k2[ii].append(self._pd_k2[ii])
 
         if len(self.vis_k1[0]) > self.log_len:
             for ii in range(6):
                 self.vis_k1[ii].pop(0)
                 self.vis_k2[ii].pop(0)
+                self.phi_k1[ii].pop(0)
+                self.phi_k2[ii].pop(0)
 
     # =========================================================================
     def dispatch_opds(self):
