@@ -6,6 +6,8 @@
 #define PD_THRESHOLD 4
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.3
+// Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
+#define GD_MAX_VAR_FOR_JUMP 0.2*0.2
 
 using namespace std::complex_literals;
 
@@ -66,6 +68,15 @@ Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold)
         std::cout << "Thresholding time: " << now.tv_nsec-then.tv_nsec << std::endl;
 #endif
     return  es.eigenvectors() * singularDiag * es.eigenvectors().transpose();
+}
+
+// Normalized sinc function
+double sinc_normalized(double x) {
+    if (x == 0.0) {
+        return 1.0;
+    } else {
+        return std::sin(M_PI * x) / (M_PI * x);
+    }
 }
 
 void set_dm_piston(Eigen::Vector4d dm_piston){
@@ -213,6 +224,7 @@ void fringe_tracker(){
     Eigen::Matrix4d I4_search_projection;
     Eigen::Matrix<double, N_TEL, N_TEL> cov_gd_tel;
     Eigen::Matrix<double, N_TEL, N_TEL> cov_pd_tel;
+    Eigen::Vector4d pd_gain_scale = Eigen::Vector4d::Ones();
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
@@ -331,11 +343,11 @@ void fringe_tracker(){
         // The covariance matrix of baselines_gd and baselines_pd is given by a diagonal
         // matrix with the inverse of the SNR squared on the diagonal. We need to find the 
         // covariance of the telescope group and phase delays. 
-        // !!! Unused in main loop but could be useful?
+        // !!! cov_pd_tel unused for now but could be useful?
 
-        //cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
+        cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
         //cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
-        
+
         // Now project the filtered gd and pd onto telescope space.
         control_a.gd = M_lacour_dag * gd_filtered;
         control_a.pd = M_lacour_dag * pd_filtered;
@@ -344,10 +356,25 @@ void fringe_tracker(){
         // Only in this part do we ultiply by the K1 wavelength 
         // config["wave"]["K1"].value_or(2.05)
 
+        // Based on whether there are fringe jumps, we may want to scale the pd gain.
+        for (int i=0; i<N_TEL; i++){
+            if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+                if (std::fabs(control_a.gd(i)) > 0.5){
+                    // We are more than 0.5 waves away, so we are likely to have a fringe jump.
+                    // Set the pd gain scale to zero.
+                    pd_gain_scale(i) = 0.0;
+                } else {
+                    // Scale the pd gain by the sinc of the gd offset, 
+                    // so that if the gd is 0.5 waves away, the pd gain is zero.
+                    pd_gain_scale(i) = sinc_normalized(control_a.gd(i));
+                }
+            }
+        }
+
         // Just use a proportional servo on group delay with fixed gain.
         if (servo_mode==SERVO_SIMPLE){
-            // Compute the piezo control signal. T
-            control_u.dm_piston += (pid_settings.kp * control_a.pd + 
+            // Compute the piezo control signal.
+            control_u.dm_piston += (pid_settings.kp * pd_gain_scale.asDiagonal() * control_a.pd +
                 pid_settings.gd_gain * control_a.gd) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
             // Center the DM piston.
             control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
