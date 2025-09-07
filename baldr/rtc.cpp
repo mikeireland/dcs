@@ -1485,7 +1485,11 @@ void rtc(){
             }
 
             snr_value = (n_used > 0.0) ? (snr_value / n_used) : 0.0;
+
+            // add to telemetry
             rtc_config.telem.snr.push_back(snr_value);
+
+            
             // double sum = 0.0;
             // double sumsq = 0.0;
             // size_t count = 0;
@@ -1526,7 +1530,7 @@ void rtc(){
             // }
 
             // Add to telemetry
-            rtc_config.telem.snr.push_back(snr_value);
+            //rtc_config.telem.snr.push_back(snr_value);
 
             // Increment the counter.
             rtc_config.telem.counter++;
