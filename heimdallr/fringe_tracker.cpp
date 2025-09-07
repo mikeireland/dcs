@@ -2,8 +2,8 @@
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
 //#define DEBUG
-#define GD_THRESHOLD 3
-#define PD_THRESHOLD 4
+#define GD_THRESHOLD 20
+#define PD_THRESHOLD 10
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
