@@ -5,7 +5,7 @@
 #define GD_THRESHOLD 3
 #define PD_THRESHOLD 4
 #define GD_SEARCH_RESET 5
-#define MAX_DM_PISTON 0.3
+#define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
 #define GD_MAX_VAR_FOR_JUMP 0.2*0.2
 
@@ -225,6 +225,8 @@ void fringe_tracker(){
     Eigen::Matrix<double, N_TEL, N_TEL> cov_gd_tel;
     Eigen::Matrix<double, N_TEL, N_TEL> cov_pd_tel;
     Eigen::Vector4d pd_gain_scale = Eigen::Vector4d::Ones();
+    unsigned long int last_gd_jump[N_TEL] = {0,0,0,0};
+
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
@@ -382,6 +384,26 @@ void fringe_tracker(){
             control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
             control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
 
+        } else if (servo_mode = SERVO_LACOUR){
+            // Compute the piezo control signal from the phase delay.
+            control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+            // Use the group delay to make full fringe jumps, only if there has been at least
+            // baselines.n_gd_boxcar frames since initialisation or the last jump.
+            for (int i=0; i<N_TEL; i++){
+                if (cnt_since_init - last_gd_jump[i] > baselines.n_gd_boxcar){
+                    if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+                        if (std::fabs(control_a.gd(i)) > 0.5){
+                            control_u.dm_piston(i) += std::round(control_a.gd(i)) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+                            last_gd_jump[i] = cnt_since_init;
+                        } 
+                    }
+                }
+            }
+            // Center the DM piston.
+            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
+            // Limit it to no more than +/- MAX_DM_PISTON.
+            control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
+            control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
         }
         // Make the test pattern.
         if (control_u.test_n > 0){
@@ -401,8 +423,8 @@ void fringe_tracker(){
             std::cout << "FT Computation time: " << now.tv_nsec-then.tv_nsec << std::endl;
         then = now;
 #endif
-
-        cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
+        // Already computed above. 
+        //cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
         double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
         if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
             control_u.search_Nsteps=0;
