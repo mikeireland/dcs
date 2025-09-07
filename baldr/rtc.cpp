@@ -581,69 +581,6 @@ inline void compute_c_inj(const bdr_rtc_config &rtc_config,
 } // namespace
 
 
-// === New Windowed SNR over the current telemetry length of img_dm ===
-// SNR := < mean_t(img_dm) / std_t(img_dm) >_space, where the temporal window
-//        spans exactly the frames currently retained in rtc_config.telem.img_dm.
-struct SNRWindow {
-    size_t K = 0;                       // desired window length
-    std::deque<Eigen::VectorXd> q;      // last K frames
-    Eigen::VectorXd sum;                // per-pixel sum x
-    Eigen::VectorXd sumsq;              // per-pixel sum x^2
-    bool inited = false;
-
-    void reset(size_t K_new, Eigen::Index P) {
-        K = K_new;
-        q.clear();
-        sum   = Eigen::VectorXd::Zero(P);
-        sumsq = Eigen::VectorXd::Zero(P);
-        inited = true;
-    }
-
-    // Shrink/grow the window without losing accumulated stats when possible
-    void set_K(size_t K_new) {
-        if (!inited) { K = K_new; return; }
-        if (K_new < 1) K_new = 1;
-        // If shrinking, pop oldest while updating sums
-        while (q.size() > K_new) {
-            const Eigen::VectorXd& old = q.front();
-            sum.noalias()   -= old;
-            sumsq.noalias() -= old.cwiseProduct(old);
-            q.pop_front();
-        }
-        K = K_new; // growing needs no action; future pushes will fill up to K
-    }
-
-    void push(const Eigen::VectorXd& x) {
-        if (!inited) return;
-        sum.noalias()   += x;
-        sumsq.noalias() += x.cwiseProduct(x);
-        q.push_back(x);
-        if (q.size() > K) {
-            const Eigen::VectorXd& old = q.front();
-            sum.noalias()   -= old;
-            sumsq.noalias() -= old.cwiseProduct(old);
-            q.pop_front();
-        }
-    }
-
-    double value() const {
-        const size_t n = q.size();
-        if (n <= 1) return 0.0;
-
-        const Eigen::VectorXd mean = sum / static_cast<double>(n);
-        Eigen::VectorXd var_num = sumsq - static_cast<double>(n) * mean.cwiseProduct(mean);
-        var_num = var_num.cwiseMax(0.0); // numeric guard
-        const Eigen::ArrayXd stdev = (var_num / static_cast<double>(n - 1)).array().sqrt();
-
-        const double eps = 1e-12;
-        double acc = 0.0; size_t used = 0;
-        for (Eigen::Index i = 0; i < mean.size(); ++i) {
-            const double r = mean(i) / (stdev(i) + eps);
-            if (std::isfinite(r)) { acc += r; ++used; }
-        }
-        return (used > 0) ? (acc / static_cast<double>(used)) : 0.0;
-    }
-};
 
 
 // // The main RTC function
@@ -1497,27 +1434,53 @@ void rtc(){
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
      
 
+            // === SNR over full img_dm telemetry buffer (recomputed each frame) ===
+            // Definition: < mean_t(img_dm) / std_t(img_dm) >_space over all frames currently stored.
+            // doing dumb slower implementation of recalculating every iteration, but simple
+            double snr_value = 0.0;
 
-            // // === SNR from img_dm telemetry buffer ===
-            // One static instance keyed to image geometry
-            static SNRWindow snr_w;
+            const auto& buf = rtc_config.telem.img_dm;
+            const size_t T = buf.size();
 
-            // Use the live temporal length of the img_dm telemetry as K.
-            // (This assumes you already did rtc_config.telem.img_dm.push_back(img_dm);)
-            size_t K_target = rtc_config.telem.img_dm.size();
-            // Ensure at least 2 samples so sample std is defined
-            if (K_target < 2) K_target = 2;
+            if (T >= 2) {
+                // Use the last frame's size as the reference spatial size
+                const Eigen::Index P = buf.back().size();
 
-            // (Re)initialise on first use or geometry change; otherwise adjust K on the fly
-            if (!snr_w.inited || snr_w.sum.size() != img_dm.size()) {
-                snr_w.reset(K_target, img_dm.size());
-            } else if (snr_w.K != K_target) {
-                snr_w.set_K(K_target);
+                Eigen::VectorXd sum   = Eigen::VectorXd::Zero(P);
+                Eigen::VectorXd sumsq = Eigen::VectorXd::Zero(P);
+
+                size_t used_frames = 0;
+                for (const auto& x : buf) {
+                    if (x.size() != P) continue;                   // skip anomalous frames
+                    sum   += x;
+                    sumsq += x.cwiseProduct(x);
+                    ++used_frames;
+                }
+
+                if (used_frames >= 2) {
+                    const double n = static_cast<double>(used_frames);
+                    Eigen::VectorXd mean = sum / n;
+
+                    // sample variance per pixel: (sumx^2 - n*mu^2)/(n-1)
+                    Eigen::VectorXd var_num = sumsq - n * mean.cwiseProduct(mean);
+                    var_num = var_num.cwiseMax(0.0);               // numeric guard
+                    Eigen::ArrayXd  stdev   = (var_num / (n - 1.0)).array().sqrt();
+
+                    // Spatial average of per-pixel mean/std; skip zero-std pixels
+                    double acc = 0.0;
+                    size_t used_px = 0;
+                    for (Eigen::Index i = 0; i < P; ++i) {
+                        double s = stdev(i);
+                        if (s > 0.0) {
+                            acc += mean(i) / s;
+                            ++used_px;
+                        }
+                    }
+                    snr_value = (used_px > 0) ? (acc / static_cast<double>(used_px)) : 0.0;
+                }
             }
 
-            // Feed current frame and compute SNR
-            snr_w.push(img_dm);
-            const double snr_value = snr_w.value();
+            // Store to telemetry
             rtc_config.telem.snr.push_back(snr_value);
 
             // // === SNR from img_dm telemetry buffer ===
