@@ -1430,12 +1430,12 @@ void rtc(){
             
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
      
-            // === SNR from img_dm (registered DM pixels) telemetry buffer ===
+            // === SNR from img_dm telemetry buffer ===
             // Definition: < mean_t(img_dm) / std_t(img_dm) >_space
 
             // Persistent per-pixel accumulators (reset on first use or size change)
             static Eigen::VectorXd snr_mean;   // per-pixel running mean
-            static Eigen::VectorXd snr_M2;     // per-pixel running sum of squared diffs
+            static Eigen::VectorXd snr_M2;     // per-pixel sum of squared diffs
             static size_t snr_count = 0;
 
             // (Re)initialise if needed
@@ -1445,51 +1445,41 @@ void rtc(){
                 snr_count = 0;
             }
 
-            // Welford update with the current img_dm sample
+            // Welford update with current img_dm sample (vectorised, per-pixel) - an unbiased estimate
             snr_count += 1;
             Eigen::VectorXd delta  = img_dm - snr_mean;
             snr_mean.noalias()    += delta / static_cast<double>(snr_count);
             Eigen::VectorXd delta2 = img_dm - snr_mean;
             snr_M2.noalias()      += delta.cwiseProduct(delta2);
 
-            // Per-pixel (sample) std
-            Eigen::VectorXd snr_std;
-            if (snr_count > 1) {
-                snr_std = (snr_M2 / static_cast<double>(snr_count - 1))
-                            .cwiseMax(0.0).cwiseSqrt();
-            } else {
-                snr_std = Eigen::VectorXd::Zero(img_dm.size());
-            }
-
-            // Ratio per pixel (guard against divide-by-zero)
-            Eigen::ArrayXd ratio = snr_mean.array() / (snr_std.array() + 1e-12);
-
-            // Spatial average (optionally restricted by inner_pupil_filt if available)
             double snr_value = 0.0;
-            double n_used    = 0.0;
 
-            if (rtc_config.filters.inner_pupil_filt.size() == img_dm.size()) {
-                for (Eigen::Index i = 0; i < ratio.size(); ++i) {
-                    if (rtc_config.filters.inner_pupil_filt(i) > 0.5 && std::isfinite(ratio(i))) {
-                        snr_value += ratio(i);
-                        n_used += 1.0;
+            if (snr_count > 1) {
+                // sample variance/std per pixel
+                Eigen::VectorXd var = snr_M2 / static_cast<double>(snr_count - 1);
+                var = var.cwiseMax(0.0);                     // numerical guard
+                Eigen::ArrayXd std = var.array().sqrt();
+
+                // ratio per pixel; guard zero-std (skip those pixels)
+                double sum_ratio = 0.0;
+                size_t n_used    = 0;
+                for (Eigen::Index i = 0; i < std.size(); ++i) {
+                    double s = std(i);
+                    if (s > 0.0 && std::isfinite(snr_mean(i))) {
+                        sum_ratio += snr_mean(i) / s;
+                        ++n_used;
                     }
                 }
+                snr_value = (n_used > 0) ? (sum_ratio / static_cast<double>(n_used)) : 0.0;
             } else {
-                for (Eigen::Index i = 0; i < ratio.size(); ++i) {
-                    if (std::isfinite(ratio(i))) {
-                        snr_value += ratio(i);
-                        n_used += 1.0;
-                    }
-                }
+                // fewer than 2 frames: std undefined -> report 0 for now
+                snr_value = 0.0;
             }
-
-            snr_value = (n_used > 0.0) ? (snr_value / n_used) : 0.0;
 
             // add to telemetry
             rtc_config.telem.snr.push_back(snr_value);
 
-            
+
             // double sum = 0.0;
             // double sumsq = 0.0;
             // size_t count = 0;
@@ -1533,6 +1523,7 @@ void rtc(){
             //rtc_config.telem.snr.push_back(snr_value);
 
             // Increment the counter.
+
             rtc_config.telem.counter++;
 
             // auto end10   = Clock::now();
