@@ -1429,32 +1429,84 @@ void rtc(){
             rtc_config.telem.c_inj.push_back(c_inj_applied); // <-- NEW
             
             rtc_config.telem.rmse_est.push_back(dm_rms_est_1);          // New 
+     
+            // === SNR from img_dm (registered DM pixels) telemetry buffer ===
+            // Definition: < mean_t(img_dm) / std_t(img_dm) >_space
 
-            // === COMPUTE SNR inside the pupil ===
-            
-            
+            // Persistent per-pixel accumulators (reset on first use or size change)
+            static Eigen::VectorXd snr_mean;   // per-pixel running mean
+            static Eigen::VectorXd snr_M2;     // per-pixel running sum of squared diffs
+            static size_t snr_count = 0;
 
-            double sum = 0.0;
-            double sumsq = 0.0;
-            size_t count = 0;
-
-
-            for (Eigen::Index i = 0; i < img_dm.size(); ++i) {
-                
-                double val = img_dm(i);
-                sum += val;
-                sumsq += val * val;
-                ++count;
-                
+            // (Re)initialise if needed
+            if (snr_count == 0 || snr_mean.size() != img_dm.size()) {
+                snr_mean  = Eigen::VectorXd::Zero(img_dm.size());
+                snr_M2    = Eigen::VectorXd::Zero(img_dm.size());
+                snr_count = 0;
             }
 
+            // Welford update with the current img_dm sample
+            snr_count += 1;
+            Eigen::VectorXd delta  = img_dm - snr_mean;
+            snr_mean.noalias()    += delta / static_cast<double>(snr_count);
+            Eigen::VectorXd delta2 = img_dm - snr_mean;
+            snr_M2.noalias()      += delta.cwiseProduct(delta2);
+
+            // Per-pixel (sample) std
+            Eigen::VectorXd snr_std;
+            if (snr_count > 1) {
+                snr_std = (snr_M2 / static_cast<double>(snr_count - 1))
+                            .cwiseMax(0.0).cwiseSqrt();
+            } else {
+                snr_std = Eigen::VectorXd::Zero(img_dm.size());
+            }
+
+            // Ratio per pixel (guard against divide-by-zero)
+            Eigen::ArrayXd ratio = snr_mean.array() / (snr_std.array() + 1e-12);
+
+            // Spatial average (optionally restricted by inner_pupil_filt if available)
             double snr_value = 0.0;
-            if (count > 0) {
-                double mean = sum / count;
-                double variance = (sumsq / count) - (mean * mean);
-                double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
-                snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+            double n_used    = 0.0;
+
+            if (rtc_config.filters.inner_pupil_filt.size() == img_dm.size()) {
+                for (Eigen::Index i = 0; i < ratio.size(); ++i) {
+                    if (rtc_config.filters.inner_pupil_filt(i) > 0.5 && std::isfinite(ratio(i))) {
+                        snr_value += ratio(i);
+                        n_used += 1.0;
+                    }
+                }
+            } else {
+                for (Eigen::Index i = 0; i < ratio.size(); ++i) {
+                    if (std::isfinite(ratio(i))) {
+                        snr_value += ratio(i);
+                        n_used += 1.0;
+                    }
+                }
             }
+
+            snr_value = (n_used > 0.0) ? (snr_value / n_used) : 0.0;
+            rtc_config.telem.snr.push_back(snr_value);
+            // double sum = 0.0;
+            // double sumsq = 0.0;
+            // size_t count = 0;
+
+
+            // for (Eigen::Index i = 0; i < img_dm.size(); ++i) {
+                
+            //     double val = img_dm(i);
+            //     sum += val;
+            //     sumsq += val * val;
+            //     ++count;
+                
+            // }
+
+            // double snr_value = 0.0;
+            // if (count > 0) {
+            //     double mean = sum / count;
+            //     double variance = (sumsq / count) - (mean * mean);
+            //     double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
+            //     snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+            // }
 
             // for (Eigen::Index i = 0; i < sig.size(); ++i) {
             //     if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
