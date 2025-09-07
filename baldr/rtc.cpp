@@ -1438,13 +1438,14 @@ void rtc(){
             double sumsq = 0.0;
             size_t count = 0;
 
-            for (Eigen::Index i = 0; i < sig.size(); ++i) {
-                if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
-                    double val = sig(i);
-                    sum += val;
-                    sumsq += val * val;
-                    ++count;
-                }
+
+            for (Eigen::Index i = 0; i < img_dm.size(); ++i) {
+                
+                double val = img_dm(i);
+                sum += val;
+                sumsq += val * val;
+                ++count;
+                
             }
 
             double snr_value = 0.0;
@@ -1454,6 +1455,23 @@ void rtc(){
                 double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
                 snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
             }
+
+            // for (Eigen::Index i = 0; i < sig.size(); ++i) {
+            //     if (rtc_config.filters.inner_pupil_filt(i) > 0.5) {
+            //         double val = sig(i);
+            //         sum += val;
+            //         sumsq += val * val;
+            //         ++count;
+            //     }
+            // }
+
+            // double snr_value = 0.0;
+            // if (count > 0) {
+            //     double mean = sum / count;
+            //     double variance = (sumsq / count) - (mean * mean);
+            //     double stddev = (variance > 0.0) ? std::sqrt(variance) : 0.0;
+            //     snr_value = (stddev != 0.0) ? (mean / stddev) : 0.0;
+            // }
 
             // Add to telemetry
             rtc_config.telem.snr.push_back(snr_value);
