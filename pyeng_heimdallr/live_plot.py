@@ -15,6 +15,7 @@ import threading
 
 import time
 import sys
+import zmq
 
 # =====================================================================
 #                   global variables and tools
@@ -82,6 +83,13 @@ class App(QtWidgets.QMainWindow):
 class MyMainWidget(QWidget):
     def __init__(self, parent): 
         super(QWidget, self).__init__(parent)
+
+        # self.context = zmq.Context()
+        # self.server = self.context.socket(zmq.REP)
+        # self.server.bind("tcp://192.168.100.2:6661")
+        # self.zmqThread = GenericThread(self.zmq_loop)
+        # self.zmq_server_on = True
+        # self.zmqThread.start()
 
         # ---------------------------------------------------------------------
         #                              top menu
@@ -157,6 +165,14 @@ class MyMainWidget(QWidget):
         self.apply_layout()
 
         self.tracking = False
+
+    # =========================================================================
+    def zmq_loop(self):
+        ''' Waiting for and processing (independant thread) ZMQ commands '''
+        print("ZMQ business starting!")
+        while self.zmq_server_on:
+            pass
+        print("ZMQ business is done")
 
     # =========================================================================
     def wfs_start(self):
@@ -386,6 +402,7 @@ def main():
     gui = App()
     gui.show()
     myqt.mainloop()
+    gui.main_widget.zmq_server_on = False
     myqt.gui_quit()
 
 

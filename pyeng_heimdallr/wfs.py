@@ -33,6 +33,8 @@ hcoords = np.array([[-1.025,  2.460],  # Bench Beam 1
                     [ 0.000  ,0.000],  # Bench Beam 3
                     [ 2.785,  0.035]]) # Bench Beam 4
 
+hcoords = np.loadtxt("N1_hole_coordinates.txt")
+
 # ----------------------------------------
 # piston mode design
 dms = 12
@@ -42,9 +44,11 @@ taper = np.exp(-(dd/tprad)**20)  # power to be adjusted ?
 amask = taper > 0.4  # seems to work well
 
 pst = np.zeros((dms, dms))
-pst[amask] = 0.02  # 0.2 DM piston on GUI -> 10 ADU units # optical gain ~ 3µm / ADU
+pst[amask] = 0.02  # 0.2 DM piston on GUI -> 10 ADU units
 
 im_offset = 1000.0
+ogain = 3.5  # DM optical gain (in microns / control unit)
+oscale = 1e6 / (4*np.pi * ogain) # phase to microns conversion factor (* wl)
 
 # ------------------------------------------------
 # a simple unwrapping procedure for RT processing?
@@ -69,11 +73,13 @@ class Heimdallr():
         self.gd_offset = np.zeros(6)
         # pf.writeto("apodizer.fits", self.apod, overwrite=True)
         
-        self.pscale = 35
+        self.pscale = 35 * 1.85
         self.Ks_wl = 2.05e-6  # True Heimdallr Ks wavelength (in meters)
         self.Kl_wl = 2.25e-6  # True Heimdallr Kl wavelength (in meters)
 
-        self.dl_factor = self.Kl_wl / (self.Kl_wl - self.Ks_wl) / 2*np.pi
+        self.gd_factor = self.Kl_wl**2 / (self.Kl_wl - self.Ks_wl) * oscale
+        self.pd1_factor = self.Ks_wl * oscale
+        self.pd2_factor = self.Kl_wl * oscale
 
         self.hdlr1 = IWFS(array=hcoords)
         self.hdlr2 = IWFS(array=hcoords)
@@ -172,7 +178,7 @@ class Heimdallr():
                 self._pd_k2[ii] = unwrap(self._pd_k2[ii],
                                           self._pd_prev_k2[ii])
 
-        self.gdlay = self._gd_rad * self.dl_factor - self.gd_offset
+        self.gdlay = self._gd_rad * self.gd_factor - self.gd_offset
         self.opd_now_k1 = self.PINV.dot(self._pd_k1)
         self.opd_now_k2 = self.PINV.dot(self._pd_k2)
 
@@ -220,7 +226,7 @@ class Heimdallr():
 
 
         self.disps[0] = self.dms_cmds[0]
-        self.disps[1] = self.dms_cmds[1] #0.0 # ref_beam
+        self.disps[1] = self.dms_cmds[1]
         self.disps[2] = 0.0
         self.disps[3] = self.dms_cmds[2]
 

@@ -384,7 +384,7 @@ void fringe_tracker(){
             control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
             control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
 
-        } else if (servo_mode = SERVO_LACOUR){
+        } else if (servo_mode == SERVO_LACOUR){
             // Compute the piezo control signal from the phase delay.
             control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
             // Use the group delay to make full fringe jumps, only if there has been at least
