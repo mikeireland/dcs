@@ -417,9 +417,3 @@ int main(int argc, char* argv[]) {
     K1ft->stop();
     K2ft->stop();
 }
-    fringe_thread.join();
-
-    // // Join the FFTW threads
-    K1ft->stop();
-    K2ft->stop();
-}

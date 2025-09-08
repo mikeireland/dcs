@@ -723,7 +723,6 @@ void* fetch_imgs(void *arg) {
 	memcpy(svdark, (unsigned short *) shm_img->array.UI16,
 		 2 * nbpix_cub * sizeof(unsigned short));
 	pthread_create(&tid_save_dark, NULL, save_dark_as_fits, NULL);
-	// printf("A dark should have been saved?\n");
 	camconf->save_dark = 0;
       }
 
@@ -740,9 +739,6 @@ void* fetch_imgs(void *arg) {
 	prev_reset_cntr = reset_cntr;
       	// printf("\rreset counter = %3ld", reset_cntr);
       	// fflush(stdout);
-	// !!!!!!
-      	// liveindex = camconf->nbreads - 1 - reset_cntr;
-      // !!!!!!
       }
 
 
@@ -1024,7 +1020,11 @@ void set_save_mode(int _mode) {
  * Start or interrupt the FITS saving of data cubes acquired by the camera
  * ------------------------------------------------------------------------- */
 void trigger_save_dark() {
+  set_dark_sub_mode(0);
+  sleep(0.2);
   camconf->save_dark = 1;
+  sleep(0.2);
+  set_dark_sub_mode(1);  
 }
 
 /* -------------------------------------------------------------------------
