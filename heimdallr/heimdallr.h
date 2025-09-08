@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <zmq.hpp>
 #include <chrono>
+#include <semaphore>
 
 //----------Defines-----------
 #define RT_USLEEP 50 // This should never be used, i.e. needs to be replaced with semaphores !!!
@@ -26,7 +27,7 @@
 #define FT_STOPPING 2
 
 // Fast servo type
-#define SERVO_PID 0
+#define SERVO_FIGHT 0
 #define SERVO_LACOUR 1
 #define SERVO_STOP 2
 #define SERVO_SIMPLE 3
@@ -218,11 +219,15 @@ extern bool keep_offloading;
 extern int offloads_to_do;
 extern std::string delay_line_type;
 extern Eigen::Vector4d search_offset;
+extern Eigen::Vector4d last_offload;
 
 // ForwardFt class
 class ForwardFt {   
 public:
-    // Save dark frames as an atomic variable
+    // A semaphore to indicate when a new frame is available. 
+    std::binary_semaphore sem_new_frame{0};
+
+    // Save dark frames as an atomic variable. !!! Remove as not needed.
     std::atomic<bool> save_dark_frames;
     
     // Count of the frame number that has been processed
@@ -258,6 +263,7 @@ public:
     // Clean-up and join the FFT thread.
     void stop();
 private:
+    // The window function to apply to the image before FFT.
     double *window;
     fftw_plan plan;
     std::thread thread; 

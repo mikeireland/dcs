@@ -30,9 +30,29 @@ auto last_hfo_offset = std::chrono::high_resolution_clock::now();
 zmq::context_t mds_zmq_context(1);
 int timeout_ms = 1000;
 zmq::socket_t mds_zmq_socket(mds_zmq_context, zmq::socket_type::req);
-std::string mds_host_str = "tcp://192.168.100.2:5555";
-bool mds_zmq_initialized = false;
+const std::string mds_host_str = "tcp://192.168.100.2:5555";
+zmq::context_t wag_rmn_context(1);
+zmq::socket_t wag_rmn_socket(wag_rmn_context, zmq::socket_type::req);
+const std::string wag_rmn_host_str = "tcp://192.168.100.1:7020";
+bool mds_zmq_initialized = false, controllino_initialized = false, wag_rmn_initialized = false;
 
+// Initialize the connection to wag for the RMN relay
+void init_wag_rmn() {
+    if (!wag_rmn_initialized) {
+        wag_rmn_socket.setsockopt(ZMQ_CONNECT_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
+        wag_rmn_socket.setsockopt(ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+        // the next line will throw an exception if it fails, in which case
+        // RMN isn't initialized. We need to catch this exception.
+        try {
+            wag_rmn_socket.connect(wag_rmn_host_str);
+            wag_rmn_initialized = true;
+        } catch (const zmq::error_t& e) {
+            std::cerr << "Error initializing WAG RMN: " << e.what() << std::endl;
+        }
+    }
+}
+
+// Initialize the MDS ZMQ connection, for the HFO connection.
 void init_mds_zmq() {
     if (!mds_zmq_initialized) {
         mds_zmq_socket.setsockopt(ZMQ_CONNECT_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
@@ -42,6 +62,26 @@ void init_mds_zmq() {
     }
 }
 
+// Initialize the Controllino connection, for the piezo connection.
+void init_controllino() {
+    if (controllino_initialized) return;
+    // Connect to the Controllino
+    controllinoSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in serverAddress;
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_port = htons(23);
+    serverAddress.sin_addr.s_addr = inet_addr("192.168.100.10");
+    connect(controllinoSocket, (struct sockaddr*)&serverAddress,
+            sizeof(serverAddress));
+
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(controllinoSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    controllino_initialized = true;
+}
+
+// Send a command to MDS and wait for a reply.
 std::string send_mds_cmd(const std::string& message) {
     init_mds_zmq();
     mds_zmq_socket.send(zmq::buffer(message), zmq::send_flags::none);
@@ -110,22 +150,30 @@ void move_piezos(){
     char message[20];
     char buffer[64] = { 0 };
     int dl_value;
+    init_controllino();
+    // This next loop should be turned into a single function for rapid movement.
     for (int i = 0; i < N_TEL; i++) {
         if (last_offload(i) != next_offload(i) + search_offset(i)){
             dl_value = 2048 + (int)( (next_offload(i) + search_offset(i)) / OPD_PER_PIEZO_UNIT);
             sprintf(message, "a%d %d\n", i, dl_value);
             recv(controllinoSocket, buffer, sizeof(buffer), 0);
-            std::cout << "Received from controllino: " << buffer << std::endl;
+            if (strlen(buffer) > 0) std::cout << "Before starting, controllino: " << buffer << std::endl;
             send(controllinoSocket, message, strlen(message), 0);
             std::cout << "Sending to controllino: " << message << std::endl;
             usleep(CONTROLLINO_USLEEP);
+            recv(controllinoSocket, buffer, sizeof(buffer), 0);
+            if (buffer[0] != 'S') {
+                std::cout << "Controllino error! Setting state uninitialised." << std::endl;
+                controllino_initialized = false;
+                return;
+            }
         }
     }
     last_offload = next_offload + search_offset;
 }
 
+// This function sets the HFO actuators to the stored value.
 void move_hfo(){
-    // This function sets the piezo delay line to the stored value.
     for (int i = 0; i < N_TEL; i++) {
         if ( last_offload(i)  != next_offload(i) + search_offset(i) ) {
             // Set the delay line value for the current telescope (value in mm of physical motion)
@@ -139,8 +187,62 @@ void move_hfo(){
     last_hfo_offset = std::chrono::high_resolution_clock::now();
 }
 
+
+/* Example of the RMN relay command to wag
+{"command" :
+{ "name" : "writermn",
+  "time" : "2024-08-27T12:12:31",
+  "parameter" :
+[
+{"name" : "opd_offset",
+ "value" : [1.1, 2.2, 3.3, 4.4]},
+{"name" : "offset_valid",
+ "value" : [1, 1, 0, 1]},
+{"name" : "fringe_detect",
+ "value" : [1, 0, 0, 1]}
+]}
+*/
+void move_main_dl()
+{
+    // Only execute if wag_rmn is initialized.
+    // (!!! following the method of other functions, we could initialize 
+    // here, but that risks repeated failed attempts)
+    if (!wag_rmn_initialized) return;
+    // Build the JSON message
+    nlohmann::json j;
+    j["command"]["name"] = "writermn";
+    // Use current time as ISO string
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::gmtime(&now_c), "%Y-%m-%dT%H:%M:%S");
+    j["command"]["time"] = ss.str();
+
+    // Fill parameters
+    nlohmann::json params = nlohmann::json::array();
+    params.push_back({{"name", "opd_offset"}, {"value", {next_offload(0), next_offload(1), next_offload(2), next_offload(3)}}});
+    // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
+    params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
+    params.push_back({{"name", "fringe_detect"}, {"value", {1, 1, 1, 1}}});
+    j["command"]["parameter"] = params;
+
+    std::string msg = j.dump(); // No newlines
+
+    wag_rmn_socket.send(zmq::buffer(msg), zmq::send_flags::none);
+    zmq::message_t reply;
+    auto result = wag_rmn_socket.recv(reply, zmq::recv_flags::none);
+    if (result.has_value()) {
+        std::string reply_str(static_cast<char*>(reply.data()), reply.size());
+        fmt::print("WAG RMN reply: {}\n", reply_str);
+    } else {
+        fmt::print("Timeout or error receiving reply from WAG RMN.\n");
+    }
+}
+
 // The main thread function
 void dl_offload(){
+    // Try to connect just once to WAG RMN.
+    init_wag_rmn();
     // Connect to MDS and find the delay line positions.
     for (int i = 0; i < N_TEL; i++) {
         std::string message = "read HFO" + std::to_string(i+1);
@@ -149,21 +251,6 @@ void dl_offload(){
         hfo_offsets[i] = std::stod(reply);
         fmt::print("HFO{} offset: {}\n", i+1, hfo_offsets[i]);
     }
-
-    // Connect to the Controllino
-    controllinoSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in serverAddress;
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(23);
-    serverAddress.sin_addr.s_addr = inet_addr("192.168.100.10");
-    connect(controllinoSocket, (struct sockaddr*)&serverAddress,
-            sizeof(serverAddress));
-
-    struct timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    setsockopt(controllinoSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
-
     set_delay_lines(Eigen::Vector4d::Zero());
 
     auto last_search_time = std::chrono::high_resolution_clock::now();
@@ -230,7 +317,11 @@ void dl_offload(){
             } else if (delay_line_type == "hfo") {
                 // Move the delay line to the next position
                 move_hfo();
-            } 
+            } else if (delay_line_type == "rmn") {
+                move_main_dl();
+            } else {
+                std::cout << "Delay line type not recognised" << std::endl;
+            }
             // Send the delay line values to the controllino
             std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
         } 
