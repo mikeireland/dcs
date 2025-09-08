@@ -1,14 +1,10 @@
 """
-Autoalign the heimdallr beams using the c red one data stream and the MDS
-Uses only K1, since it is brighter
+Autoalignment of Heimdallr beams.
 
-The overall structure is:
-1. shutter all beams off except 1, pause for a short time
-2. find the centre of the blob in the image
-3. save the pixel offsets
-4. repeat for all beams
-5. unshutter all beams
-6. move them using the offsets + moveimage like calculation
+Options to make correction in either
+- image space or pupil space,
+- using K1 or K2
+- making corrections using MCS -> VLTI FSM, or internal tip-tilt mirrors.
 """
 
 from xaosim.shmlib import shm
@@ -26,9 +22,8 @@ import argparse
 
 
 class HeimdallrAA:
-    def __init__(self, shutter_pause_time, band, flux_threshold):
+    def __init__(self, shutter_pause_time, band, flux_threshold, savepth):
         # Set target_pixels and col_bnds based on band
-        # TODO: read values from config file
         if band.upper() == "K1":
             self.target_pixels = (27, 49)
             self.col_bnds = (0, 160)
@@ -48,8 +43,31 @@ class HeimdallrAA:
             shutter_pause_time  # seconds to pause after shuttering
         )
 
+        if savepth.lower() == "none":
+            self.savepth = None
+        else:
+            self.savepth = savepth
+
         self.row_bnds = (0, 128)
         # self.col_bnds is set above
+
+    def get_init_motors_state(self):
+        motors = {}
+        for beam in range(1, 5):
+            axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
+            axes = [axis + str(beam) for axis in axis_list]
+            motors[beam] = {}
+            for axis in axes:
+                cmd = f"read {axis}"
+                resp = self._send_and_get_response(cmd)
+                motors[beam][axis] = float(resp)
+        return motors
+
+    def set_complete_state(self, motors):
+        for beam in range(1, 5):
+            for axis, pos in motors[beam].items():
+                cmd = f"moveabs {axis} {pos}"
+                self._send_and_get_response(cmd)
 
     # MDS interface
     def _open_mds_connection(self):
@@ -115,6 +133,10 @@ class HeimdallrAA:
         mask = dist_from_center <= radius
         return mask
 
+    def open_all_shutters(self):
+        msg = f"h_shut open 1,2,3,4"
+        self._send_and_get_response(msg)
+
     def autoalign_coarse_parallel(self):
         # 1. shutter all beams off except 1, pause for a short time
         # 2. find the centre of the blob in the image
@@ -161,8 +183,7 @@ class HeimdallrAA:
                 )
 
         # 5. unshutter all beams
-        msg = "h_shut open 1,2,3,4"
-        self._send_and_get_response(msg)
+        self.open_all_shutters()
         time.sleep(self._shutter_pause_time)
 
         # 6. move them using the offsets + moveimage like calculation
@@ -193,13 +214,26 @@ class HeimdallrAA:
             cmd = f"moverel {axes[beam-1][3]} {uv_cmd[3]}"
             self._send_and_get_response(cmd)
 
-    def autoalign_3_pupil(self):
+    # helper methods for pupil alignment fitting
+    @staticmethod
+    def fit_func(x, m, a, b, c):
+        return -m * np.abs(x - a) - m * np.abs(x - b) + c
+
+    @staticmethod
+    def get_peak_flux_loc(pos, fluxes):
+        fluxes /= np.max(fluxes)  # normalise
+        params, _ = curve_fit(HeimdallrAA.fit_func, pos, fluxes, p0=[1, -0.05, 0.05, 1])
+
+        return (params[1] + params[2]) / 2
+
+    def autoalign_pupil(self, beam):
         mv_time = 2.5
 
-        beam = 3
-        msg = f"h_shut close 1,2,4"
+        unused_beams = [b for b in range(1, 5) if b != beam]
+
+        msg = f"h_shut close {','.join(map(str, unused_beams))}"
         self._send_and_get_response(msg)
-        msg = f"h_shut open 3"
+        msg = f"h_shut open {beam}"
         self._send_and_get_response(msg)
         time.sleep(self._shutter_pause_time)
 
@@ -230,7 +264,7 @@ class HeimdallrAA:
 
         # 3. move pupil to optimize flux
         pup_offset = 0.2  # mm
-        n_samp = 7
+        n_samp = 9
         flux_beam_radius = 6  # pixels
 
         measurement_locs_x = np.linspace(-pup_offset, pup_offset, n_samp)
@@ -244,76 +278,156 @@ class HeimdallrAA:
             [[-pup_offset], relative_measurement_locs]
         )
 
-        def fit_func(x, m, a, b, c):
-            return -m * np.abs(x - a) - m * np.abs(x - b) + c
-
-        def get_peak_flux_loc(pos, fluxes):
-            fluxes /= np.max(fluxes)  # normalise
-            params, _ = curve_fit(fit_func, pos, fluxes, p0=[1, -0.05, 0.05, 1])
-
-            return (params[1] + params[2]) / 2
-
-        fluxes = []
+        fluxes_x = []
         for delta in relative_measurement_locs:
             cmd = f"mv_pup c_red_one_focus {beam} {delta} {0.0}"
             self._send_and_get_response(cmd)
             print("sent", cmd)
             time.sleep(mv_time)
-            _, flux = self._get_blob_with_flux(flux_beam_radius)
-            fluxes.append(flux)
+            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            fluxes_x.append(flux)
+
+            # check if centre is close to the edge of the frame
+            for bound in self.col_bnds:
+                if np.abs(centre[1] - bound) < 10:
+                    print(
+                        f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
+                    )
 
         cur_pupil_pos = measurement_locs_x[-1]
 
-        fluxes = np.array(fluxes)
-        if np.max(fluxes) < self.flux_threshold:
+        fluxes_x = np.array(fluxes_x)
+        if np.max(fluxes_x) < self.flux_threshold:
             print(
-                f"Beam {beam} has low flux: {np.max(fluxes)}. Setting pupil offset back to original."
+                f"Beam {beam} has low flux: {np.max(fluxes_x)}. Setting pupil offset back to original."
             )
             del_needed = -cur_pupil_pos
             cmd = f"mv_pup c_red_one_focus {beam} {del_needed} {0.0}"
             self._send_and_get_response(cmd)
             return
 
-        optimal_offset = get_peak_flux_loc(measurement_locs_x, fluxes)
+        optimal_offset_x = self.get_peak_flux_loc(measurement_locs_x, fluxes_x)
 
-        del_needed = optimal_offset - cur_pupil_pos
+        del_needed = optimal_offset_x - cur_pupil_pos
 
         print(
-            f"Optimal pupil offset for beam {beam} x: {optimal_offset:.4f} mm ({del_needed:.4f} mm from current position)"
+            f"Optimal pupil offset for beam {beam} x: {optimal_offset_x:.4f} mm ({del_needed:.4f} mm from current position)"
         )
         cmd = f"mv_pup c_red_one_focus {beam} {del_needed} {0.0}"
         self._send_and_get_response(cmd)
 
         time.sleep(2)
 
-        fluxes = []
+        fluxes_y = []
         for delta in relative_measurement_locs:
             cmd = f"mv_pup c_red_one_focus {beam} {0.0} {delta}"
             self._send_and_get_response(cmd)
             print("sent", cmd)
             time.sleep(2.5)
-            _, flux = self._get_blob_with_flux(flux_beam_radius)
-            fluxes.append(flux)
+            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            fluxes_y.append(flux)
 
-        fluxes = np.array(fluxes)
+            if np.abs(centre[1] - bound) < 10:
+                print(
+                    f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
+                )
 
-        optimal_offset = get_peak_flux_loc(measurement_locs_x, fluxes)
+        fluxes_y = np.array(fluxes_y)
+
+        optimal_offset_y = self.get_peak_flux_loc(measurement_locs_x, fluxes_y)
         cur_pupil_pos = measurement_locs_x[-1]
 
-        del_needed = optimal_offset - cur_pupil_pos
+        del_needed = optimal_offset_y - cur_pupil_pos
 
         print(
-            f"Optimal pupil offset for beam {beam} y: {optimal_offset:.4f} mm ({del_needed:.4f} mm from current position)"
+            f"Optimal pupil offset for beam {beam} y: {optimal_offset_y:.4f} mm ({del_needed:.4f} mm from current position)"
         )
         cmd = f"mv_pup c_red_one_focus {beam} {0.0} {del_needed}"
         self._send_and_get_response(cmd)
 
-        # open all shutters
-        msg = f"h_shut open 1,2,3,4"
-        self._send_and_get_response(msg)
+        # now do x axis again to refine
+        time.sleep(2)
 
-    def autoalign_full(self):
-        pass
+        fluxes_x2 = []
+        for delta in relative_measurement_locs:
+            cmd = f"mv_pup c_red_one_focus {beam} {delta} {0.0}"
+            self._send_and_get_response(cmd)
+            print("sent", cmd)
+            time.sleep(mv_time)
+            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            fluxes_x2.append(flux)
+
+            if np.abs(centre[1] - bound) < 10:
+                print(
+                    f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
+                )
+
+        fluxes_x2 = np.array(fluxes_x2)
+
+        optimal_offset_x2 = self.get_peak_flux_loc(measurement_locs_x, fluxes_x2)
+        cur_pupil_pos = measurement_locs_x[-1]
+        del_needed = optimal_offset_x2 - cur_pupil_pos
+        print(
+            f"Refined optimal pupil offset for beam {beam} x: {optimal_offset_x2:.4f} mm ({del_needed:.4f} mm from current position)"
+        )
+
+        cmd = f"mv_pup c_red_one_focus {beam} {del_needed} {0.0}"
+        self._send_and_get_response(cmd)
+        time.sleep(2)
+
+        # saving
+        if self.savepth is not None:
+            np.savez(
+                os.path.join(self.savepth, f"heimdallr_pupil_beam{beam}.npz"),
+                meas_locs_x=measurement_locs_x,
+                meas_locs_y=measurement_locs_x,
+                fluxes_x=fluxes_x,
+                fluxes_y=fluxes_y,
+                optimal_offset_x=optimal_offset_x,
+                optimal_offset_y=optimal_offset_y,
+                measurement_locs_x2=measurement_locs_x,
+                fluxes_x2=fluxes_x2,
+                optimal_offset_x2=optimal_offset_x2,
+            )
+
+    def autoalign_pupil_all(self, plot):
+        # just like autoalign_3_pupil but for all beams
+        datas = {}
+        for beam in range(1, 5):
+            datas[beam] = self.autoalign_pupil(beam)
+            # open all shutters
+            self.open_all_shutters()
+
+        if plot:
+            self.plot_autoalign_pupil_all(datas)
+
+    @staticmethod
+    def plot_autoalign_pupil_all(data_all):
+
+        n_beams = 4
+        fig, axs = plt.subplots(2, 2, figsize=(10, 8), sharex=True, sharey=True)
+
+        for beam in range(1, n_beams + 1):
+            data = data_all[beam]
+            positions = [data[f"meas_locs_{i}"] for i in ["x", "y", "x"]]
+            fluxes = [data[f"fluxes_{i}"] for i in ["x", "y", "x2"]]
+            optimal_offsets = [data[f"optimal_offset_{i}"] for i in ["x", "y", "x2"]]
+            ax = axs.flat[beam - 1]
+            ax.plot(positions[0], fluxes[0], "o-", label="x", color="C0")
+            ax.plot(positions[1], fluxes[1], "o-", label="y", color="C1")
+            ax.plot(positions[2], fluxes[2], "o-", label="x2", color="C2")
+            for i in range(3):
+                ax.axvline(optimal_offsets[i], color=f"C{i}", ls="--")
+            ax.set_title(f"Beam {beam}")
+            if beam in [3, 4]:
+                ax.set_xlabel("Position")
+            if beam in [1, 3]:
+                ax.set_ylabel("Flux")
+            if beam == 1:
+                ax.legend()
+            ax.grid()
+
+        plt.show()
 
 
 def main():
@@ -330,8 +444,17 @@ def main():
         "--align",
         type=str,
         required=True,
-        choices=["cp", "coarseparallel", "p3", "pupil3"],
-        help="Alignment method: 'cp'/'coarseparallel' or 'p3'/'pupil3'",
+        choices=[
+            "cp",
+            "coarseparallel",
+            "ia",
+            "imageall",
+            "p3",
+            "pupil3",
+            "pa",
+            "pupilall",
+        ],
+        help="Alignment method: 'ia'/'imageall', 'pa'/'pupilall' or 'p3'/'pupil3'",
     )
     parser.add_argument(
         "-b",
@@ -341,22 +464,52 @@ def main():
         choices=["K1", "K2"],
         help="Band to use: 'K1' or 'K2' (default: K2)",
     )
+    parser.add_argument(
+        "-s",
+        "--save_path",
+        type=str,
+        default="None",
+        help="Path to save the alignment results (default: current directory)",
+    )
+
+    parser.add_argument(
+        "-p",
+        "--plot",
+        type=bool,
+        default=False,
+        help="if results should be plotted to the screen when done (only valid for pa)",
+    )
     args = parser.parse_args()
 
     heimdallr_aa = HeimdallrAA(
         shutter_pause_time=args.shutter_pause_time,
         band=args.band,
         flux_threshold=200.0,
+        savepth=args.save_path,
     )
 
-    if args.align in ["cp", "coarseparallel"]:
-        heimdallr_aa.autoalign_coarse_parallel()
-    elif args.align in ["p3", "pupil3"]:
-        heimdallr_aa.autoalign_3_pupil()
-    else:
-        raise ValueError("Unknown alignment method.")
+    init_vals = heimdallr_aa.get_init_motors_state()
 
-    print("Autoalignment completed.")
+    try:
+        if args.align in ["cp", "coarseparallel"]:
+            print("New command name, rerun with -a ia or -a imageall instead")
+        elif args.align in ["ia", "imageall"]:
+            heimdallr_aa.autoalign_coarse_parallel()
+        elif args.align in ["p3", "pupil3"]:
+            heimdallr_aa.autoalign_pupil(3, plot=args.plot)
+            # open all shutters
+            heimdallr_aa.open_all_shutters()
+        elif args.align in ["pa", "pupilall"]:
+            heimdallr_aa.autoalign_pupil_all()
+        else:
+            raise ValueError("Unknown alignment method.")
+
+        print("Autoalignment completed.")
+    except Exception as e:
+        print(f"Error during alignment: {e}")
+        print("Restoring initial motor positions.")
+        heimdallr_aa.set_complete_state(init_vals)
+        print("Initial motor positions restored.")
 
 
 if __name__ == "__main__":
