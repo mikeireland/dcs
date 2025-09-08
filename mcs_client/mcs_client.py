@@ -265,8 +265,19 @@ class BaldrAdapter(CppServerAdapter):
         self.cur_status = None
 
     def fetch(self) -> Optional[BaldrTscopeStatus]:
+        """
+        Queries Baldr Cpp servers. Expected return of the form:
+        {
+            "ok": True,
+            "status": {
+                "TT_state": int,
+                ... etc
+            }
+        }
+        """
         # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs
         rep = self.z.send_payload({"cmd": "status"})
+
         if not rep or rep.get("ok") is False:
             return None
 
