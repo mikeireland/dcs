@@ -2,9 +2,18 @@
 //#define PRINT_TIMING
 #define DARK_OFFSET 1000.0
 
+//------------------------------------------------------------------------------
+// Drain any outstanding semaphore “posts” so that
+// the next semwait() really waits for a fresh frame.
+//------------------------------------------------------------------------------
+static inline void catch_up_with_sem(IMAGE* img, int semid) {
+    // keep grabbing until there are no more pending posts
+    while (ImageStreamIO_semtrywait(img, semid) == 0) { /* nothing just do it*/; }
+}
+
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
     save_dark_frames=false;
-     subarray = subarray_in;
+    subarray = subarray_in;
     // Sanity check that we actually have a 2D , square image
     if (subarray->md->naxis != 2) {
         throw std::runtime_error("Subarray is not 2D");
@@ -72,6 +81,8 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
             power_spectrum[ii*(subim_sz/2+1) + jj] = 0.0;
         }
     }
+    // Initialise POSIX semaphore for new frame notification
+    sem_init(&sem_new_frame, 0, 0);
 }
     
 void ForwardFt::start() {
@@ -89,7 +100,9 @@ void ForwardFt::loop() {
 #endif
     unsigned int ii_shift, jj_shift, szj;
     cnt = subarray->md->cnt0;
+    catch_up_with_sem(subarray, 1);
     while (mode != FT_STOPPING) {
+        ImageStreamIO_semwait(subarray, 1);
         if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;
@@ -163,6 +176,9 @@ void ForwardFt::loop() {
             // lease 1 power spectrum in order for the group delay.
             cnt++;
 
+            // Signal that a new frame is available.
+            sem_post(&sem_new_frame);
+
             // Now we need to boxcar average the dark frames. 
             int ix = cnt % N_DARK_BOXCAR;
             for (unsigned int ii=0; ii<subim_sz; ii++) {
@@ -185,6 +201,10 @@ void ForwardFt::loop() {
             }
 
             //std::cout << subarray->name << ": " << cnt << std::endl;
-        } else usleep(RT_USLEEP); //!!! Need a semaphore here if "nearly" ready for the FT
+        } else {
+            // This shouldn't happen, but if it does, just continue
+            std::cout << "FT: Semaphore signalled but no new frame" << std::endl;
+            nerrors++;
+        }
     }
 }
