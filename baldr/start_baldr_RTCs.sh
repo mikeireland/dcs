@@ -13,6 +13,8 @@ MODE="$1"
 MASK="$2"
 BEAM_INPUT="${3:-1,2,3,4}"
 
+cd /home/asg/Progs/repos/dcs/baldr
+
 if [[ -z "${DISPLAY:-}" ]]; then
   echo "Error: No DISPLAY found (GUI not available)."
   echo "If on SSH, try:  ssh -X <host>    and verify 'xterm' can open."
