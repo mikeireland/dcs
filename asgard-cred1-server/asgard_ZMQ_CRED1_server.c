@@ -110,6 +110,8 @@ void quit();
 void update_fps(float fps);
 void update_gain(int gain);
 float query_fps();
+float query_det_temp();
+float query_water_temp();
 int query_gain();
 void set_save_mode(int _mode);
 void trigger_save_dark();
@@ -979,6 +981,22 @@ float query_fps() {
 }
 
 /* -------------------------------------------------------------------------
+ *           server level command to query the detector temperature
+ * ------------------------------------------------------------------------- */
+float query_det_temp() {
+  float val = camera_query_float(ed, "temperature cryostat ptcontroller raw");
+  return val;
+}
+
+/* -------------------------------------------------------------------------
+ *           server level command to query the water temperature
+ * ------------------------------------------------------------------------- */
+float query_water_temp() {
+  float val = camera_query_float(ed, "temperature water raw");
+  return val;
+}
+
+/* -------------------------------------------------------------------------
  *           server level command to query the current camera gain
  * ------------------------------------------------------------------------- */
 int query_gain() {
@@ -1191,6 +1209,8 @@ COMMANDER_REGISTER(m)
   m.def("set_fps", update_fps, "Updates the camera FPS and syncs SHM.");
   m.def("get_fps", query_fps, "Prints the current camera frame rate.");
   m.def("get_gain", query_gain, "Prints the current camera gain.");
+  m.def("get_det_temp", query_det_temp, "Prints the detector temperature.");
+  m.def("get_water_temp", query_water_temp, "Prints the water temperature.");
   m.def("set_gain", update_gain, "Updates the camera gain.");
   m.def("split_mode", set_split_mode, "Set/unset the multi ROI use mode.");
   m.def("save_mode", set_save_mode, "Set/unset the FITS cube save mode.");

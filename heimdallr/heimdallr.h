@@ -17,8 +17,9 @@
 #include <chrono>
 
 //----------Defines-----------
+#define RT_USLEEP 50 // This should never be used, i.e. needs to be replaced with semaphores !!!
 #define OPD_PER_DM_UNIT 6.0 
-#define OPD_PER_PIEZO_UNIT 0.26 
+#define OPD_PER_PIEZO_UNIT 0.15 //Should be 0.26 
 
 #define FT_STARTING 0
 #define FT_RUNNING 1
@@ -146,7 +147,6 @@ struct Baselines{
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];
-    Eigen::Matrix<uint, N_BL, 1> jump_needed;
     int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
 };
 
@@ -208,10 +208,11 @@ extern ControlA control_a;
 extern Baselines baselines;
 extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
+extern double gd_to_K1;
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;
-
+extern std::atomic<bool> zero_offload;
 // DL offload variables
 extern bool keep_offloading;
 extern int offloads_to_do;
@@ -278,4 +279,4 @@ void set_delay_lines(Eigen::Vector4d dl);
 void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);
 void dl_offload();
-void start_search(uint search_dl_in, double start, double stop, double rate);
+void start_search(uint search_dl_in, double start, double stop, double rate, uint dt_ms, double threshold);

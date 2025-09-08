@@ -53,7 +53,7 @@ std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 
 
 std::string telemFormat = "fits";//"json";
-std::string telem_save_path = "/home/rtc/Downloads/"; //"/home/benjamin/Downloads/"//"/home/asg/Music/";
+std::string telem_save_path = "/home/asg/Music/"; // /home/rtc/Downloads/"; //"/home/benjamin/Downloads/"//"/home/asg/Music/";
 
 // Your basis file location
 static constexpr const char* kDMBaseFITS =
@@ -561,7 +561,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
                 rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
                 rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
-                rtc.state.simulation_mode = 1 ; 
+                rtc.state.simulation_mode = 0; 
             }catch (const std::exception& ex) {
                 std::cerr << "Error with state read-in: " << ex.what() << std::endl;
                 std::exit(1);
@@ -4689,9 +4689,9 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
         // probe_interaction_data [[[5,0.05],[12,-0.03]],"zernike","OL","signal",3,5000]
         // aa = util.get_DM_command_in_2D( np.mean( d[1].data['DATA'][0].reshape(3,-1), axis=0 ) )
         json aberr = json::array();
-        aberr.push_back(json::array({65,  0.05}));
-        aberr.push_back(json::array({2, -0.05}));
-        return json::array({ aberr, "zernike", "OL", "all", 3, 5000 });
+        aberr.push_back(json::array({65,  0.1}));
+        aberr.push_back(json::array({2, -0.1}));
+        return json::array({ aberr, "zonal", "OL", "all", 3, 5000 });
     }
 
     if (method == "I2A") {

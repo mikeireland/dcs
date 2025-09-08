@@ -185,6 +185,6 @@ void ForwardFt::loop() {
             }
 
             //std::cout << subarray->name << ": " << cnt << std::endl;
-        } else usleep(100); //!!! Need a semaphore here if "nearly" ready for the FT
+        } else usleep(RT_USLEEP); //!!! Need a semaphore here if "nearly" ready for the FT
     }
 }

@@ -19,8 +19,8 @@ def main():
     parser.add_argument(
         "--update-time",
         type=int,
-        default=50,
-        help="Update interval in ms (default: 50)",
+        default=200,
+        help="Update interval in ms (default: 200)",
     )
     parser.add_argument(
         "--samples",
