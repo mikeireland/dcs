@@ -27,21 +27,20 @@ baldr           6662
 """
 
 
-# ---------------- ZMQ helpers ----------------
-def ts():
-    # ISO-8601 UTC for MCS "time" fields (doc shows generic "<timestamp>")
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
 def normalize_to_1d_and_shape(arr):
     """
     Accepts: [x0, x1, ...]  or  [[r0c0, r0c1, ...], [r1c0, ...], ...]
     Returns: (flat_list, (rows, cols))
     """
-    if isinstance(arr, (list, tuple)) and all(not isinstance(v, (list, tuple)) for v in arr):
+    if isinstance(arr, (list, tuple)) and all(
+        not isinstance(v, (list, tuple)) for v in arr
+    ):
         # 1 x N
         return [float(v) for v in arr], (1, len(arr))
 
-    if isinstance(arr, (list, tuple)) and all(isinstance(r, (list, tuple)) for r in arr):
+    if isinstance(arr, (list, tuple)) and all(
+        isinstance(r, (list, tuple)) for r in arr
+    ):
         rows = len(arr)
         cols = len(arr[0]) if rows else 0
         # sanity: rectangular
@@ -53,7 +52,12 @@ def normalize_to_1d_and_shape(arr):
 
     raise TypeError("gains must be a list or list-of-lists")
 
+
 class ZmqReq:
+    """
+    An adapter for a ZMQ REQ socket (client).
+    """
+
     def __init__(self, endpoint: str, timeout_ms: int = 1500):
         self.ctx = zmq.Context.instance()
         self.s = self.ctx.socket(zmq.REQ)
@@ -61,191 +65,331 @@ class ZmqReq:
         self.s.SNDTIMEO = timeout_ms
         self.s.connect(endpoint)
 
-    def ask(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def send_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         self.s.send_string(json.dumps(payload))
         try:
             return json.loads(self.s.recv_string())
         except zmq.error.Again:
             return None
 
-# ---------------- MCS client (WAG) ----------------
+
+class ZmqRep:
+    """
+    An adapter for a ZMQ REP socket (server).
+    """
+
+    def __init__(self, endpoint: str):
+        self.ctx = zmq.Context.instance()
+        self.s = self.ctx.socket(zmq.REP)
+        self.s.bind(endpoint)
+
+    def recv_payload(self) -> Optional[Dict[str, Any]]:
+        try:
+            msg = self.s.recv_string()
+            return json.loads(msg)
+        except zmq.error.Again:
+            return None
+
+    def send_payload(self, payload: Dict[str, Any]) -> bool:
+        try:
+            self.s.send_string(json.dumps(payload))
+            return True
+        except zmq.error.Again:
+            return False
+
+
+# ---------------- MCS client ----------------
 class MCSClient:
-    def __init__(self, host: str = "wag", port: int = 7020, requester: str = "mimir"):
-        self.requester = requester
-        self.z = ZmqReq(f"tcp://{host}:{port}")
+    def __init__(
+        self,
+        dcs_endpoints: dict,
+        script_endpoint: str,
+        publish_endpoint: str,
+    ):
+        self.publish_z = ZmqReq(publish_endpoint)
+
+        self.script_z = ScriptAdapter(script_endpoint)
+
+        self.dcs_adapters = {}
+        for dcs_name, endpoint in dcs_endpoints.items():
+            self.dcs_adapters[dcs_name] = CppServerAdapter(endpoint)
+
+        self.requester = "wag"
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
-        rep = self.z.ask(body)
+        rep = self.publish_z.send_payload(body)
         if not rep or "reply" not in rep:
             return False, "no-reply"
-        content = rep["reply"].get("content", "ERROR") 
+        content = rep["reply"].get("content", "ERROR")
         return (content == "OK" or content != "ERROR"), str(content)
 
-    def write_scalar(self, name: str, value: Any) -> Tuple[bool, str]:
-        # Some agomcs versions accept 'value' with scalar writes; if not, define your scalar as length-1 vector.
-        msg = {
+    def publish_script_data(self):
+        data = self.script_z.data
+        if data is None or not isinstance(data, list) or len(data) == 0:
+            return
+
+        # need to append the requester field to each item
+        for item in data:
+            item["requester"] = self.requester
+
+        # for any lists in data, need to add the "range" field
+        for item in data:
+            if isinstance(item.get("value"), (list, tuple)):
+                item["range"] = "(0, 3)"
+
+        # write all fields to MCS in a single message
+        body = {
             "command": {
                 "name": "write",
-                "time": ts(),
-                "parameter": {
-                    "name": name,
-                    "value": value,
-                    "requester": self.requester
-                }
+                "time": self.ts(),
+                "parameter": data,
             }
         }
-        return self._send(msg)  # Reply "OK"/"ERROR". See 8.7.2. ASGARD Top-Level Control Software v.4.2
 
-    def write_vector(self, name: str, values: List[Any], i0: int = 0) -> Tuple[bool, str]:
-        msg = {
+        ok, msg = self._send(body)
+
+        if not ok:
+            print(f"WARN: failed to write script data to wag: {msg}")
+
+    def publish_baldr_to_wag(self):
+        """
+        example - publish all of baldr.
+
+        Need to fetch for all beams, then group each paramaeter into a list of size 4
+        then send that in one packet to wag
+        """
+        data = []
+
+        for beam_idx in range(1, 5):
+            st = self.dcs_adapters[f"BLD{beam_idx}"].fetch()
+            if not st:
+                print(f"WARN: no Baldr status for beam {beam_idx}")
+                return
+
+            data.append(st)
+
+        # write all fields to MCS in a single message
+        body = {
             "command": {
                 "name": "write",
-                "time": ts(),
-                "parameter": {
-                    "name": name,
-                    "range": f"({i0}:{i0+len(values)-1})",
+                "time": self.ts(),
+                "parameter": [
+                    # each field will go here
+                ],
+            }
+        }
+
+        # populate the parameter list with all fields from the dataclass,
+        # each field will be a list of 4 values (one per beam)
+        param_list = []
+        for field in asdict(data[0]).keys():
+            values = [getattr(d, field) for d in data]
+            param_list.append(
+                {
+                    "name": f"bld_{field}",
                     "value": values,
-                    "requester": self.requester
+                    "requester": self.requester,
                 }
-            }
-        }
-        return self._send(msg)  # Vector write with range/value. See 8.7.2.  [oai_citation:15‡ASGARD Top-Level Control Software v.4.2.pdf](file-service://file-1tWRLXu5uuX5KwAVLhsy2R)
+            )
 
-    def read_scalar(self, name: str):
-        """Return (ok, value|error_str)."""
-        msg = {
-            "command": {
-                "name": "read",
-                "time": ts(),
-                "parameter": {"name": name}
-            }
-        }
-        rep = self.z.ask(msg)
-        if not rep or "reply" not in rep:
-            return False, "no-reply"
-        content = rep["reply"].get("content", "ERROR")
-        return (content != "ERROR"), content  # spec: content is the value or "ERROR"
+        # update body
+        body["command"]["parameter"] = param_list
 
-    def read_vector(self, name: str, i0: int, j0: int):
-        """Return (ok, [values]|error_str). Indices are inclusive."""
-        msg = {
-            "command": {
-                "name": "read",
-                "time": ts(),
-                "parameter": {
-                    "name": name,
-                    "range": f"({i0}:{j0})"
-                }
-            }
-        }
-        rep = self.z.ask(msg)
-        if not rep or "reply" not in rep:
-            return False, "no-reply"
-        content = rep["reply"].get("content", "ERROR")
-        return (content != "ERROR"), content
+        ok, msg = self._send(body)
+        if not ok:
+            print(f"WARN: failed to write baldr1_status to wag: {msg}")
+
+    @staticmethod
+    def ts():
+        current_utc_time = datetime.now(datetime.timezone.utc)
+        # Format the UTC time
+        return current_utc_time.strftime("%Y-%m-%dT%H:%M:%S")
+
 
 # ---------------- Server adapters ----------------
 @dataclass
-class BaldrStatus:
-    loop_state: str              # "open"/"close"
-    mode: str                    # "bright"/"faint"
-    phasemask: str               # "J1".."H5"
-    frequency: float             # 1000.0Hz
-    configured: int              # 0/1
-    ctrl_type: str               # "PID"/"Leaky"/"Kalman"
-    gains: List[float]           # flattened, depends on control type
-    gains_shape: Tuple[int, int] # (rows, cols)
-    strehl_est: float
-    flux: List[int]              # len 140
-    busy: int                    # 0/1
-    config_file: str
-    setpoint_lo: List[float]
-    setpoint_ho: List[float]
-    oloff_lo: List[float]
-    oloff_ho: List[float]
+class BaldrTscopeStatus:
+    """
+    data class for all "unique per telescope" status fields
+    """
 
-class BaldrAdapter:
+    TT_state: int
+    HO_state: int
+    mode: str
+    phasemask: str
+    frequency: float
+    configured: int
+    ctrl_type: str
+    complete: bool
+    config_file: str
+    inj_enabled: int
+    auto_loop: int
+    close_on_snr: float
+    open_on_snr: float
+    close_on_strehl: float
+    open_on_strehl: float
+    TT_offsets: int
+    x_pup_offset: float
+    y_pup_offset: float
+
+
+class CppServerAdapter:
+    def __init__(self, endpoint: str):
+        self.z = ZmqReq(endpoint)
+
+    def fetch(self) -> Optional[Any]:
+        raise NotImplementedError
+
+
+class BaldrAdapter(CppServerAdapter):
     """
     Talks to Baldr ZMQ server ("tcp://host:6662") and returns a BaldrStatus.
-    
     """
-    def __init__(self, host="127.0.0.1", port=6662):
-        self.z = ZmqReq(f"tcp://{host}:{port}")
 
-    def fetch(self) -> Optional[BaldrStatus]:
-        # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs 
-        rep = self.z.ask({"cmd": "status"})
+    def __init__(self, host="127.0.0.1", port=6662):
+        super().__init__(f"tcp://{host}:{port}")
+
+        self.cur_status = None
+
+    def fetch(self) -> Optional[BaldrTscopeStatus]:
+        # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs
+        rep = self.z.send_payload({"cmd": "status"})
         if not rep or rep.get("ok") is False:
             return None
 
         # ---- Map server reply -> BaldrStatus  ----
         # Below assumes the server returns a dict with keys matching your fields.
-    
         try:
             st = rep["status"]
-            try:
-                # gains is 1D or 2D depending on controller type. 
-                # by default I flatten it and store to original shape
-                raw_gains = st["gains"]  # may be 1D or 2D
-                flat_gains, (R, C) = normalize_to_1d_and_shape(raw_gains)
-            except:
-                return None
-            
-            return BaldrStatus(
-                loop_state   = st["loop_state"],
-                mode         = st["mode"],
-                phasemask    = st["phasemask"],
-                frequency    = float( st['frequency'] ),
-                configured   = int(st["configured"]),
-                ctrl_type    = st["ctrl_type"],
-                gains        = flat_gains,
-                gains_shape  = (R, C),
-                strehl_est   = float(st["strehl_est"]),
-                flux         = list(map(int, st["flux"])),
-                busy         = int(st["busy"]),
-                config_file  = st["config_file"],
-                setpoint_lo  = list(map(float, st["setpoint_lo"])),
-                setpoint_ho  = list(map(float, st["setpoint_ho"])),
-                oloff_lo     = list(map(float, st["oloffset_lo"])),
-                oloff_ho     = list(map(float, st["oloffset_ho"]))
+
+            self.cur_status = BaldrTscopeStatus(
+                TT_state=int(st["TT_state"]),
+                HO_state=int(st["HO_state"]),
+                mode=st["mode"],
+                phasemask=st["phasemask"],
+                frequency=float(st["frequency"]),
+                configured=int(st["configured"]),
+                ctrl_type=st["ctrl_type"],
+                complete=bool(st["complete"]),
+                config_file=st["config_file"],
+                inj_enabled=int(st["inj_enabled"]),
+                auto_loop=int(st["auto_loop"]),
+                close_on_snr=float(st["close_on_snr"]),
+                open_on_snr=float(st["open_on_snr"]),
+                close_on_strehl=float(st["close_on_strehl"]),
+                open_on_strehl=float(st["open_on_strehl"]),
+                TT_offsets=int(st["TT_offsets"]),
+                x_pup_offset=float(st["x_pup_offset"]),
+                y_pup_offset=float(st["y_pup_offset"]),
             )
         except KeyError:
             return None
 
+
+@dataclass
+class HeimdallrStatus:
+    hdlr_x_offset: list[float]
+    hdlr_y_offset: list[float]
+    hdlr_complete: bool
+
+
+class HeimdallrAdapter(CppServerAdapter):
+    """
+    Talks to Heimdallr ZMQ server ("tcp://host:6660") and returns a HeimdallrStatus.
+    """
+
+    def __init__(self, host="127.0.0.1", port=6660):
+        super().__init__(f"tcp://{host}:{port}")
+
+    def fetch(self) -> Optional[HeimdallrStatus]:
+        rep = self.z.send_payload({"cmd": "status"})
+        if not rep or rep.get("ok") is False:
+            return None
+
+        try:
+            st = rep["status"]
+            return HeimdallrStatus(
+                hdlr_x_offset=[float(x) for x in st["hdlr_x_offset"]],
+                hdlr_y_offset=[float(y) for y in st["hdlr_y_offset"]],
+                hdlr_complete=bool(st["hdlr_complete"]),
+            )
+        except KeyError:
+            return None
+
+
+class ScriptAdapter:
+    """
+    A dedicated channel for talking to DCS command scripts that have been run
+    This differs from the C++ servers in that it has be the server side of a ZMQ REQ/REP pair
+    and the scripts are the clients. When the data is dumped by the client, this class
+    just returns "ack" to the script and the data is saved in MCS.
+
+    The expectation for the data format is a list of dicts like:
+    [
+        {"name": "param1", "value": val1},
+        {"name": "param2", "value": val2},
+        ...
+    ]
+    noting that the MCS will append the requester field automatically.
+    """
+
+    def __init__(self, endpoint: str):
+        self.z = ZmqRep(endpoint)
+
+        self.poller = zmq.Poller()
+        self.poller.register(self.z.s, zmq.POLLIN)
+
+        self.data = {}
+
+    def fetch(self) -> Optional[Dict[str, Any]]:
+        socks = dict(self.poller.poll(10))
+        inputready = []
+        if self.z.s in socks and socks[self.z.s] == zmq.POLLIN:
+            inputready.append(self.z.s)
+        for s in inputready:  # loop through our array of sockets/inputs
+            msg = self.socket_funct(s)
+            print(f"Received message: {msg}")
+            is_custom_msg, response = self.handle_message(msg)
+            s.send_string(response + "\n")
+
+    def socket_funct(self, s):
+        try:
+            message = s.recv_string()
+            return message
+        except zmq.ZMQError as e:
+            # logging.error(f"ZMQ Error: {e}")
+            return -1
+
+    def handle_message(self, msg):
+        msg = dict(json.loads(msg))
+        if not msg or msg.get("cmd") != "dump":
+            return None
+
+        # Acknowledge receipt
+        self.z.send_payload({"ok": True, "msg": "ack"})
+
+        # Save the data for later processing
+        self.data = msg.get("data", {})
+        return self.data
+
+
 # ---------------- Main publish loop ----------------
-def publish_baldr_to_wag(
-    baldr_host="127.0.0.1", baldr_port=6662,
-    wag_host="wag", wag_port=7020, requester="mimir"
-):
-    adat = BaldrAdapter(baldr_host, baldr_port)
-    mcs  = MCSClient(wag_host, wag_port, requester=requester)
 
-    st = adat.fetch()
-    if not st:
-        print("WARN: no Baldr status")
-        return
-
-    
-    # Write strings/ints/floats
-    ok1 = mcs.write_scalar("BALDR.LOOP_STATE",  st.loop_state)
-    ok2 = mcs.write_scalar("BALDR.MODE",        st.mode)
-    ok3 = mcs.write_scalar("BALDR.PHASEMASK",   st.phasemask)
-    ok4 = mcs.write_scalar("BALDR.FREQUENCY",   st.frequency)
-    ok5 = mcs.write_scalar("BALDR.CONFIGURED",  st.configured)
-    ok6 = mcs.write_scalar("BALDR.CTRL_TYPE",   st.ctrl_type)
-    ok7 = mcs.write_scalar("BALDR.STREHL_EST",  st.strehl_est)
-    ok8 = mcs.write_scalar("BALDR.BUSY",        st.busy)
-    ok9 = mcs.write_scalar("BALDR.CONFIG_FILE", st.config_file)
-
-    # Write vectors (declare sizes in agmcfgMCS.cfg)
-    mcs.write_vector("BALDR.GAINS",       st.gains,       0)
-    mcs.write_vector("BALDR.GAINS_SHAPE", st.gains_shape, 0)
-    mcs.write_vector("BALDR.FLUX",        st.flux,        0)
-    mcs.write_vector("BALDR.SETPOINT_LO", st.setpoint_lo, 0)
-    mcs.write_vector("BALDR.SETPOINT_HO", st.setpoint_ho, 0)
-    mcs.write_vector("BALDR.OLOFF_LO",    st.oloff_lo,    0)
-    mcs.write_vector("BALDR.OLOFF_HO",    st.oloff_ho,    0)
 
 if __name__ == "__main__":
-    # e/g
-    publish_baldr_to_wag()
+    mcs = MCSClient(
+        dcs_endpoints={
+            # "BLD1": "tcp://192.168.100.2:7019",
+            # "BLD2": "tcp://192.168.100.2:7020",
+            # "BLD3": "tcp://192.168.100.2:7021",
+            # "BLD4": "tcp://192.168.100.2:7022",
+        },
+        script_endpoint="tcp://192.168.100.2:5556",
+        publish_endpoint="tcp://192.168.100.1:7050",
+    )
+
+    while True:
+        mcs.script_z.fetch()
+        mcs.publish_script_data()
+        # mcs.publish_baldr_to_wag()
+        time.sleep(1)

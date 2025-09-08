@@ -20,9 +20,31 @@ import scipy.ndimage as ndi
 from scipy.optimize import curve_fit
 import argparse
 
+import json
+
+
+class ZmqReq:
+    """
+    An adapter for a ZMQ REQ socket (client).
+    """
+
+    def __init__(self, endpoint: str, timeout_ms: int = 1500):
+        self.ctx = zmq.Context.instance()
+        self.s = self.ctx.socket(zmq.REQ)
+        self.s.RCVTIMEO = timeout_ms
+        self.s.SNDTIMEO = timeout_ms
+        self.s.connect(endpoint)
+
+    def send_payload(self, payload):
+        self.s.send_string(json.dumps(payload))
+        try:
+            return json.loads(self.s.recv_string())
+        except zmq.error.Again:
+            return None
+
 
 class HeimdallrAA:
-    def __init__(self, shutter_pause_time, band, flux_threshold, savepth):
+    def __init__(self, shutter_pause_time, band, flux_threshold, savepth, output):
         # Set target_pixels and col_bnds based on band
         if band.upper() == "K1":
             self.target_pixels = (27, 49)
@@ -50,6 +72,14 @@ class HeimdallrAA:
 
         self.row_bnds = (0, 128)
         # self.col_bnds is set above
+
+        if output not in ["internal", "mcs"]:
+            raise ValueError("Output must be 'internal' or 'mcs'")
+
+        self.output = output
+
+        if self.output == "mcs":
+            self.mds_client = ZmqReq("tcp://192.168.100.2:7019")
 
     def get_init_motors_state(self):
         motors = {}
@@ -184,35 +214,39 @@ class HeimdallrAA:
 
         # 5. unshutter all beams
         self.open_all_shutters()
-        time.sleep(self._shutter_pause_time)
 
-        # 6. move them using the offsets + moveimage like calculation
-        # key here is to parallelise
-        uv_commands = {}
-        for beam, offset in pixel_offsets.items():
-            uv_cmd = asgE.move_img_calc("c_red_one_focus", beam, offset)
-            uv_commands[beam] = uv_cmd
+        if self.output == "mcs":
+            print("Sending offset commands to MCS...")
+            self._send_offsets_to_mcs(pixel_offsets)
+        else:
+            time.sleep(self._shutter_pause_time)
+            # 6. move them using the offsets + moveimage like calculation
+            # key here is to parallelise
+            uv_commands = {}
+            for beam, offset in pixel_offsets.items():
+                uv_cmd = asgE.move_img_calc("c_red_one_focus", beam, offset)
+                uv_commands[beam] = uv_cmd
 
-        # send commands
-        axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
-        axes = [
-            [axis + str(beam_number) for axis in axis_list]
-            for beam_number in range(1, 5)
-        ]
+            # send commands
+            axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
+            axes = [
+                [axis + str(beam_number) for axis in axis_list]
+                for beam_number in range(1, 5)
+            ]
 
-        for beam, uv_cmd in uv_commands.items():
-            cmd = f"moverel {axes[beam-1][0]} {uv_cmd[0]}"
-            self._send_and_get_response(cmd)
-            cmd = f"moverel {axes[beam-1][2]} {uv_cmd[2]}"
-            self._send_and_get_response(cmd)
+            for beam, uv_cmd in uv_commands.items():
+                cmd = f"moverel {axes[beam-1][0]} {uv_cmd[0]}"
+                self._send_and_get_response(cmd)
+                cmd = f"moverel {axes[beam-1][2]} {uv_cmd[2]}"
+                self._send_and_get_response(cmd)
 
-        time.sleep(0.4)
+            time.sleep(0.4)
 
-        for beam, uv_cmd in uv_commands.items():
-            cmd = f"moverel {axes[beam-1][1]} {uv_cmd[1]}"
-            self._send_and_get_response(cmd)
-            cmd = f"moverel {axes[beam-1][3]} {uv_cmd[3]}"
-            self._send_and_get_response(cmd)
+            for beam, uv_cmd in uv_commands.items():
+                cmd = f"moverel {axes[beam-1][1]} {uv_cmd[1]}"
+                self._send_and_get_response(cmd)
+                cmd = f"moverel {axes[beam-1][3]} {uv_cmd[3]}"
+                self._send_and_get_response(cmd)
 
     # helper methods for pupil alignment fitting
     @staticmethod
@@ -429,9 +463,61 @@ class HeimdallrAA:
 
         plt.show()
 
+    def _send_offsets_to_mcs(self, pixel_offsets):
+        """
+        convert pixel offsets to image offsets (pixels to arcsec)
+        dummy conversion matrix for now
+
+        Parameters
+        ----------
+        pixel_offsets : dict
+            dictionary with beam number as key and pixel offset as value (np.array of shape (2,))
+        """
+
+        # dummy conversion matrix TODO: per beam matrix 2x2
+        pix_to_arcsec = 1.0
+        arcsec_offsets = {
+            beam: offset * pix_to_arcsec for beam, offset in pixel_offsets.items()
+        }
+
+        # these are the hdlr_x_offset, hdlr_y_offset - need to reformat from dict 
+        # of beams to two lists - one for x offsets, one for y offsets
+        x_offsets = [arcsec_offsets[beam][0] for beam in range(1, 5)]
+        y_offsets = [arcsec_offsets[beam][1] for beam in range(1, 5)]
+
+        msg = {
+            "cmd": "dump",
+            "data": [
+                {"name": "hdlr_x_offset", "value": x_offsets},
+                {"name": "hdlr_y_offset", "value": y_offsets},
+                {"name": "hdlr_complete", "value": True},
+            ]
+        }
+
+        self.send_and_recv_ack(msg)
+
+    def send_and_recv_ack(self, msg):
+        # recieve ack
+        resp = self.mds_client.send_payload(msg)
+        if resp is None or resp.get("status") != "ok":
+            print("Failed to send offsets to MCS")
+
+    def test_mcs(self):
+        # set "hdlr_x_offset" to 4 random numbers
+        x_offsets = np.random.uniform(-1, 1, size=4).tolist()
+
+        msg = {
+            "cmd": "dump",
+            "data": [
+                {"name": "hdlr_x_offset", "value": x_offsets},
+                {"name": "hdlr_complete", "value": True},
+            ]
+        }
+
+        self.send_and_recv_ack(msg)
+
 
 def main():
-
     parser = argparse.ArgumentParser(description="Autoalign Heimdallr beams.")
     parser.add_argument(
         "--shutter_pause_time",
@@ -453,6 +539,7 @@ def main():
             "pupil3",
             "pa",
             "pupilall",
+            "test_mcs",
         ],
         help="Alignment method: 'ia'/'imageall', 'pa'/'pupilall' or 'p3'/'pupil3'",
     )
@@ -479,6 +566,15 @@ def main():
         default=False,
         help="if results should be plotted to the screen when done (only valid for pa)",
     )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="internal",
+        choices=["internal", "mcs"],
+        help="If the actuation should be done internally, or offset commands sent to MCS (default: internal)",
+    )
     args = parser.parse_args()
 
     heimdallr_aa = HeimdallrAA(
@@ -486,9 +582,11 @@ def main():
         band=args.band,
         flux_threshold=200.0,
         savepth=args.save_path,
+        output=args.output,
     )
 
-    init_vals = heimdallr_aa.get_init_motors_state()
+    if args.output == "internal":
+        init_vals = heimdallr_aa.get_init_motors_state()
 
     try:
         if args.align in ["cp", "coarseparallel"]:
@@ -496,20 +594,29 @@ def main():
         elif args.align in ["ia", "imageall"]:
             heimdallr_aa.autoalign_coarse_parallel()
         elif args.align in ["p3", "pupil3"]:
-            heimdallr_aa.autoalign_pupil(3, plot=args.plot)
+            if args.output == "mcs":
+                print("Pupil alignment with MCS output not supported, exiting...")
+                return
+            heimdallr_aa.autoalign_pupil(3)
             # open all shutters
             heimdallr_aa.open_all_shutters()
+        elif args.align in ["test_mcs"]:
         elif args.align in ["pa", "pupilall"]:
-            heimdallr_aa.autoalign_pupil_all()
+            if args.output == "mcs":
+                print("Pupil alignment with MCS output not supported, exiting...")
+                return
+            heimdallr_aa.autoalign_pupil_all(plot=args.plot)
         else:
             raise ValueError("Unknown alignment method.")
 
         print("Autoalignment completed.")
     except Exception as e:
         print(f"Error during alignment: {e}")
-        print("Restoring initial motor positions.")
-        heimdallr_aa.set_complete_state(init_vals)
-        print("Initial motor positions restored.")
+
+        if args.output == "internal":
+            print("Restoring initial motor positions.")
+            heimdallr_aa.set_complete_state(init_vals)
+            print("Initial motor positions restored.")
 
 
 if __name__ == "__main__":
