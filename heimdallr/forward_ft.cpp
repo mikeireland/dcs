@@ -13,7 +13,7 @@ static inline void catch_up_with_sem(IMAGE* img, int semid) {
 
 ForwardFt::ForwardFt(IMAGE * subarray_in) {
     save_dark_frames=false;
-     subarray = subarray_in;
+    subarray = subarray_in;
     // Sanity check that we actually have a 2D , square image
     if (subarray->md->naxis != 2) {
         throw std::runtime_error("Subarray is not 2D");
@@ -81,6 +81,8 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
             power_spectrum[ii*(subim_sz/2+1) + jj] = 0.0;
         }
     }
+    // Initialise POSIX semaphore for new frame notification
+    sem_init(&sem_new_frame, 0, 0);
 }
     
 void ForwardFt::start() {
@@ -175,7 +177,7 @@ void ForwardFt::loop() {
             cnt++;
 
             // Signal that a new frame is available.
-            sem_new_frame.release();
+            sem_post(&sem_new_frame);
 
             // Now we need to boxcar average the dark frames. 
             int ix = cnt % N_DARK_BOXCAR;

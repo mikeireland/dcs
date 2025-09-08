@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 #include <zmq.hpp>
 #include <chrono>
-#include <semaphore>
+#include <semaphore.h>
 
 //----------Defines-----------
 #define RT_USLEEP 50 // This should never be used, i.e. needs to be replaced with semaphores !!!
@@ -224,8 +224,8 @@ extern Eigen::Vector4d last_offload;
 // ForwardFt class
 class ForwardFt {   
 public:
-    // A semaphore to indicate when a new frame is available. 
-    std::binary_semaphore sem_new_frame{0};
+    // POSIX semaphore for new frame notification
+    sem_t sem_new_frame;
 
     // Save dark frames as an atomic variable. !!! Remove as not needed.
     std::atomic<bool> save_dark_frames;
