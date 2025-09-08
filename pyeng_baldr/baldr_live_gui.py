@@ -3,6 +3,7 @@ from collections import deque
 import numpy as np
 import argparse
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
+                
                              QComboBox, QTextEdit, QLineEdit, QGridLayout, QLabel, QSpinBox)
 from PyQt5.QtCore import QTimer, pyqtSignal
 import pyqtgraph as pg
@@ -264,7 +265,7 @@ def run_app():
 if __name__ == "__main__":
     run_app()
 
-    
+
 # import sys, time, json, math, zmq
 # from collections import deque
 # import numpy as np
