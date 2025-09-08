@@ -1,7 +1,7 @@
 import sys, time, json, math, zmq
 from collections import deque
 import numpy as np
-import parser
+import argparse
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QComboBox, QTextEdit, QLineEdit, QGridLayout, QLabel, QSpinBox
