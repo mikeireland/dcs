@@ -234,9 +234,15 @@ void fringe_tracker(){
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
-        // Wait for the next frame to be ready in K1
-        while(K1ft->cnt == ft_cnt || K2ft->cnt == ft_cnt){
-            usleep(RT_USLEEP); //!!! Need to be more sophisticated here
+        // See if there was a semaphore signalled for the next frame to be ready in K1 and K2
+        K1ft->sem_new_frame.acquire();
+        K2ft->sem_new_frame.acquire();
+        // If we are here, then a new frame is available in both K1 and K2. 
+        // Check that there has not been a counting error.
+        if(K1ft->cnt == ft_cnt || K2ft->cnt == ft_cnt){
+            std::cout << "FT: Semaphore signalled but no new frame" << std::endl;
+            nerrors++;
+            continue;
         }
         // Check for missed frames
         if (K1ft->cnt > ft_cnt+2 || K2ft->cnt > ft_cnt+2){

@@ -89,7 +89,9 @@ void ForwardFt::loop() {
 #endif
     unsigned int ii_shift, jj_shift, szj;
     cnt = subarray->md->cnt0;
+    catch_up_with_sem(&subarray, 1);
     while (mode != FT_STOPPING) {
+        ImageStreamIO_semwait(&subarray, 1);
         if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;
@@ -162,6 +164,9 @@ void ForwardFt::loop() {
             // The reason it is here and not before power spectrum computation is because we need at
             // lease 1 power spectrum in order for the group delay.
             cnt++;
+            
+            // Signal that a new frame is available.
+            sem_new_frame.release();
 
             // Now we need to boxcar average the dark frames. 
             int ix = cnt % N_DARK_BOXCAR;
@@ -185,6 +190,10 @@ void ForwardFt::loop() {
             }
 
             //std::cout << subarray->name << ": " << cnt << std::endl;
-        } else usleep(RT_USLEEP); //!!! Need a semaphore here if "nearly" ready for the FT
+        } else {
+            // This shouldn't happen, but if it does, just continue
+            std::cout << "FT: Semaphore signalled but no new frame" << std::endl;
+            nerrors++;
+        }
     }
 }
