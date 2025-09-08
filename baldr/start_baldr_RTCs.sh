@@ -13,6 +13,15 @@ MODE="$1"
 MASK="$2"
 BEAM_INPUT="${3:-1,2,3,4}"
 
+# ---- Quick environment sanity checks ----
+if [[ -z "${DISPLAY:-}" ]]; then
+  echo "Error: No DISPLAY found. You must run this inside a GUI session (not a headless SSH shell)."
+  echo "Tip: If you are on SSH, try:  ssh -X <host>   (and ensure X11 apps work) "
+  exit 1
+fi
+
+# Wayland note: opening terminals is fine; tiling tools may not work on Wayland (you commented them out already)
+
 # ---- Parse beam list ----
 IFS=',' read -ra BEAMS <<< "$BEAM_INPUT"
 
@@ -24,19 +33,69 @@ declare -A PORTS=(
   [4]=6665
 )
 
-# ---- Pick a terminal emulator ----
-open_term() {
+# ---- Terminal launcher abstraction ----
+# Each launcher must run a bash -lc "<cmd>; read" so the window stays open when the command ends.
+launch_with() {
+  local term="$1"; shift
   local title="$1"; shift
   local cmd="$*"
-  if command -v gnome-terminal >/dev/null 2>&1; then
-    gnome-terminal --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
-  elif command -v xterm >/dev/null 2>&1; then
-    xterm -T "$title" -e bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
-  else
-    echo "Error: need gnome-terminal or xterm installed." >&2
-    exit 1
-  fi
+
+  case "$term" in
+    gnome-terminal)
+      gnome-terminal --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    kgx) # GNOME Console
+      kgx --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    xfce4-terminal)
+      xfce4-terminal --title "$title" -e "bash -lc '$cmd; echo; echo \"[$title] finished. Press Enter to close.\"; read'"
+      ;;
+    mate-terminal)
+      mate-terminal --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    konsole)
+      konsole --new-tab --hold -p tabtitle="$title" -e bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    tilix)
+      tilix -t "$title" -e bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    xterm)
+      xterm -T "$title" -e bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    alacritty)
+      alacritty --title "$title" -e bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    kitty)
+      kitty --title "$title" bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    terminator)
+      terminator -T "$title" -x bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
+
+detect_terminal() {
+  for t in gnome-terminal kgx xfce4-terminal mate-terminal konsole tilix xterm alacritty kitty terminator; do
+    if command -v "$t" >/dev/null 2>&1; then
+      echo "$t"
+      return 0
+    fi
+  done
+  return 1
+}
+
+TERM_CMD="$(detect_terminal || true)"
+if [[ -z "${TERM_CMD:-}" ]]; then
+  echo "Error: no supported terminal emulator found."
+  echo "Install one, e.g.: sudo apt install gnome-terminal  (or xterm, xfce4-terminal, etc.)"
+  exit 1
+fi
+
+echo "Using terminal: $TERM_CMD"
+echo "Mode: $MODE | Mask: $MASK | Beams: ${BEAMS[*]}"
 
 # ---- Launch beams ----
 for beam in "${BEAMS[@]}"; do
@@ -47,34 +106,14 @@ for beam in "${BEAMS[@]}"; do
   port="${PORTS[$beam]}"
   socket="tcp://*:${port}"
   title="Baldr Beam ${beam}"
-  open_term "$title" "./baldr --beam ${beam} --mode ${MODE} --mask ${MASK} --socket ${socket}" &
+
+  cmd="./baldr --beam ${beam} --mode ${MODE} --mask ${MASK} --socket ${socket}"
+  echo "Launching: $title  ->  $cmd"
+
+  # Launch in background so we don’t block
+  launch_with "$TERM_CMD" "$title" "$cmd" &
+  # tiny delay helps the WM create/focus windows with proper titles
   sleep 0.15
 done
 
-# # ---- Arrange windows in 2×2 grid (optional) ----
-# if command -v wmctrl >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
-#   if command -v xdpyinfo >/dev/null 2>&1; then
-#     read -r SW SH < <(xdpyinfo | awk '/dimensions:/{split($2,a,"x"); print a[1], a[2]}')
-#   elif command -v xrandr >/dev/null 2>&1; then
-#     read -r SW SH < <(xrandr | awk '/\*/{print $1; exit}' | awk -Fx '{print $1, $2}')
-#   else
-#     SW=1920; SH=1080
-#   fi
-
-#   M=8
-#   (( W = SW/2 - 2*M ))
-#   (( H = SH/2 - 2*M ))
-#   Xs=($M $((W+3*M)) $M $((W+3*M)) )
-#   Ys=($M $M $((H+3*M)) $((H+3*M)) )
-
-#   idx=0
-#   for beam in "${BEAMS[@]}"; do
-#     title="Baldr Beam ${beam}"
-#     win_id="$(xdotool search --name "$title" | tail -n1 || true)"
-#     [[ -n "$win_id" ]] || continue
-#     wmctrl -ir "$win_id" -e "0,${Xs[$idx]},${Ys[$idx]},$W,$H" || true
-#     ((idx++))
-#   done
-# else
-#   echo "Tip: install 'wmctrl' and 'xdotool' to auto-tile the terminals."
-# fi
+wait || true
