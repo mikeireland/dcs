@@ -51,30 +51,30 @@ for beam in "${BEAMS[@]}"; do
   sleep 0.15
 done
 
-# ---- Arrange windows in 2×2 grid (optional) ----
-if command -v wmctrl >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
-  if command -v xdpyinfo >/dev/null 2>&1; then
-    read -r SW SH < <(xdpyinfo | awk '/dimensions:/{split($2,a,"x"); print a[1], a[2]}')
-  elif command -v xrandr >/dev/null 2>&1; then
-    read -r SW SH < <(xrandr | awk '/\*/{print $1; exit}' | awk -Fx '{print $1, $2}')
-  else
-    SW=1920; SH=1080
-  fi
+# # ---- Arrange windows in 2×2 grid (optional) ----
+# if command -v wmctrl >/dev/null 2>&1 && command -v xdotool >/dev/null 2>&1; then
+#   if command -v xdpyinfo >/dev/null 2>&1; then
+#     read -r SW SH < <(xdpyinfo | awk '/dimensions:/{split($2,a,"x"); print a[1], a[2]}')
+#   elif command -v xrandr >/dev/null 2>&1; then
+#     read -r SW SH < <(xrandr | awk '/\*/{print $1; exit}' | awk -Fx '{print $1, $2}')
+#   else
+#     SW=1920; SH=1080
+#   fi
 
-  M=8
-  (( W = SW/2 - 2*M ))
-  (( H = SH/2 - 2*M ))
-  Xs=($M $((W+3*M)) $M $((W+3*M)) )
-  Ys=($M $M $((H+3*M)) $((H+3*M)) )
+#   M=8
+#   (( W = SW/2 - 2*M ))
+#   (( H = SH/2 - 2*M ))
+#   Xs=($M $((W+3*M)) $M $((W+3*M)) )
+#   Ys=($M $M $((H+3*M)) $((H+3*M)) )
 
-  idx=0
-  for beam in "${BEAMS[@]}"; do
-    title="Baldr Beam ${beam}"
-    win_id="$(xdotool search --name "$title" | tail -n1 || true)"
-    [[ -n "$win_id" ]] || continue
-    wmctrl -ir "$win_id" -e "0,${Xs[$idx]},${Ys[$idx]},$W,$H" || true
-    ((idx++))
-  done
-else
-  echo "Tip: install 'wmctrl' and 'xdotool' to auto-tile the terminals."
-fi
+#   idx=0
+#   for beam in "${BEAMS[@]}"; do
+#     title="Baldr Beam ${beam}"
+#     win_id="$(xdotool search --name "$title" | tail -n1 || true)"
+#     [[ -n "$win_id" ]] || continue
+#     wmctrl -ir "$win_id" -e "0,${Xs[$idx]},${Ys[$idx]},$W,$H" || true
+#     ((idx++))
+#   done
+# else
+#   echo "Tip: install 'wmctrl' and 'xdotool' to auto-tile the terminals."
+# fi
