@@ -116,8 +116,8 @@ void set_servo_mode(std::string mode) {
         servo_mode = SERVO_OFF;
     } else if (mode == "simple") {
         servo_mode = SERVO_SIMPLE;
-    } else if (mode == "pid") {
-        servo_mode = SERVO_PID;
+    } else if (mode == "fight") {
+        servo_mode = SERVO_FIGHT;
     } else if (mode == "lacour") {
         servo_mode = SERVO_LACOUR;
     } else {
@@ -171,6 +171,15 @@ void set_search_offset(std::vector<double> offset_in_microns) {
         }
     }
     std::cout << "Search offset updated to " << search_offset.transpose() << std::endl;
+}
+
+// Get the delay line offsets (from the servo loop)
+std::vector<double> get_search_offset(void) {
+    std::vector<double> offsets(N_TEL);
+    for (uint i = 0; i < N_TEL; i++) {
+        offsets[i] = search_offset(i);
+    }
+    return offsets;
 }
 
 // EncodedImage  // std::string
@@ -231,15 +240,13 @@ void set_offload_gd_gain(double gain) {
 }
 
 void set_delay_line_type(std::string type) {
-    if (type == "piezo") {
-        delay_line_type = "piezo";
-    } else if (type == "hfo") {
-        delay_line_type = "hfo";
+    static const std::set<std::string> valid_types = {"piezo", "hfo", "rmn"};
+    if (valid_types.count(type)) {
+        delay_line_type = type;
+        std::cout << "Delay line type updated to " << delay_line_type << std::endl;
     } else {
-        std::cout << "Delay line type not recognised" << std::endl;
-        return;
+        std::cout << "Delay line type not recognised: " << type << std::endl;
     }
-    std::cout << "Delay line type updated to " << delay_line_type << std::endl;
 }
 
 Status get_status() {
@@ -280,7 +287,7 @@ Status get_status() {
         status.gd_tel[i] = control_a.gd(i);
         status.pd_tel[i] = control_a.pd(i);
         status.dm_piston[i] = control_u.dm_piston(i);
-        status.dl_offload[i] = control_u.dl_offload(i);
+        status.dl_offload[i] = last_offload(i); // not the offload increment, but the total offload!
     }
     for (int i = 0; i < N_CP; i++) {
         status.closure_phase_K1[i] = bispectra_K1[i].closure_phase;
@@ -314,7 +321,7 @@ void zero_gd_offsets(void){
 }
 
 // Return the phasor offsets to 3 decimal places
-std::vector<double> return_gd_offsets(void){
+std::vector<double> get_gd_offsets(void){
     std::vector<double> gd_offsets(6);
     baseline_mutex.lock();
     for (int bl=0;bl<N_BL; bl++)
@@ -346,6 +353,7 @@ COMMANDER_REGISTER(m)
     m.def("offload_time", set_offload_time, "Set the offload time in ms", "time"_arg=1000);
     m.def("set_search_offset", set_search_offset, "Set the search offset in microns", 
         "offset"_arg=std::vector<double>(N_TEL, 0.0));
+    m.def("get_search_offset", get_search_offset, "Get the search offset in microns");
     m.def("dark", save_dark, "Save the dark frames");
     m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
@@ -356,7 +364,7 @@ COMMANDER_REGISTER(m)
     m.def("dl_type", set_delay_line_type, "Set the delay line type", "type"_arg="piezo");
     m.def("test", test, "Make a test pattern", "beam"_arg, "value"_arg=0.0, "n"_arg=10);
     m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
-    m.def("return_gd_offsets", return_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
+    m.def("get_gd_offsets", get_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
     m.def("zero_dl_offload", zero_dl_offload, "Set the current positions of the delay lines to zero");
     // Set gd offsets 
 }
@@ -403,6 +411,12 @@ int main(int argc, char* argv[]) {
 
     // Join the fringe-tracking thread
     servo_mode = SERVO_STOP;
+    fringe_thread.join();
+
+    // // Join the FFTW threads
+    K1ft->stop();
+    K2ft->stop();
+}
     fringe_thread.join();
 
     // // Join the FFTW threads

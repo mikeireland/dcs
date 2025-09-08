@@ -2,8 +2,8 @@
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
 //#define DEBUG
-#define GD_THRESHOLD 20
-#define PD_THRESHOLD 10
+#define GD_THRESHOLD 5
+#define PD_THRESHOLD 7
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
@@ -294,21 +294,34 @@ void fringe_tracker(){
             baselines.gd(bl) = std::arg(baselines.gd_phasor(bl)*baselines.gd_phasor_offset(bl)) * gd_to_K1;
 
             // Compute the unwrapped phase delay and signal to noise. 
-            // Until SNR is high enough, pd_filtered is zero
+            // NB We can only unwrap here if we are confident we have a algorithm that
+            // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
             // !!! The 7.5 is a John Monnnier hack, due to fmod's treatment of negative numbers.
             //double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - pd_filtered(bl) + 7.5), 1.0) - 0.5;
             //baselines.pd(bl) = pd_filtered(bl) + pdiff;
-            baselines.pd(bl) = std::fmod( (std::arg(K1_phasor[bl])/2/M_PI - baselines.pd_av_filtered(bl) + 1.5), 1.0) - 0.5;
-            //baselines.pd(bl) = std::arg(K1_phasor[bl])/2/M_PI; // Temporarily overwrite this. !!!
+            if (servo_mode == SERVO_FIGHT){
+                // In fight mode, we just use the instantaneous phase, not the filtered phase.
+                // This is useful for debugging, but not for real operation.
+                // The 1.5 is a John Monnier hack, due to fmod's treatment of negative numbers.
+                baselines.pd(bl) = std::fmod( (std::arg(K1_phasor[bl])/2/M_PI - baselines.pd_av_filtered(bl) + 1.5), 1.0) - 0.5;
+            } else {
+                // This is an raw (not unwrapped) phase.
+                baselines.pd(bl) = std::arg(K1_phasor[bl])/2/M_PI; 
+            }
 
             // Now we need the gd_snr and pd_snr for this baseline. 
             baselines.pd_snr(bl) = std::fabs(K1_phasor[bl])/std::sqrt(K1ft->power_spectrum_inst_bias);
             
+            // Without boxcar averaging, the variance of the group delay phasor due to fundamental noise is:
+            // Var(K1^* K2) = |K1|^2 Var(K2) + |K2|^2 Var(K1) + Var(K1) Var(K2)
+            // where Var(K) = power_spectrum_bias. 
             // The GD_phasor has a variance sqrt(baselines[bl].n_gd_boxcar) larger than a
-            // single phasor, so we need to divide by that.
+            // single phasor, so we need to divide by that. 
             baselines.gd_snr(bl) = std::fabs(baselines.gd_phasor(bl))/
-                std::sqrt(K1ft->power_spectrum_bias * K2ft->power_spectrum_bias)/
+                std::sqrt(K1ft->power_spectrum_bias * K2ft->power_spectrum_bias + 
+                (K1ft->power_spectrum[y_px*stride + x_px] - K1ft->power_spectrum_bias)*K2ft->power_spectrum_bias +
+                (K2ft->power_spectrum[y_px*stride + x_px] - K2ft->power_spectrum_bias)*K1ft->power_spectrum_bias)/
                 std::sqrt(baselines.n_gd_boxcar);    
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
@@ -341,6 +354,7 @@ void fringe_tracker(){
         I4_search_projection = I4 - M_lacour_dag * I6gd * M_lacour; 
         gd_filtered = I6gd * baselines.gd;
 
+        // Until SNR is high enough, pd_filtered is zero
         // !!! The following filtering should check for phasors that are too far out.
         pd_filtered = I6pd * baselines.pd;
 
