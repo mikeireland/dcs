@@ -13,38 +13,27 @@ MODE="$1"
 MASK="$2"
 BEAM_INPUT="${3:-1,2,3,4}"
 
-# ---- Quick environment sanity checks ----
 if [[ -z "${DISPLAY:-}" ]]; then
-  echo "Error: No DISPLAY found. You must run this inside a GUI session (not a headless SSH shell)."
-  echo "Tip: If you are on SSH, try:  ssh -X <host>   (and ensure X11 apps work) "
+  echo "Error: No DISPLAY found (GUI not available)."
+  echo "If on SSH, try:  ssh -X <host>    and verify 'xterm' can open."
   exit 1
 fi
 
-# Wayland note: opening terminals is fine; tiling tools may not work on Wayland (you commented them out already)
-
-# ---- Parse beam list ----
 IFS=',' read -ra BEAMS <<< "$BEAM_INPUT"
 
 # ---- Beam→Port mapping ----
-declare -A PORTS=(
-  [1]=6662
-  [2]=6663
-  [3]=6664
-  [4]=6665
-)
+declare -A PORTS=([1]=6662 [2]=6663 [3]=6664 [4]=6665)
 
-# ---- Terminal launcher abstraction ----
-# Each launcher must run a bash -lc "<cmd>; read" so the window stays open when the command ends.
+# ---- Launchers ----
 launch_with() {
   local term="$1"; shift
   local title="$1"; shift
   local cmd="$*"
-
   case "$term" in
     gnome-terminal)
       gnome-terminal --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
       ;;
-    kgx) # GNOME Console
+    kgx)
       kgx --title="$title" -- bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
       ;;
     xfce4-terminal)
@@ -71,17 +60,46 @@ launch_with() {
     terminator)
       terminator -T "$title" -x bash -lc "$cmd; echo; echo '[$title] finished. Press Enter to close.'; read"
       ;;
-    *)
-      return 1
-      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Try running a no-op to verify a terminal actually works (DBus issues show up here)
+preflight_terminal() {
+  local term="$1"
+  case "$term" in
+    gnome-terminal) gnome-terminal -- bash -lc 'exit' ;;
+    kgx)            kgx -- bash -lc 'exit' ;;
+    xfce4-terminal) xfce4-terminal -e "bash -lc 'exit'" ;;
+    mate-terminal)  mate-terminal -- bash -lc 'exit' ;;
+    konsole)        konsole -e bash -lc 'exit' ;;
+    tilix)          tilix -e bash -lc 'exit' ;;
+    xterm)          xterm -e bash -lc 'exit' ;;
+    alacritty)      alacritty -e bash -lc 'exit' ;;
+    kitty)          kitty bash -lc 'exit' ;;
+    terminator)     terminator -x bash -lc 'exit' ;;
+    *) return 1 ;;
   esac
 }
 
 detect_terminal() {
-  for t in gnome-terminal kgx xfce4-terminal mate-terminal konsole tilix xterm alacritty kitty terminator; do
+  local candidates
+  # Allow override: BALDR_TERM=kitty ./run_baldr.sh ...
+  if [[ -n "${BALDR_TERM:-}" ]]; then
+    candidates=("$BALDR_TERM")
+  else
+    # Prefer simple X11 terminals first to avoid GNOME/DBus pitfalls
+    candidates=(xterm kitty alacritty tilix terminator xfce4-terminal konsole mate-terminal gnome-terminal kgx)
+  fi
+
+  for t in "${candidates[@]}"; do
     if command -v "$t" >/dev/null 2>&1; then
-      echo "$t"
-      return 0
+      if preflight_terminal "$t" >/dev/null 2>&1; then
+        echo "$t"
+        return 0
+      else
+        echo "Terminal '$t' found but failed preflight (DBus/launch issue). Skipping." >&2
+      fi
     fi
   done
   return 1
@@ -89,8 +107,10 @@ detect_terminal() {
 
 TERM_CMD="$(detect_terminal || true)"
 if [[ -z "${TERM_CMD:-}" ]]; then
-  echo "Error: no supported terminal emulator found."
-  echo "Install one, e.g.: sudo apt install gnome-terminal  (or xterm, xfce4-terminal, etc.)"
+  echo "Error: no working terminal emulator found."
+  echo "Quick fix: install xterm and force it:"
+  echo "  sudo apt-get install xterm"
+  echo "  BALDR_TERM=xterm $0 \"$MODE\" \"$MASK\" \"${BEAM_INPUT}\""
   exit 1
 fi
 
@@ -106,13 +126,9 @@ for beam in "${BEAMS[@]}"; do
   port="${PORTS[$beam]}"
   socket="tcp://*:${port}"
   title="Baldr Beam ${beam}"
-
   cmd="./baldr --beam ${beam} --mode ${MODE} --mask ${MASK} --socket ${socket}"
   echo "Launching: $title  ->  $cmd"
-
-  # Launch in background so we don’t block
   launch_with "$TERM_CMD" "$title" "$cmd" &
-  # tiny delay helps the WM create/focus windows with proper titles
   sleep 0.15
 done
 
