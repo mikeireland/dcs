@@ -482,8 +482,9 @@ class HeimdallrAA:
 
         # these are the hdlr_x_offset, hdlr_y_offset - need to reformat from dict 
         # of beams to two lists - one for x offsets, one for y offsets
-        x_offsets = [arcsec_offsets[beam][0] for beam in range(1, 5)]
-        y_offsets = [arcsec_offsets[beam][1] for beam in range(1, 5)]
+        # note that offset are flipped! x on the detector is y on sky
+        x_offsets = [arcsec_offsets[beam][1] for beam in range(1, 5)]
+        y_offsets = [arcsec_offsets[beam][0] for beam in range(1, 5)]
 
         msg = {
             "cmd": "dump",
@@ -498,9 +499,13 @@ class HeimdallrAA:
 
     def send_and_recv_ack(self, msg):
         # recieve ack
+        print(f"sending {msg}")
         resp = self.mds_client.send_payload(msg)
-        if resp is None or resp.get("status") != "ok":
+        if resp is None or resp.get("ok") == False:
+            print(resp)
             print("Failed to send offsets to MCS")
+        else:
+            print("msg acked")
 
     def test_mcs(self):
         # set "hdlr_x_offset" to 4 random numbers
@@ -510,7 +515,7 @@ class HeimdallrAA:
             "cmd": "dump",
             "data": [
                 {"name": "hdlr_x_offset", "value": x_offsets},
-                {"name": "hdlr_complete", "value": True},
+                {"name": "hdlr_complete", "value": 1},
             ]
         }
 
@@ -601,6 +606,7 @@ def main():
             # open all shutters
             heimdallr_aa.open_all_shutters()
         elif args.align in ["test_mcs"]:
+            heimdallr_aa.test_mcs()
         elif args.align in ["pa", "pupilall"]:
             if args.output == "mcs":
                 print("Pupil alignment with MCS output not supported, exiting...")

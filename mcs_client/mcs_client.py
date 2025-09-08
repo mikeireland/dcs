@@ -66,9 +66,13 @@ class ZmqReq:
         self.s.connect(endpoint)
 
     def send_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        self.s.send_string(json.dumps(payload))
+        print("payload", payload)
+        print("dumped payload", json.dumps(payload, sort_keys=True))
+        self.s.send_string(json.dumps(payload, sort_keys=True))
+
         try:
-            return json.loads(self.s.recv_string())
+            res = self.s.recv().decode("ascii")[:-1]
+            return json.loads(res)
         except zmq.error.Again:
             return None
 
@@ -107,14 +111,16 @@ class MCSClient:
         publish_endpoint: str,
     ):
         self.publish_z = ZmqReq(publish_endpoint)
+        print(f"REQ publish set up on {publish_endpoint}")
 
         self.script_z = ScriptAdapter(script_endpoint)
+        print(f"ScriptAdapter(REP) set up on {script_endpoint}")
 
         self.dcs_adapters = {}
         for dcs_name, endpoint in dcs_endpoints.items():
             self.dcs_adapters[dcs_name] = CppServerAdapter(endpoint)
 
-        self.requester = "wag"
+        self.requester = "mimir"
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
@@ -124,18 +130,22 @@ class MCSClient:
         return (content == "OK" or content != "ERROR"), str(content)
 
     def publish_script_data(self):
-        data = self.script_z.data
+        if self.script_z.has_new_data:
+            data = self.script_z.read_data()
+        else:
+            return
         if data is None or not isinstance(data, list) or len(data) == 0:
             return
-
+        
         # need to append the requester field to each item
         for item in data:
             item["requester"] = self.requester
 
         # for any lists in data, need to add the "range" field
         for item in data:
+            print(type(item.get("value")))
             if isinstance(item.get("value"), (list, tuple)):
-                item["range"] = "(0, 3)"
+                item["range"] = "(0:3)"
 
         # write all fields to MCS in a single message
         body = {
@@ -144,7 +154,10 @@ class MCSClient:
                 "time": self.ts(),
                 "parameter": data,
             }
-        }
+        }   
+
+        print(f" sending the following to wag")
+        print(body)
 
         ok, msg = self._send(body)
 
@@ -201,7 +214,7 @@ class MCSClient:
 
     @staticmethod
     def ts():
-        current_utc_time = datetime.now(datetime.timezone.utc)
+        current_utc_time = datetime.now(timezone.utc)
         # Format the UTC time
         return current_utc_time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -340,6 +353,11 @@ class ScriptAdapter:
         self.poller.register(self.z.s, zmq.POLLIN)
 
         self.data = {}
+        self.has_new_data = False
+
+    def read_data(self):
+        self.has_new_data=False
+        return self.data
 
     def fetch(self) -> Optional[Dict[str, Any]]:
         socks = dict(self.poller.poll(10))
@@ -349,8 +367,8 @@ class ScriptAdapter:
         for s in inputready:  # loop through our array of sockets/inputs
             msg = self.socket_funct(s)
             print(f"Received message: {msg}")
-            is_custom_msg, response = self.handle_message(msg)
-            s.send_string(response + "\n")
+            self.handle_message(msg)
+            self.has_new_data = True
 
     def socket_funct(self, s):
         try:
@@ -370,7 +388,7 @@ class ScriptAdapter:
 
         # Save the data for later processing
         self.data = msg.get("data", {})
-        return self.data
+
 
 
 # ---------------- Main publish loop ----------------
@@ -384,12 +402,14 @@ if __name__ == "__main__":
             # "BLD3": "tcp://192.168.100.2:7021",
             # "BLD4": "tcp://192.168.100.2:7022",
         },
-        script_endpoint="tcp://192.168.100.2:5556",
+        script_endpoint="tcp://192.168.100.2:7019",
         publish_endpoint="tcp://192.168.100.1:7050",
     )
 
     while True:
+        print("fetching data...")
         mcs.script_z.fetch()
+
         mcs.publish_script_data()
         # mcs.publish_baldr_to_wag()
         time.sleep(1)
