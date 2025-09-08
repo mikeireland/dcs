@@ -1,6 +1,7 @@
 import sys, time, json, math, zmq
 from collections import deque
 import numpy as np
+import parser
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
     QComboBox, QTextEdit, QLineEdit, QGridLayout, QLabel, QSpinBox
@@ -10,11 +11,23 @@ import pyqtgraph as pg
 
 from functools import partial
 
-SERVER_ADDR = "tcp://127.0.0.1:6662"  # <-- set to your baldr server
+
+
+
+parser = argparse.ArgumentParser(description="Baldr RTC GUI.")
+
+parser.add_argument("--beam", type=int, default=1, help="which beam")
+
+args=parser.parse_args()
+
+SERVER_ADDR_DICT = {1,"tcp://127.0.0.1:6662",
+                    2,"tcp://127.0.0.1:6663",
+                    3,"tcp://127.0.0.1:6664",
+                    4,"tcp://127.0.0.1:6665"}
 
 # -------------------- Commander ZMQ helper --------------------
 class CommanderClient:
-    def __init__(self, addr=SERVER_ADDR, rcv_timeout_ms=1000, snd_timeout_ms=1000):
+    def __init__(self, addr=SERVER_ADDR_DICT[args.beam], rcv_timeout_ms=1000, snd_timeout_ms=1000):
         self.ctx = zmq.Context.instance()
         self.sock = self.ctx.socket(zmq.REQ)
         self.sock.setsockopt(zmq.RCVTIMEO, rcv_timeout_ms)
@@ -64,7 +77,7 @@ class PlotWidget(QWidget):
     VECTOR_FIELDS = ["img", "img_dm", "signal", "e_LO", "u_LO", "e_HO", "u_HO", "c_LO", "c_HO", "c_inj"]
     REDUCERS = ["mean", "rms", "index"]
 
-    def __init__(self, server_addr=SERVER_ADDR, history=600):  # keep ~1 min at 10 Hz
+    def __init__(self, server_addr=SERVER_ADDR_DICT[args.beam], history=600):  # keep ~1 min at 10 Hz
         super().__init__()
         self.client = CommanderClient(server_addr)
         self.history = history
@@ -160,7 +173,7 @@ class PlotWidget(QWidget):
 
 # -------------------- CLI (uses its own REQ socket) --------------------
 class CommandLine(QWidget):
-    def __init__(self, server_addr=SERVER_ADDR):
+    def __init__(self, server_addr=SERVER_ADDR_DICT[args.beam]):
         super().__init__()
         self.client = CommanderClient(server_addr)
         self._init_ui()
@@ -249,7 +262,7 @@ class ControlPanel(QWidget):
 
 # -------------------- Main window --------------------
 class MainWindow(QWidget):
-    def __init__(self, server_addr=SERVER_ADDR):
+    def __init__(self, server_addr=SERVER_ADDR_DICT[args.beam]):
         super().__init__()
         self.setWindowTitle("Baldr Telemetry GUI")
         self.server_addr = server_addr
