@@ -100,9 +100,9 @@ void ForwardFt::loop() {
 #endif
     unsigned int ii_shift, jj_shift, szj;
     cnt = subarray->md->cnt0;
-    catch_up_with_sem(subarray, 1);
+    catch_up_with_sem(subarray, 2);
     while (mode != FT_STOPPING) {
-        ImageStreamIO_semwait(subarray, 1);
+        ImageStreamIO_semwait(subarray, 2);
         if (subarray->md->cnt0 != cnt) {
             // Put this here just in case there is a re-start with a new size. Unlikely!
             szj = subim_sz/2 + 1;

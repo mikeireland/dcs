@@ -464,6 +464,7 @@ class HeimdallrAA:
         plt.show()
 
     def _send_offsets_to_mcs(self, pixel_offsets):
+
         """
         convert pixel offsets to image offsets (pixels to arcsec)
         dummy conversion matrix for now
@@ -475,7 +476,7 @@ class HeimdallrAA:
         """
 
         # dummy conversion matrix TODO: per beam matrix 2x2
-        pix_to_arcsec = 1.0
+        pix_to_arcsec = 1.20
         arcsec_offsets = {
             beam: offset * pix_to_arcsec for beam, offset in pixel_offsets.items()
         }
