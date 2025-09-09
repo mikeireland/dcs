@@ -1,5 +1,37 @@
 # baldr_wag_client.py
 import json, time, socket
+import logging
+import os
+from dataclasses import dataclass, asdict, fields
+from typing import Any, Dict, List, Optional, Tuple
+import zmq
+from datetime import datetime, timezone
+
+# --- Logging setup: file and console ---
+def _setup_logging():
+    log_dir = os.path.expanduser("~/logs/mcs/")
+    os.makedirs(log_dir, exist_ok=True)
+    log_name = time.strftime("mcs_%Y%m%d_%H%M%S.log")
+    log_path = os.path.join(log_dir, log_name)
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(log_path)
+    fh.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.handlers = []
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    logger.info(f"Logging started. Log file: {log_path}")
+
+_setup_logging()
+# baldr_wag_client.py
+import json, time, socket
+import logging
+import os
 from dataclasses import dataclass, asdict, fields
 from typing import Any, Dict, List, Optional, Tuple
 import zmq
@@ -84,10 +116,32 @@ class MCSClient:
         sleep_time: float = 1.0,
     ):
         self.publish_z = ZmqReq(publish_endpoint)
-        print(f"REQ publish set up on {publish_endpoint}")
+        logging.info(f"REQ publish set up on {publish_endpoint}")
 
         self.script_z = ScriptAdapter(script_endpoint)
-        print(f"ScriptAdapter(REP) set up on {script_endpoint}")
+        logging.info(f"ScriptAdapter(REP) set up on {script_endpoint}")
+
+        self.dcs_adapters = {}
+        for dcs_name, endpoint in dcs_endpoints.items():
+            self.dcs_adapters[dcs_name] = CppServerAdapter(endpoint)
+
+        self.requester = "mimir"
+
+        self.sleep_time = sleep_time
+
+    def __init__(
+        self,
+        dcs_endpoints: dict,
+        script_endpoint: str,
+        publish_endpoint: str,
+        sleep_time: float = 1.0,
+    ):
+    self._setup_logging()
+    self.publish_z = ZmqReq(publish_endpoint)
+    logging.info(f"REQ publish set up on {publish_endpoint}")
+
+    self.script_z = ScriptAdapter(script_endpoint)
+    logging.info(f"ScriptAdapter(REP) set up on {script_endpoint}")
 
         self.dcs_adapters = {}
         for dcs_name, endpoint in dcs_endpoints.items():
@@ -146,7 +200,7 @@ class MCSClient:
         ok, msg = self._send(body)
 
         if not ok:
-            print(f"WARN: failed to write script data to wag: {msg}")
+            logging.warning(f"failed to write script data to wag: {msg}")
 
     def publish_hdlr_databases_to_wag(self):
         self.dcs_adapters["HDLR"].fetch()
@@ -166,7 +220,7 @@ class MCSClient:
 
         ok, msg = self._send(body)
         if not ok:
-            print(f"WARN: failed to write script data to wag: {msg}")
+            logging.warning(f"failed to write script data to wag: {msg}")
 
     def publish_script_data(self):
         if self.script_z.has_new_data:
@@ -179,7 +233,7 @@ class MCSClient:
 
         for i, item in enumerate(data):
             if not isinstance(item, dict) or len(item) != 1:
-                print(f"WARN: ignoring malformed script data item: {item}")
+                logging.warning(f"ignoring malformed script data item: {item}")
                 continue
             key = list(item.keys())[0]
             value = item[key]
@@ -200,7 +254,7 @@ class MCSClient:
         ok, msg = self._send(body)
 
         if not ok:
-            print(f"WARN: failed to write script data to wag: {msg}")
+            logging.warning(f"failed to write script data to wag: {msg}")
 
     def ESO_format(self, content):
         return {
@@ -224,9 +278,8 @@ class MCSClient:
         for beam_idx in range(1, 5):
             st = self.dcs_adapters[f"BLD{beam_idx}"].fetch()
             if not st:
-                print(f"WARN: no Baldr status for beam {beam_idx}")
+                logging.warning(f"no Baldr status for beam {beam_idx}")
                 return
-
             data.append(st)
 
         # write all fields to MCS in a single message
@@ -250,7 +303,7 @@ class MCSClient:
 
         ok, msg = self._send(body)
         if not ok:
-            print(f"WARN: failed to write baldr1_status to wag: {msg}")
+            logging.warning(f"failed to write baldr1_status to wag: {msg}")
 
     @staticmethod
     def ts():
@@ -417,7 +470,7 @@ class ScriptAdapter:
             inputready.append(self.z.s)
         for s in inputready:  # loop through our array of sockets/inputs
             msg = self.socket_funct(s)
-            print(f"Received message: {msg}")
+            logging.info(f"Received message: {msg}")
             self.handle_message(msg)
             self.has_new_data = True
 
