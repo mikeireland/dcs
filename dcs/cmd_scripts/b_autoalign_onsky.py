@@ -75,7 +75,7 @@ class BaldrAA:
             self.output = output
 
         if self.output.strip().lower() == "mcs":
-            self.mds_client = ZmqReq("tcp://192.168.100.2:7019")
+            self.mcs_client = ZmqReq("tcp://192.168.100.2:7019")
 
         self.savepath = savepath
 
@@ -232,7 +232,7 @@ class BaldrAA:
         yp = -sin_t * x_shift + cos_t * y_shift
         pupil_mask = (xp/a)**2 + (yp/b)**2 <= 1
 
-        if plot:
+        if savepath is not None::
             # Overlay for visualization
             overlay = np.zeros_like(image)
             overlay[pupil_mask] = 1
@@ -243,10 +243,10 @@ class BaldrAA:
             plt.contour(overlay, colors="red", linewidths=1)
             plt.scatter(center_x, center_y, color="blue", marker="+")
             plt.title("Detected Pupil with Fitted Ellipse")
-            if savepath is not None:
-                plt.savefig(savepath)
-            plt.show()
-        
+            #if savepath is not None:
+            plt.savefig(savepath)
+            #plt.show()
+            plt.close()
         return center_x, center_y, a, b, theta, pupil_mask
 
 
@@ -366,7 +366,7 @@ class BaldrAA:
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mds_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send offsets to MCS")
