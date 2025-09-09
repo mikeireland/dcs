@@ -194,7 +194,7 @@ class MCSClient:
             param_list.append({
                 "name": f"hdlr_{param}",
                 "value": values,
-                "range": "(0:3)",
+                "range": f"(0:{len(values)-1})",
             })
         return param_list
 
