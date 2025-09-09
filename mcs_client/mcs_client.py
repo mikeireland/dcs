@@ -1,6 +1,6 @@
 # baldr_wag_client.py
 import json, time, socket
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from typing import Any, Dict, List, Optional, Tuple
 import zmq
 from datetime import datetime, timezone
@@ -27,32 +27,6 @@ baldr           6662
 """
 
 
-def normalize_to_1d_and_shape(arr):
-    """
-    Accepts: [x0, x1, ...]  or  [[r0c0, r0c1, ...], [r1c0, ...], ...]
-    Returns: (flat_list, (rows, cols))
-    """
-    if isinstance(arr, (list, tuple)) and all(
-        not isinstance(v, (list, tuple)) for v in arr
-    ):
-        # 1 x N
-        return [float(v) for v in arr], (1, len(arr))
-
-    if isinstance(arr, (list, tuple)) and all(
-        isinstance(r, (list, tuple)) for r in arr
-    ):
-        rows = len(arr)
-        cols = len(arr[0]) if rows else 0
-        # sanity: rectangular
-        for r in arr:
-            if len(r) != cols:
-                raise ValueError("gains matrix is ragged; expected equal-length rows")
-        flat = [float(x) for row in arr for x in row]  # row-major
-        return flat, (rows, cols)
-
-    raise TypeError("gains must be a list or list-of-lists")
-
-
 class ZmqReq:
     """
     An adapter for a ZMQ REQ socket (client).
@@ -66,8 +40,6 @@ class ZmqReq:
         self.s.connect(endpoint)
 
     def send_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        print("payload", payload)
-        print("dumped payload", json.dumps(payload, sort_keys=True))
         self.s.send_string(json.dumps(payload, sort_keys=True))
 
         try:
@@ -109,6 +81,7 @@ class MCSClient:
         dcs_endpoints: dict,
         script_endpoint: str,
         publish_endpoint: str,
+        sleep_time: float = 1.0,
     ):
         self.publish_z = ZmqReq(publish_endpoint)
         print(f"REQ publish set up on {publish_endpoint}")
@@ -122,12 +95,77 @@ class MCSClient:
 
         self.requester = "mimir"
 
+        self.sleep_time = sleep_time
+
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
         if not rep or "reply" not in rep:
             return False, "no-reply"
         content = rep["reply"].get("content", "ERROR")
         return (content == "OK" or content != "ERROR"), str(content)
+
+    def run(self):
+        """
+        check if any new data has arrive from the scripts, and
+        also poll the cpp databases for new data.
+        """
+        while True:
+            # TODO: think about ways of making all publish in parallel
+            self.script_z.fetch()
+            self.publish_script_data()
+
+            self.publish_baldr_to_wag()
+            self.publish_hdlr_databases_to_wag()
+
+            # TODO: database classes to know if they are different each call,
+            # and only publish the different data...
+
+            time.sleep(self.sleep_time)
+
+    def publish_bld_databases_to_wag(self):
+        adapter_names = [f"BLD{idx}" for idx in range(1, 5)]
+        for adapter in adapter_names:
+            self.dcs_adapters[adapter].fetch()
+
+        # BLD: for each BaldrTscopeStatus, need to change to a list of values
+        # for each parameter (per adapter)
+        bld_parameters = fields(BaldrTscopeStatus)
+
+        body = self.ESO_format([])
+
+        # append to body["parameter"]
+        for param in bld_parameters:
+            values = [self.dcs_adapters[x][param] for x in adapter_names]
+            prop = {}
+            prop["name"] = f"bld_{param}"
+            prop["range"] = "(0:3)"
+            prop["value"] = values
+            body["parameter"].append(prop)
+
+        ok, msg = self._send(body)
+
+        if not ok:
+            print(f"WARN: failed to write script data to wag: {msg}")
+
+    def publish_hdlr_databases_to_wag(self):
+        self.dcs_adapters["HDLR"].fetch()
+
+        Hdlr_parameters = fields(BaldrTscopeStatus)
+
+        body = self.ESO_format([])
+
+        # append to body["parameter"]
+        for param in Hdlr_parameters:
+            values = self.dcs_adapters["HDLR"][param]  # is already a list
+            prop = {}
+            prop["name"] = f"hdlr_{param}"
+            prop["range"] = "(0:3)"
+            prop["value"] = values
+            body["parameter"].append(prop)
+
+        ok, msg = self._send(body)
+        if not ok:
+            print(f"WARN: failed to write script data to wag: {msg}")
 
     def publish_script_data(self):
         if self.script_z.has_new_data:
@@ -136,33 +174,41 @@ class MCSClient:
             return
         if data is None or not isinstance(data, list) or len(data) == 0:
             return
-        
+
+        for i, item in enumerate(data):
+            if not isinstance(item, dict) or len(item) != 1:
+                print(f"WARN: ignoring malformed script data item: {item}")
+                continue
+            key = list(item.keys())[0]
+            value = item[key]
+            data[i] = {"name": key, "value": value}
+
         # need to append the requester field to each item
         for item in data:
             item["requester"] = self.requester
 
         # for any lists in data, need to add the "range" field
         for item in data:
-            print(type(item.get("value")))
             if isinstance(item.get("value"), (list, tuple)):
                 item["range"] = "(0:3)"
 
         # write all fields to MCS in a single message
-        body = {
-            "command": {
-                "name": "write",
-                "time": self.ts(),
-                "parameter": data,
-            }
-        }   
-
-        print(f" sending the following to wag")
-        print(body)
+        body = self.ESO_format(data)
 
         ok, msg = self._send(body)
 
         if not ok:
             print(f"WARN: failed to write script data to wag: {msg}")
+
+    def ESO_format(self, content):
+        return {
+            "command": {
+                "name": "write",
+                "time": self.ts(),
+                "parameter": content,
+                "requester": self.requester,
+            }
+        }
 
     def publish_baldr_to_wag(self):
         """
@@ -182,15 +228,7 @@ class MCSClient:
             data.append(st)
 
         # write all fields to MCS in a single message
-        body = {
-            "command": {
-                "name": "write",
-                "time": self.ts(),
-                "parameter": [
-                    # each field will go here
-                ],
-            }
-        }
+        body = self.ESO_format([])
 
         # populate the parameter list with all fields from the dataclass,
         # each field will be a list of 4 values (one per beam)
@@ -367,7 +405,7 @@ class ScriptAdapter:
         self.has_new_data = False
 
     def read_data(self):
-        self.has_new_data=False
+        self.has_new_data = False
         return self.data
 
     def fetch(self) -> Optional[Dict[str, Any]]:
@@ -391,36 +429,27 @@ class ScriptAdapter:
 
     def handle_message(self, msg):
         msg = dict(json.loads(msg))
-        if not msg or msg.get("cmd") != "dump":
+        if not msg or msg.get("origin") != "s_h-autoalign":
             return None
 
         # Acknowledge receipt
-        self.z.send_payload({"ok": True, "msg": "ack"})
+        self.z.send_payload({"ok": True})
 
         # Save the data for later processing
         self.data = msg.get("data", {})
 
 
-
 # ---------------- Main publish loop ----------------
-
-
 if __name__ == "__main__":
     mcs = MCSClient(
         dcs_endpoints={
-            # "BLD1": "tcp://192.168.100.2:7019",
-            # "BLD2": "tcp://192.168.100.2:7020",
-            # "BLD3": "tcp://192.168.100.2:7021",
-            # "BLD4": "tcp://192.168.100.2:7022",
+            "BLD1": "tcp://192.168.100.2:6662",
+            "BLD2": "tcp://192.168.100.2:6663",
+            "BLD3": "tcp://192.168.100.2:6664",
+            "BLD4": "tcp://192.168.100.2:6665",
+            "HDLR": "tcp://192.168.100.2:6660",
         },
         script_endpoint="tcp://192.168.100.2:7019",
         publish_endpoint="tcp://192.168.100.1:7050",
+        sleep_time=1.0,
     )
-
-    while True:
-        print("fetching data...")
-        mcs.script_z.fetch()
-
-        mcs.publish_script_data()
-        # mcs.publish_baldr_to_wag()
-        time.sleep(1)

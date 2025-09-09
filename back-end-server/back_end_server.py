@@ -162,7 +162,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Type, Any
 
-from rts_base import AbstractRTSTask, RTSContext, RTSState, RTSErr
+import subprocess
+
+# from rts_base import AbstractRTSTask, RTSContext, RTSState, RTSErr
 from handlers.baldr_rts_handlers import register as register_baldr_rts
 
 
@@ -188,9 +190,6 @@ class BackEndServer:
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://*:{self.port}")
         print(f"BackEndServer started on port {self.port}")
-        # Initialize server ports and connections to other servers
-        # A connection to "localhost" should work, but we need to test
-        # that this is OK when servers binding to *.
 
         self.server_ports = server_ports
         self.servers = {}
@@ -207,100 +206,7 @@ class BackEndServer:
                 continue
         print("All server connections initialized.")
 
-        # ---- RTS registry and execution bounds ----
-        self.rts_registry: Dict[str, Type[AbstractRTSTask]] = {}
-        self.rts_ctx = RTSContext(mcs_notify=None)  # plug a MCS notifier when ready
-
-        """
-        We use a bounded ThreadPoolExecutor plus a semaphore cap to:
-            avoid unbounded thread creation and memory growth,
-            prevent the REP loop from blocking on long RTS actions,
-            provide predictable back-pressure ("ERROR: busy" when saturated).
-
-            this was implemented to allow python scripts to be run directly from the back_end_server
-            perhaps I should have another bld_alignment server the back_end_server talks to to run
-            these scripts?
-
-            currently this will only say busy if there are more than N running or queued things
-        """
-        # Bounded thread-pool for RTS tasks
-        self.max_workers = 16  # tune per host
-        self.max_inflight = 64  # overall in-flight bound (queued + running)
-        self._inflight_sem = threading.Semaphore(self.max_inflight)
-        self.executor = ThreadPoolExecutor(
-            max_workers=self.max_workers, thread_name_prefix="rts"
-        )
-
-        # Track jobs if you later want abort/status (optional)
-        self.jobs: Dict[str, tuple[AbstractRTSTask, object]] = {}
-
-        # Register handlers AFTER the registry exists
-        register_baldr_rts(self)
-
-    def register_rts(self, name: str, cls: Type[AbstractRTSTask]) -> None:
-        """Register an RTS command class by its short name (without 'bld_' prefix)."""
-        self.rts_registry[name.lower()] = cls
-
-    def _submit_bounded(self, fn, *args, **kwargs):  # only for rts commands
-        """Try to submit work if under the inflight cap; else return None (busy)."""
-        if not self._inflight_sem.acquire(blocking=False):
-            return None
-        fut = self.executor.submit(fn, *args, **kwargs)
-        fut.add_done_callback(lambda f: self._inflight_sem.release())
-        return fut
-
-    def _run_task(self, task: AbstractRTSTask):  # only for rts commands
-        """Worker body: run + update DB, set final state on success/failure."""
-        try:
-            task.state = int(RTSState.RUNNING)
-            task.run(task.command.get("parameters", []))
-            task.update_DB()
-            if task.state != int(RTSState.ABORTED) and task.err == int(RTSErr.OK):
-                task.state = int(RTSState.DONE)
-        except Exception as e:
-            task.state = int(RTSState.FAILED)
-            task.err = int(RTSErr.RUNTIME)
-            task.metadata["error"] = str(e)
-
-    def prune_jobs(self, keep_last: int = 500) -> int:
-        # for rts commands we keep log of jobs. for now we just set a hard limit on this length
-        # later we should classify them as active or not and only keep a working class record of
-        # active jobs, and we can just pipe all jobs to some logfile that is not held internally
-        # in this class. TO DO later (if needed)
-        n = len(self.jobs)
-        if n <= keep_last:
-            return 0
-        to_remove = n - keep_last
-        removed = 0
-        # dict preserves insertion order (oldest first)
-        for jid in list(self.jobs.keys())[:to_remove]:
-            self.jobs.pop(jid, None)
-            removed += 1
-        return removed
-
-    def handle_rts(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        raw = (command.get("name") or "").lower()
-        short = raw[4:] if raw.startswith("bld_") else raw
-        TaskClass = self.rts_registry.get(short)
-        if not TaskClass:
-            return self.create_response(f"ERROR: Unknown RTS command '{raw}'")
-        task = TaskClass(command, self.rts_ctx)
-        if not task.ok_to_run():
-            return self.create_response(
-                f"ERROR: {task.metadata.get('error', 'invalid')}"
-            )
-        job_id = uuid.uuid4().hex[:8]
-        task.metadata["job_id"] = job_id
-        fut = self._submit_bounded(self._run_task, task)
-        if fut is None:
-            return self.create_response("ERROR: busy")
-        self.jobs[job_id] = (task, fut)  ####
-
-        ### we need better logging - maybe pipe to logFile and only keep activate jobs running locally
-        # for now we just prune forcefully!
-        self.prune_jobs(keep_last=500)
-
-        return self.create_response("OK")
+        self.scripts_running = []
 
     def run(self):
         while True:
@@ -316,9 +222,6 @@ class BackEndServer:
                 self.socket.send_json(
                     self.create_response("ERROR: Invalid JSON format")
                 )
-                import pdb
-
-                pdb.set_trace()
 
             print(f"Received request: {message}")
 
@@ -338,17 +241,48 @@ class BackEndServer:
             return self.setup(command)
         elif command_name == "start":
             return self.start(command)
-        elif command_name == "abort":
-            return self.abort(command)
+        # elif command_name == "abort":
+        #     return self.abort(command)
         elif command_name == "expstatus":
             return self.expstatus(command)
-        elif command_name == "report_jobs":
-            return self.report_jobs(command)
-        elif command_name.startswith("bld_") or (command_name in self.rts_registry):
+        elif command_name.startswith("bld_"):
             # Fire-and-forget RTS
-            return self.handle_rts(command)
+            return self.handle_bld_rts(command)
+        elif command_name.startswith("hldr_"):
+            return self.handle_hdlr_rts(command)
+        elif command_name.startswith("s_"):
+            return self.handle_script(command)
         else:
             return self.create_response(f"ERROR: Unknown command '{command_name}'")
+
+    def handle_bld_rts(self, command):
+        """
+        Any formatting needs to be done here
+        This needs to decide if this happens to all servers or just one
+        @ben
+        """
+
+    def handle_hdlr_rts(self, command):
+        """
+        Any formatting needs to be done here
+        @mike
+        """
+
+    def handle_script(self, command):
+        """
+        Handle script commands, e.g., s_h-autoalign
+        """
+        command_name = command.get("name", "").lower()
+        parameters = command.get("parameters", [])
+        if command_name == "s_h-autoalign":
+            process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
+        else:
+            return self.create_response(
+                f"ERROR: Unknown script command '{command_name}'"
+            )
+
+        self.scripts_running.append(process)
+        return self.create_response("OK")
 
     def create_response(self, content):
         # Get the current UTC time
@@ -428,101 +362,8 @@ class BackEndServer:
         # Implement start logic here
         return self.create_response("OK")
 
-    # def abort(self, command):
-    #     # Implement abort logic here
-    #     return self.create_response("OK")
-
-    def abort_job(self, job_id: str) -> Dict[str, any]:
-        item = self.jobs.get(job_id)
-        if not item:
-            return self.create_response("ERROR: unknown job_id")
-        task, fut = item
-        try:
-            task.abort()
-            return self.create_response("OK")
-        except Exception as e:
-            return self.create_response(f"ERROR: {e}")
-
-    def abort(self, command):
-        params = command.get("parameters", []) or []
-        job_id = None
-        for p in params:
-            if (p.get("name") or "").lower() == "job_id":
-                job_id = str(p.get("value"))
-                break
-        if not job_id:
-            return self.create_response("ERROR: missing job_id")
-        return self.abort_job(job_id)
-
-    # despite giving instant feedback jobs may be still running in background (.e.g calibration IM).
-    # Here we can check their status
-    def report_jobs(self, command):
-        #
-        params = command.get("parameters", []) or []
-        filter_job = None
-        for p in params:
-            if (p.get("name") or "").lower() == "job_id":
-                filter_job = str(p.get("value"))
-                break
-
-        # take a snapshot to avoid racing with worker updates
-        snapshot = list(self.jobs.items())
-
-        jobs = []
-        for job_id, (task, fut) in snapshot:
-            if filter_job and job_id != filter_job:
-                continue
-            if fut.running():
-                status = "running"
-            elif fut.done():
-                status = "done"
-            else:
-                status = "queued"
-
-            jobs.append(
-                {
-                    "job_id": job_id,
-                    "name": (task.command.get("name") or "").lower(),
-                    "state": int(task.state),  # RTSState as int
-                    "err": int(task.err),  # RTSErr as int
-                    "status": status,  # human-friendly
-                    "created_utc": task.metadata.get("created_utc"),
-                    "meta": {
-                        "command_time": task.metadata.get("command_time"),
-                    },
-                }
-            )
-
-        # build the full reply here (do not call create_response)
-        current_utc_time = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-        return {
-            "reply": {
-                "time": current_utc_time,
-                "content": "OK",
-                "jobs": jobs,  # <- attached here
-            }
-        }
-
     def expstatus(self, command):
         # Implement expstatus logic here
-        return self.create_response("OK")
-
-    def heimdallr_bb_align(self, command):
-        # Implement RTS logic here
-        parameters = command.get("parameters", [])
-        # Not implemented
-        print("heimdallr_bb_align command received: ", parameters)
-        time.sleep(2)
-        # Validate and process parameters as needed
-        return self.create_response("OK")
-
-    def fringe_search(self, command):
-        # Implement RTS logic here
-        parameters = command.get("parameters", [])
-        # Not implemented
-        print("fringe_search command received: ", parameters)
-        time.sleep(2)
-        # Validate and process parameters as needed
         return self.create_response("OK")
 
 
