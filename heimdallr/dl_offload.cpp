@@ -202,6 +202,15 @@ void move_hfo(){
 {"name" : "fringe_detect",
  "value" : [1, 0, 0, 1]}
 ]}
+
+A good reply string is:
+{
+	"reply" :
+	{
+		"time" : "2025-09-09T20:28:33",
+		"content" : "OK"
+	}
+}
 */
 void move_main_dl()
 {
@@ -224,10 +233,11 @@ void move_main_dl()
     params.push_back({{"name", "opd_offset"}, {"value", {next_offload(0), next_offload(1), next_offload(2), next_offload(3)}}});
     // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
     params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
-    params.push_back({{"name", "fringe_detect"}, {"value", {1, 1, 1, 1}}});
+    params.push_back({{"name", "fringe_det"}, {"value", {1, 1, 1, 1}}});
     j["command"]["parameter"] = params;
 
     std::string msg = j.dump(); // No newlines
+    fmt::print("Sent to wag: {} \n", j.dump());
 
     wag_rmn_socket.send(zmq::buffer(msg), zmq::send_flags::none);
     zmq::message_t reply;

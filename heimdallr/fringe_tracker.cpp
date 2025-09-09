@@ -1,6 +1,6 @@
 #include "heimdallr.h"
 //#define PRINT_TIMING
-#define PRINT_TIMING_ALL
+//#define PRINT_TIMING_ALL
 //#define DEBUG
 #define GD_THRESHOLD 5
 #define PD_THRESHOLD 7
@@ -248,7 +248,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
 
 // The main fringe tracking function
 void fringe_tracker(){
-    timespec now, last_dl_offload;
+    timespec now, last_dl_offload, now_all, then_all;
     last_dl_offload.tv_sec = 0;
     last_dl_offload.tv_nsec = 0;
     using namespace std::complex_literals;
@@ -379,14 +379,13 @@ void fringe_tracker(){
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
         // Fill a Vector of baseline group and phase delay.
-        I6gd = M_lacour * make_pinv(Wgd, 0) * M_lacour.transpose() * Wgd;
-        I6pd = M_lacour * make_pinv(Wpd, 0) * M_lacour.transpose() * Wpd;
+        I6gd = M_lacour * make_pinv(Wgd, 0) * M_lacour.transpose() * Wgd.asDiagonal();
+        I6pd = M_lacour * make_pinv(Wpd, 0) * M_lacour.transpose() * Wpd.asDiagonal();
         I4_search_projection = I4 - M_lacour_dag * I6gd * M_lacour; 
         gd_filtered = I6gd * baselines.gd;
 
         // Until SNR is high enough, pd_filtered is zero
 #ifdef PRINT_TIMING_ALL
-    timespec then_all;
     clock_gettime(CLOCK_REALTIME, &then_all);
 #endif
         pd_filtered = filter6(I6pd, baselines.pd, Wpd);
