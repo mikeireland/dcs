@@ -257,10 +257,123 @@ class BackEndServer:
 
     def handle_bld_rts(self, command):
         """
-        Any formatting needs to be done here
-        This needs to decide if this happens to all servers or just one
-        @ben
+        Dispatch BALDR RTS commands to the appropriate BALDR RTC Commander sockets.
+        Self-contained; accepts RTS-format parameter list:
+            command = {
+            "name": "bld_open_lo" | "bld_open_ho" | "bld_close_lo" | "bld_close_ho",
+            "time": "...",  # ignored
+            "parameters": [
+                {"name": "beam", "value": 0|1|2|3|4}
+            ]
+            }
+        Semantics:
+        - beam=0 => broadcast to beams 1..4
+        - beam in 1..4 => target that specific beam
         """
+        # Local-only imports to keep this method self-contained
+        import json as _json
+
+        # Map WAG verbs -> Commander command strings
+        cmd_map = {
+            "bld_open_lo":  'open_baldr_LO ""',
+            "bld_open_ho":  'open_baldr_HO ""',
+            "bld_close_lo": 'close_baldr_LO ""',
+            "bld_close_ho": 'close_baldr_HO ""',
+        }
+
+        name = (command.get("name") or "").lower()
+        if name not in cmd_map:
+            return self.create_response(f"ERROR: Unknown BALDR RTS command '{name}'")
+
+        # ---- Extract single 'beam' from RTS-style parameters list ----
+        params = command.get("parameters", [])
+
+        def _param_value(params_obj, key, default=None):
+            # Accepts the RTS list format and (optionally) a dict format
+            if isinstance(params_obj, list):
+                for item in params_obj:
+                    if isinstance(item, dict) and item.get("name") == key:
+                        return item.get("value", default)
+                return default
+            if isinstance(params_obj, dict):
+                return params_obj.get(key, default)
+            return default
+
+        beam_raw = _param_value(params, "beam", 0)
+        try:
+            beam_val = int(beam_raw)
+        except Exception:
+            return self.create_response("ERROR: 'beam' must be an integer in {0,1,2,3,4}")
+        if beam_val not in (0, 1, 2, 3, 4):
+            return self.create_response("ERROR: 'beam' must be in {0,1,2,3,4}")
+
+        # Expand 0 -> [1,2,3,4], otherwise a single-element list
+        target_beams = [1, 2, 3, 4] if beam_val == 0 else [beam_val]
+
+        # ---- send to each requested BALDR ----
+        cmd_text = cmd_map[name]
+        results = []
+        errors = []
+
+        for b in target_beams:
+            key = f"baldr{b}"
+            sock = self.servers.get(key)
+            if sock is None:
+                errors.append(f"{key}: not connected")
+                continue
+
+            try:
+                sock.send_string(cmd_text)
+                raw = sock.recv_string()  # commander replies as string (often JSON)
+            except Exception as e:
+                errors.append(f"{key}: ZMQ error: {e}")
+                continue
+
+            # Try to interpret the reply (JSON preferred; else plain text)
+            ok = True
+            details = None
+            if not raw:
+                ok = False
+                details = "empty reply"
+            else:
+                try:
+                    rep = _json.loads(raw)
+                    if isinstance(rep, dict):
+                        # Common patterns: {"ok":true}, {"ok":false,"error":"..."},
+                        # or {"reply":{"content":"OK"}} (or an error string)
+                        if rep.get("ok") is False:
+                            ok = False
+                            details = rep.get("error") or rep
+                        elif "reply" in rep and isinstance(rep["reply"], dict):
+                            content = rep["reply"].get("content", "")
+                            if isinstance(content, str) and content.upper().startswith("ERROR"):
+                                ok = False
+                                details = content
+                            else:
+                                details = content or "ok"
+                        else:
+                            # Unknown JSON shape; treat as OK and echo object
+                            details = rep
+                    else:
+                        details = rep
+                except _json.JSONDecodeError:
+                    # Non-JSON reply; consider it error only if it contains 'error'
+                    if isinstance(raw, str) and "error" in raw.lower():
+                        ok = False
+                    details = raw
+
+            if ok:
+                results.append(f"{key}: OK")
+            else:
+                errors.append(f"{key}: {details}")
+
+        if errors:
+            if results:
+                return self.create_response(f"ERROR: partial ({'; '.join(results)}; errors: {', '.join(errors)})")
+            return self.create_response(f"ERROR: {', '.join(errors)}")
+
+        # All good
+        return self.create_response("OK")
 
     def handle_hdlr_rts(self, command):
         """
