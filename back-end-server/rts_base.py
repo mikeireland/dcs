@@ -310,7 +310,7 @@ class S_HDLR_AUTO_ALIGN(AbstractRTSTask):
     def run(self, args=None) -> dict:
         self.state = int(RTSState.RUNNING)
 
-        subprocess.run(["h-auto-align", "-a", "ia", "-o", "mcs"])
+        subprocess.Popen(["h-autoalign", "-a", "ia", "-o", "mcs"])
 
         self.state = int(RTSState.DONE)
         self.err = int(RTSErr.OK)

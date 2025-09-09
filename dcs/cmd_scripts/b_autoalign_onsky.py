@@ -12,6 +12,9 @@
 # be done automatically with no input, but you can optionally specify a file
 
 
+# HERE WE ONLY EVER UPDATE ONE BEAM AT A TIME!   This is because of how wag only accepts ranges of beams to update and not individuals
+
+
 from xaosim.shmlib import shm
 import numpy as np
 import matplotlib.pyplot as plt
@@ -72,7 +75,7 @@ class BaldrAA:
             self.output = output
 
         if self.output.strip().lower() == "mcs":
-            self.mds_client = ZmqReq("tcp://192.168.100.2:7019")
+            self.mcs_client = ZmqReq("tcp://192.168.100.2:7019")
 
         self.savepath = savepath
 
@@ -229,7 +232,7 @@ class BaldrAA:
         yp = -sin_t * x_shift + cos_t * y_shift
         pupil_mask = (xp/a)**2 + (yp/b)**2 <= 1
 
-        if plot:
+        if savepath is not None:
             # Overlay for visualization
             overlay = np.zeros_like(image)
             overlay[pupil_mask] = 1
@@ -240,10 +243,10 @@ class BaldrAA:
             plt.contour(overlay, colors="red", linewidths=1)
             plt.scatter(center_x, center_y, color="blue", marker="+")
             plt.title("Detected Pupil with Fitted Ellipse")
-            if savepath is not None:
-                plt.savefig(savepath)
-            plt.show()
-        
+            #if savepath is not None:
+            plt.savefig(savepath)
+            #plt.show()
+            plt.close()
         return center_x, center_y, a, b, theta, pupil_mask
 
 
@@ -295,6 +298,7 @@ class BaldrAA:
 
         """
 
+
         #x_off, y_off = pixel_offsets
         if 'bright' in mode.lower():
             # note pix_to_mm could be different for each beam. For baldr the VCMs lie in same plane so should be fine as I
@@ -305,26 +309,64 @@ class BaldrAA:
             raise UserWarning( f"mode must be bright or faint. We failed on this case. mode = {mode.lower()} " )
         millimeter_offsets = pix_to_mm @ [x_offset, y_offset]
         
+        # wag expects to receive a vector of values [beam1,beam2,beam3,beam4]
+        # if we only want to update a single parameter we can give a range (0,0) for beam 1, (1,1) beam 2 ect upto (3,3) for beam 4
+        # HERE WE ONLY EVER UPDATE ONE BEAM AT A TIME!   
+
+
+        beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam !
+
         x_offset = millimeter_offsets[1] #offset are flipped! x on the detector is y on sky
         y_offset = millimeter_offsets[0] 
 
+        #x_offset_vector = [0 if ii != self.beam else x_offset for ii in [1,2,3,4]]
+        #y_offset_vector = [0 if ii != self.beam else y_offset for ii in [1,2,3,4]]
+
+        ## Send x offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
-                {"name":"beam", "value":self.beam},
-                {"name": "bld_x_pup_offset", "value": x_offset},
-                {"name": "bld_y_pup_offset", "value": y_offset},
-                {"name": "bld_complete", "value": True},
+                {"name": "bld_x_pup_offset"},
+                {"range": beam_range},
+                {"value": [x_offset]},
+            ]
+        }
+        
+        self.send_and_recv_ack(msg)
+
+
+        #time.sleep(0.05)
+        
+        ## Send y offset
+        msg = {
+            "cmd": "s_bld_pup_autoalign_sky",
+            "data": [
+                {"name": "bld_y_pup_offset"},
+                {"range": beam_range},
+                {"value": [y_offset]},
             ]
         }
 
         self.send_and_recv_ack(msg)
 
 
+        # msg = {
+        #     "cmd": "dump",
+        #     "data": [
+        #         #{"name":"beam", "value":self.beam},
+        #         {"name":"range", "value":beam_range},
+        #         {"name": "bld_x_pup_offset", "value": x_offset_vector},
+        #         {"name": "bld_y_pup_offset", "value": y_offset_vector},
+        #         {"name": "bld_complete", "value": True},
+        #     ]
+        # }
+        #self.send_and_recv_ack(msg)
+
+
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mds_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send offsets to MCS")
@@ -333,18 +375,31 @@ class BaldrAA:
 
 
     def test_mcs(self):
-        # set "hdlr_x_offset" to 4 random numbers
-        x_offsets = np.random.uniform(-1, 1, size=4).tolist()
+        beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam ! 
 
+
+        ## Send x offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
-                {"name":"beam", "value":self.beam},
-                {"name": "bld_x_offset", "value": np.random.uniform()},
-                {"name": "bld_y_offset", "value": np.random.uniform()},
-                {"name": "bld_complete", "value": True},
+                {"name": "bld_x_pup_offset"},
+                {"range": beam_range},
+                {"value": [np.random.uniform()]},
             ]
         }
+
+        self.send_and_recv_ack(msg)
+
+        ## Send y offset
+        msg = {
+            "cmd": "s_bld_pup_autoalign_sky",
+            "data": [
+                {"name": "bld_y_pup_offset"},
+                {"range": beam_range},
+                {"value": [np.random.uniform()]},
+            ]
+        }
+
 
         self.send_and_recv_ack(msg)
 
