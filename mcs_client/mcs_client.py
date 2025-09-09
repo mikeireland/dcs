@@ -46,7 +46,7 @@ sec 8.7.2
 example (to be discussed with team) of baldr_mcs_client which
 is a lightweight Python bridge that polls Baldr/Heimdallr or other
 ZMQ status and reads/writes the corresponding shared parameters 
-on WAG’s Module Communication Server (TCP 7020), keeping OLDB in 
+on WAGs Module Communication Server (TCP 7020), keeping OLDB in 
 sync for operations and GUIs. 
 
 Sockets:
