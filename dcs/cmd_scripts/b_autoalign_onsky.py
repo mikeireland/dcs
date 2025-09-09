@@ -232,7 +232,7 @@ class BaldrAA:
         yp = -sin_t * x_shift + cos_t * y_shift
         pupil_mask = (xp/a)**2 + (yp/b)**2 <= 1
 
-        if savepath is not None::
+        if savepath is not None:
             # Overlay for visualization
             overlay = np.zeros_like(image)
             overlay[pupil_mask] = 1
