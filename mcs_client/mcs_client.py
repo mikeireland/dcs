@@ -128,7 +128,8 @@ class MCSClient:
             elif dcs_name == "HDLR":
                 self.dcs_adapters[dcs_name] = HeimdallrAdapter(endpoint)
             else:
-                
+                logging.warning(f"Unknown DCS adapter name '{dcs_name}', skipping.")
+                continue
 
         self.requester = "mimir"
 
