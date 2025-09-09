@@ -1,6 +1,6 @@
 #include "heimdallr.h"
 //#define PRINT_TIMING
-//#define PRINT_TIMING_ALL
+#define PRINT_TIMING_ALL
 //#define DEBUG
 #define GD_THRESHOLD 5
 #define PD_THRESHOLD 7
@@ -20,7 +20,7 @@ double x_px_K1[N_BL], y_px_K1[N_BL], x_px_K2[N_BL], y_px_K2[N_BL], sign[N_BL];
 dcomp K1_phasor[N_BL], K2_phasor[N_BL];
 
 // A 6x6 matrix for the weights of phase and group delay
-Eigen::Matrix<double, N_BL, N_BL> Wpd, Wgd, cov_pd, cov_gd;
+Eigen::Matrix<double, N_BL, 1> var_pd, var_gd, Wpd, Wgd;
 Eigen::Matrix<double, N_BL, 1> pd_filtered, gd_filtered;
 
 // Convenience matrices and vectors.
@@ -34,8 +34,9 @@ Eigen::Matrix4d I4 = Eigen::Matrix4d::Identity();
 Eigen::Vector4d search_vector_scale(-2.75,-1.75,1.25,3.25);
 
 // Make the pseudo-inverse matrix needed to project onto delay line (telescope) space.
+// W is the diagonal of a 6x6 matrix of weights for each baseline.
 #define NUMERIC_LIMIT 2e-6
-Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold){
+Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, 1> W, double threshold){
     using namespace Eigen;
     // This function computes the pseudo-inverse of the matrix M^T *  W * M, using the
     // SVD method. The threshold is used to set the minimum eigenvalue, and the
@@ -45,7 +46,7 @@ Eigen::Matrix4d make_pinv(Eigen::Matrix<double, N_BL, N_BL> W, double threshold)
     timespec now, then;
     clock_gettime(CLOCK_REALTIME, &then);
 #endif
-    SelfAdjointEigenSolver<Matrix4d> es(M_lacour.transpose() * W * M_lacour);
+    SelfAdjointEigenSolver<Matrix4d> es(M_lacour.transpose() * W.asDiagonal() * M_lacour);
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &now);
     if (then.tv_sec == now.tv_sec)
@@ -89,13 +90,14 @@ void set_dm_piston(Eigen::Vector4d dm_piston){
     }
 }
 
-// Initialise variables assocated with baselines.
+// Initialise variables assocated with baselines, including 
+// bispectra.
 void initialise_baselines(){
     cnt_since_init = 0;
     Wpd.setZero();
     Wgd.setZero();
-    cov_gd.setZero();
-    cov_pd.setZero();
+    var_gd.setZero();
+    var_pd.setZero();
     pd_filtered.setZero();
     gd_filtered.setZero();
     baselines.gd.setZero();
@@ -204,14 +206,44 @@ void reset_search(){
     pid_settings.mutex.unlock();
 }
 
-Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6gd, Eigen::Matrix<double, N_BL, 1> x){
+Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eigen::Matrix<double, N_BL, 1> x, Eigen::Matrix<double, N_BL, 1> W){
     // This function filters the input vector x using the I6gd matrix.
     // It returns the filtered vector.
+    double chi2=1e6, chi2_min=1e6;
+
+    Eigen::Matrix<double, N_BL, 1> y_best, x_try;
     Eigen::Matrix<double, N_BL, 1> y;
     // Each positive element of x could be x-1, and each negative element
     // could be x+1. If we tried every combination, we would have 2^N_BL=64 combinations.
-    y = I6gd * x;
-    return y;
+    // The best combination has the minimum chi^2 of the modified x with 
+    // respect to the final y
+    for (int i=0; i<(1<<N_BL); i++){
+        for (int j=0; j<N_BL; j++){
+            if (x(j) > 0){
+                if (i & (1<<j)){
+                    x_try(j) = x(j) - 1.0;
+                } else {
+                    x_try(j) = x(j);
+                }
+            } else {
+                if (i & (1<<j)){
+                    x_try(j) = x(j) + 1.0;
+                } else {
+                    x_try(j) = x(j);
+                }
+            }
+        }
+        // Now compute the filtered y and chi^2
+        y = I6 * x_try;
+        chi2 = (x_try - y).transpose() * W.asDiagonal() * (x_try - y);
+        if (chi2 < chi2_min){
+            chi2_min = chi2;
+            y_best = y;
+        }
+    }
+    //y = I6 * x;
+    //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
+    return y_best;
 }
 
 // The main fringe tracking function
@@ -257,7 +289,6 @@ void fringe_tracker(){
 #endif
         // Extract the phases from the Fourier transforms, one baseline
         // at a time. This could in principle be vectorised. 
-        //std::cout << ft_cnt << std::endl;
         int gd_ix = baselines.ix_gd_boxcar;
         int pd_ix = baselines.ix_pd_boxcar;
         for (int bl=0; bl<N_BL; bl++){
@@ -297,9 +328,6 @@ void fringe_tracker(){
             // NB We can only unwrap here if we are confident we have a algorithm that
             // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
-            // !!! The 7.5 is a John Monnnier hack, due to fmod's treatment of negative numbers.
-            //double pdiff = std::fmod((std::arg(K1_phasor[bl])/2/M_PI - pd_filtered(bl) + 7.5), 1.0) - 0.5;
-            //baselines.pd(bl) = pd_filtered(bl) + pdiff;
             if (servo_mode == SERVO_FIGHT){
                 // In fight mode, we just use the instantaneous phase, not the filtered phase.
                 // This is useful for debugging, but not for real operation.
@@ -327,20 +355,22 @@ void fringe_tracker(){
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
             if (baselines.gd_snr(bl) > GD_THRESHOLD){
-                Wgd(bl, bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
-                cov_gd(bl, bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
+                Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
+                var_gd(bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
             else {
-                Wgd(bl, bl) = 0;
-                cov_gd(bl, bl) = 1e6; //!!!
+                Wgd(bl) = 0;
+                var_gd(bl) = 1e6; 
             }
             if (baselines.pd_snr(bl) > PD_THRESHOLD){
-                Wpd(bl, bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
-                cov_pd(bl, bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
+                Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
+                var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
             }
             else{
-                Wpd(bl, bl) = 0;
-                cov_pd(bl, bl) = 1e6; //!!!
+                Wpd(bl) = 0;
+                // If the SNR is too low, set the variance to something that is
+                // practically infinite (i.e. 1000 wavelengths RMS here)
+                var_pd(bl) = 1e6;
             }
         }
         baselines.ix_gd_boxcar = (gd_ix + 1) % baselines.n_gd_boxcar;
@@ -355,8 +385,16 @@ void fringe_tracker(){
         gd_filtered = I6gd * baselines.gd;
 
         // Until SNR is high enough, pd_filtered is zero
-        // !!! The following filtering should check for phasors that are too far out.
-        pd_filtered = I6pd * baselines.pd;
+#ifdef PRINT_TIMING_ALL
+    timespec then_all;
+    clock_gettime(CLOCK_REALTIME, &then_all);
+#endif
+        pd_filtered = filter6(I6pd, baselines.pd, Wpd);
+#ifdef PRINT_TIMING_ALL
+    clock_gettime(CLOCK_REALTIME, &now_all);
+    if (then_all.tv_sec == now_all.tv_sec)
+        std::cout << "PD filtering time: " << now_all.tv_nsec-then_all.tv_nsec << std::endl;
+#endif
 
         // Filter the average phase delay. !!! This doesn't work. Removing for now. !!!
         //baselines.pd_av_filtered = filter6(I6gd, baselines.pd_av);
@@ -367,7 +405,7 @@ void fringe_tracker(){
         // covariance of the telescope group and phase delays. 
         // !!! cov_pd_tel unused for now but could be useful?
 
-        cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
+        cov_gd_tel = M_lacour_dag * I6gd * var_gd.asDiagonal() * I6gd.transpose() * M_lacour_dag.transpose();
         //cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
 
         // Now project the filtered gd and pd onto telescope space.
@@ -443,8 +481,6 @@ void fringe_tracker(){
             std::cout << "FT Computation time: " << now.tv_nsec-then.tv_nsec << std::endl;
         then = now;
 #endif
-        // Already computed above. 
-        //cov_gd_tel = M_lacour_dag * I6gd * cov_gd * I6gd.transpose() * M_lacour_dag.transpose();
         double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
         if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
             control_u.search_Nsteps=0;
