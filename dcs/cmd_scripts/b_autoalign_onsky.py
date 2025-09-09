@@ -313,8 +313,8 @@ class BaldrAA:
         # if we only want to update a single parameter we can give a range (0,0) for beam 1, (1,1) beam 2 ect upto (3,3) for beam 4
         # HERE WE ONLY EVER UPDATE ONE BEAM AT A TIME!   
 
-
-        beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam !
+        # mcs deals with this now 
+        #beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam !
 
         x_offset = millimeter_offsets[1] #offset are flipped! x on the detector is y on sky
         y_offset = millimeter_offsets[0] 
@@ -322,6 +322,7 @@ class BaldrAA:
 
         msg = {
             "origin": "s_bld_pup_autoalign_sky",
+            "beam":int(self.beam)-1,
             "data": [
                 {"bld_x_pup_offset": x_offset},
                 {"bld_y_pup_offset": y_offset},
@@ -370,7 +371,7 @@ class BaldrAA:
         resp = self.mcs_client.send_payload(msg)
         if resp is None or resp.get("ok") == False:
             print(resp)
-            print("Failed to send offsets to MCS")
+            print("Failed to send offsets to MCS. Is the MCS running?")
         else:
             print("msg acked")
 
@@ -379,6 +380,7 @@ class BaldrAA:
         
         msg = {
             "origin": "s_bld_pup_autoalign_sky",
+            "beam":int(self.beam)-1, 
             "data": [
                 {"bld_x_pup_offset": x_offset},
                 {"bld_y_pup_offset": y_offset},
