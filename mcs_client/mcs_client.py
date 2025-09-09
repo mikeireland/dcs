@@ -123,33 +123,18 @@ class MCSClient:
 
         self.dcs_adapters = {}
         for dcs_name, endpoint in dcs_endpoints.items():
-            self.dcs_adapters[dcs_name] = CppServerAdapter(endpoint)
+            if dcs_name.startswith("BLD"):
+                self.dcs_adapters[dcs_name] = BaldrAdapter(endpoint)
+            elif dcs_name == "HDLR":
+                self.dcs_adapters[dcs_name] = HeimdallrAdapter(endpoint)
+            else:
+                logging.warning(f"Unknown DCS adapter name '{dcs_name}', skipping.")
+                continue
 
         self.requester = "mimir"
 
         self.sleep_time = sleep_time
 
-    def __init__(
-        self,
-        dcs_endpoints: dict,
-        script_endpoint: str,
-        publish_endpoint: str,
-        sleep_time: float = 1.0,
-    ):
-    self._setup_logging()
-    self.publish_z = ZmqReq(publish_endpoint)
-    logging.info(f"REQ publish set up on {publish_endpoint}")
-
-    self.script_z = ScriptAdapter(script_endpoint)
-    logging.info(f"ScriptAdapter(REP) set up on {script_endpoint}")
-
-        self.dcs_adapters = {}
-        for dcs_name, endpoint in dcs_endpoints.items():
-            self.dcs_adapters[dcs_name] = CppServerAdapter(endpoint)
-
-        self.requester = "mimir"
-
-        self.sleep_time = sleep_time
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
@@ -160,22 +145,93 @@ class MCSClient:
 
     def run(self):
         """
-        check if any new data has arrive from the scripts, and
-        also poll the cpp databases for new data.
+        Check if any new data has arrived from the scripts, and
+        also poll the cpp databases for new data. Publish all at once.
         """
         while True:
-            # TODO: think about ways of making all publish in parallel
             self.script_z.fetch()
-            self.publish_script_data()
-
-            # self.publish_baldr_to_wag()
-            # self.publish_hdlr_databases_to_wag()
-
-            # TODO: database classes to know if they are different each call,
-            # and only publish the different data...
-
+            self.publish_all_to_wag()
             time.sleep(self.sleep_time)
-            print("Sleeping for new commands...")
+    def gather_baldr_parameters(self):
+        """Gather Baldr parameters for all beams as a list of dicts."""
+        data = []
+        for beam_idx in range(1, 5):
+            st = self.dcs_adapters[f"BLD{beam_idx}"].fetch()
+            if not st:
+                logging.warning(f"no Baldr status for beam {beam_idx}")
+                return []
+            data.append(st)
+        param_list = []
+        for field in asdict(data[0]).keys():
+            values = [getattr(d, field) for d in data]
+            param_list.append({
+                "name": f"bld_{field}",
+                "value": values,
+                "range": "(0:3)",
+            })
+        return param_list
+
+    def gather_hdlr_parameters(self):
+        """Gather HDLR parameters as a list of dicts."""
+        self.dcs_adapters["HDLR"].fetch()
+        Hdlr_parameters = fields(HeimdallrStatus)
+        param_list = []
+        for param in Hdlr_parameters:
+            values = self.dcs_adapters["HDLR"][param]  # is already a list
+            param_list.append({
+                "name": f"hdlr_{param}",
+                "value": values,
+                "range": "(0:3)",
+            })
+        return param_list
+
+    def gather_script_parameters(self):
+        """Gather script parameters if new data is available, as a list of dicts."""
+        if not self.script_z.has_new_data:
+            return []
+        msg = self.script_z.read_most_recent_msg()
+        if "beam" not in msg:
+            data = msg["data"]
+            for i, item in enumerate(data):
+                if not isinstance(item, dict) or len(item) != 1:
+                    logging.warning(f"ignoring malformed script data item: {item}")
+                    continue
+                key = list(item.keys())[0]
+                value = item[key]
+                data[i] = {"name": key, "value": value}
+            for item in data:
+                if isinstance(item.get("value"), (list, tuple)):
+                    item["range"] = "(0:3)"
+        else:
+            beam_no = msg["beam"]
+            data = msg["data"]
+            for i, item in enumerate(data):
+                if not isinstance(item, dict) or len(item) != 1:
+                    logging.warning(f"ignoring malformed script data item: {item}")
+                    continue
+                key = list(item.keys())[0]
+                value = item[key]
+                data[i] = {"name": key, "value": [value], "range": f"({beam_no}:{beam_no})"}
+        return data
+
+    def publish_all_to_wag(self):
+        """Publish all parameters (baldr, hdlr, script) in a single message."""
+        all_params = []
+        baldr_params = self.gather_baldr_parameters()
+        if baldr_params:
+            all_params.extend(baldr_params)
+        hdlr_params = self.gather_hdlr_parameters()
+        if hdlr_params:
+            all_params.extend(hdlr_params)
+        script_params = self.gather_script_parameters()
+        if script_params:
+            all_params.extend(script_params)
+        if not all_params:
+            return
+        body = self.ESO_format(all_params)
+        ok, msg = self._send(body)
+        if not ok:
+            logging.warning(f"failed to write combined data to wag: {msg}")
 
     def publish_bld_databases_to_wag(self):
         adapter_names = [f"BLD{idx}" for idx in range(1, 5)]
