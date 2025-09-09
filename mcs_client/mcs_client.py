@@ -189,6 +189,8 @@ class MCSClient:
         if st is None:
             return []
         Hdlr_parameters = fields(HeimdallrStatus)
+        logging.info(f"Searching for fields {Hdlr_parameters}")
+        logging.info(f"data {st}")
         param_list = []
         for param in Hdlr_parameters:
             values = st[param]  # is already a list
@@ -542,6 +544,10 @@ class HeimdallrStatus:
     hdlr_x_offset: list[float]
     hdlr_y_offset: list[float]
     hdlr_complete: bool
+    hdr_gd_snr: list[float]
+    hdr_pd_snr: list[float]
+    hdr_v2_K1: list[float]
+    hdr_v2_K2: list[float]
 
 
 class HeimdallrAdapter(CppServerAdapter):
@@ -553,16 +559,21 @@ class HeimdallrAdapter(CppServerAdapter):
         super().__init__(endpoint)
 
     def fetch(self) -> Optional[HeimdallrStatus]:
-        rep = self.z.send_payload("status", is_str=True)
+        rep = self.z.send_payload("status", is_str=True, decode_ascii=False)
         if not rep:
             return None
 
         try:
-            st = rep["status"]
+            st = rep
+            print(st)
             return HeimdallrStatus(
                 hdlr_x_offset=[float(x) for x in st["hdlr_x_offset"]],
                 hdlr_y_offset=[float(y) for y in st["hdlr_y_offset"]],
                 hdlr_complete=bool(st["hdlr_complete"]),
+                hdr_gd_snr=[float(x) for x in st["hdr_gd_snr"]],
+                hdr_pd_snr=[float(x) for x in st["hdr_pd_snr"]],
+                hdr_v2_K1=[float(x) for x in st["hdr_v2_K1"]],
+                hdr_v2_K2=[float(x) for x in st["hdr_v2_K2"]],
             )
         except KeyError:
             return None
