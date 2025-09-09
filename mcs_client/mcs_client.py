@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import zmq
 from datetime import datetime, timezone
 
+
 # --- Logging setup: file and console ---
 def _setup_logging():
     log_dir = os.path.expanduser("~/logs/mcs/")
@@ -19,13 +20,14 @@ def _setup_logging():
     fh.setLevel(logging.INFO)
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s')
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
     logger.handlers = []
     logger.addHandler(fh)
     logger.addHandler(ch)
     logger.info(f"Logging started. Log file: {log_path}")
+
 
 _setup_logging()
 # baldr_wag_client.py
@@ -37,26 +39,23 @@ from typing import Any, Dict, List, Optional, Tuple
 import zmq
 from datetime import datetime, timezone
 
-"""
-Following protocol described in 
-Top-Level Control Software
-User and Maintenance Manual
-sec 8.7.2
+# Following protocol described in
+# Top-Level Control Software
+# User and Maintenance Manual
+# sec 8.7.2
 
-example (to be discussed with team) of baldr_mcs_client which
-is a lightweight Python bridge that polls Baldr/Heimdallr or other
-ZMQ status and reads/writes the corresponding shared parameters 
-on WAGs Module Communication Server (TCP 7020), keeping OLDB in 
-sync for operations and GUIs. 
+# example (to be discussed with team) of baldr_mcs_client which
+# is a lightweight Python bridge that polls Baldr/Heimdallr or other
+# ZMQ status and reads/writes the corresponding shared parameters
+# on WAGs Module Communication Server (TCP 7020), keeping OLDB in
+# sync for operations and GUIs.
 
-Sockets:
-cam_server      6667
-DM_server       6666
-hdlr            6660
-hdlr_align      6661
-baldr           6662
-
-"""
+# Sockets:
+# cam_server      6667
+# DM_server       6666
+# hdlr            6660
+# hdlr_align      6661
+# baldr           6662
 
 
 class ZmqReq:
@@ -71,20 +70,20 @@ class ZmqReq:
         self.s.SNDTIMEO = timeout_ms
         self.s.connect(endpoint)
 
-    def send_payload(self, payload: Dict[str, Any], is_str=False, decode_ascii=True) -> Optional[Dict[str, Any]]:
+    def send_payload(
+        self, payload: Dict[str, Any], is_str=False, decode_ascii=True
+    ) -> Optional[Dict[str, Any]]:
         if not is_str:
             self.s.send_string(json.dumps(payload, sort_keys=True))
         else:
             self.s.send_string(payload)
-            
-
 
         try:
 
             if decode_ascii:
                 res = self.s.recv().decode("ascii")[:-1]
             else:
-                res = self.s.recv_string()      
+                res = self.s.recv_string()
 
             return json.loads(res)
         except zmq.error.Again:
@@ -147,7 +146,6 @@ class MCSClient:
 
         self.sleep_time = sleep_time
 
-
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
         if not rep or "reply" not in rep:
@@ -163,6 +161,7 @@ class MCSClient:
         while True:
             self.publish_all_to_wag()
             time.sleep(self.sleep_time)
+
     def gather_baldr_parameters(self):
         """Gather Baldr parameters for all beams as a list of dicts."""
         data = []
@@ -175,11 +174,13 @@ class MCSClient:
         param_list = []
         for field in asdict(data[0]).keys():
             values = [getattr(d, field) for d in data]
-            param_list.append({
-                "name": f"bld_{field}",
-                "value": values,
-                "range": "(0:3)",
-            })
+            param_list.append(
+                {
+                    "name": f"bld_{field}",
+                    "value": values,
+                    "range": "(0:3)",
+                }
+            )
         return param_list
 
     def gather_hdlr_parameters(self):
@@ -191,11 +192,13 @@ class MCSClient:
         param_list = []
         for param in Hdlr_parameters:
             values = st[param]  # is already a list
-            param_list.append({
-                "name": f"hdlr_{param}",
-                "value": values,
-                "range": "(0:3)",
-            })
+            param_list.append(
+                {
+                    "name": f"hdlr_{param}",
+                    "value": values,
+                    "range": "(0:3)",
+                }
+            )
         return param_list
 
     def gather_script_parameters(self):
@@ -225,7 +228,11 @@ class MCSClient:
                     continue
                 key = list(item.keys())[0]
                 value = item[key]
-                data[i] = {"name": key, "value": [value], "range": f"({beam_no}:{beam_no})"}
+                data[i] = {
+                    "name": key,
+                    "value": [value],
+                    "range": f"({beam_no}:{beam_no})",
+                }
         return data
 
     def publish_all_to_wag(self):
@@ -238,7 +245,7 @@ class MCSClient:
         if hdlr_params:
             all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
-        print("script_params",script_params)
+        print("script_params", script_params)
         if script_params:
             all_params.extend(script_params)
         if not all_params:
@@ -301,47 +308,44 @@ class MCSClient:
             msg = self.script_z.read_most_recent_msg()
         else:
             return
-        """
-        // option 1: all 4 beams updated, formatting done by MCS
-        {
-            "origin": "s_h-autoalign",
-            "data": [
-                {"hdlr_x_offset": x_offsets}, // each value is a list if needed
-                {"hdlr_y_offset": y_offsets},
-                {"hdlr_complete": True},
-            ],
-        }
+        # // option 1: all 4 beams updated, formatting done by MCS
+        # {
+        #     "origin": "s_h-autoalign",
+        #     "data": [
+        #         {"hdlr_x_offset": x_offsets}, // each value is a list if needed
+        #         {"hdlr_y_offset": y_offsets},
+        #         {"hdlr_complete": True},
+        #     ],
+        # }
 
-        // option 2: single beam updated, formatting done by MCS
-        {
-            "origin": "s_h-autoalign",
-            "beam" : beam_no, // if this keyword exists MCS knows it is this case
-            "data": [
-                {"hdlr_x_offset": x_offset}, // each value is a single value
-                {"hdlr_y_offset": y_offset}, // constraint: only params with "unique per telescope" can be sent
-            ],
-        }
+        # // option 2: single beam updated, formatting done by MCS
+        # {
+        #     "origin": "s_h-autoalign",
+        #     "beam" : beam_no, // if this keyword exists MCS knows it is this case
+        #     "data": [
+        #         {"hdlr_x_offset": x_offset}, // each value is a single value
+        #         {"hdlr_y_offset": y_offset}, // constraint: only params with "unique per telescope" can be sent
+        #     ],
+        # }
 
-        final form that is sent to wag is (in the data section):
-        // case 1
-        [
-            {
-                "name": "hdlr_x_offset",
-                "value": x_offsets,
-                "range": "(0:3)"
-            }, ... // same for all other params
-        ]
-        
-        // case 2
-        [
-            {
-                "name": "hdlr_x_offset",
-                "value": [x_offset],
-                "range": "(beam_no:beam_no)"
-            }, ... // same for all other params
-        ]
+        # final form that is sent to wag is (in the data section):
+        # // case 1
+        # [
+        #     {
+        #         "name": "hdlr_x_offset",
+        #         "value": x_offsets,
+        #         "range": "(0:3)"
+        #     }, ... // same for all other params
+        # ]
 
-        """
+        # // case 2
+        # [
+        #     {
+        #         "name": "hdlr_x_offset",
+        #         "value": [x_offset],
+        #         "range": "(beam_no:beam_no)"
+        #     }, ... // same for all other params
+        # ]
 
         # check if "beam" keyword exists, if so it is a single beam update
         # otherwise it is all beams
@@ -362,9 +366,9 @@ class MCSClient:
                 if isinstance(item.get("value"), (list, tuple)):
                     item["range"] = "(0:3)"
 
-        else: 
+        else:
             beam_no = msg["beam"]
-            
+
             data = msg["data"]
 
             for i, item in enumerate(data):
@@ -373,8 +377,11 @@ class MCSClient:
                     continue
                 key = list(item.keys())[0]
                 value = item[key]
-                data[i] = {"name": key, "value": [value], "range": f"({beam_no}:{beam_no})"}
-
+                data[i] = {
+                    "name": key,
+                    "value": [value],
+                    "range": f"({beam_no}:{beam_no})",
+                }
 
         # # write all fields to MCS in a single message
         body = self.ESO_format(data)
@@ -616,13 +623,12 @@ class ScriptAdapter:
         if not msg:
             return None
         self.z.send_payload({"ok": True})
-        
+
         if msg.get("origin") == "s_h-autoalign":
             self.data = msg
         elif msg.get("origin") == "s_bld_pup_autoalign_sky":
             # Save the data for later processing
             self.data = msg
-            
 
 
 # ---------------- Main publish loop ----------------
