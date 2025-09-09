@@ -319,48 +319,49 @@ class BaldrAA:
         x_offset = millimeter_offsets[1] #offset are flipped! x on the detector is y on sky
         y_offset = millimeter_offsets[0] 
 
-        #x_offset_vector = [0 if ii != self.beam else x_offset for ii in [1,2,3,4]]
-        #y_offset_vector = [0 if ii != self.beam else y_offset for ii in [1,2,3,4]]
 
-        ## Send x offset
         msg = {
-            "cmd": "s_bld_pup_autoalign_sky",
+            "origin": "s_bld_pup_autoalign_sky",
             "data": [
-                {"name": "bld_x_pup_offset"},
-                {"range": beam_range},
-                {"value": [x_offset]},
-            ]
-        }
-        
-        self.send_and_recv_ack(msg)
-
-
-        #time.sleep(0.05)
-        
-        ## Send y offset
-        msg = {
-            "cmd": "s_bld_pup_autoalign_sky",
-            "data": [
-                {"name": "bld_y_pup_offset"},
-                {"range": beam_range},
-                {"value": [y_offset]},
-            ]
+                {"bld_x_pup_offset": x_offset},
+                {"bld_y_pup_offset": y_offset},
+                {"bld_complete": 1},
+            ],
         }
 
         self.send_and_recv_ack(msg)
 
-
+        ########## OLD mcs format direct wag format  
+        # ## Send x offset
         # msg = {
-        #     "cmd": "dump",
+        #     "cmd": "s_bld_pup_autoalign_sky",
         #     "data": [
-        #         #{"name":"beam", "value":self.beam},
-        #         {"name":"range", "value":beam_range},
-        #         {"name": "bld_x_pup_offset", "value": x_offset_vector},
-        #         {"name": "bld_y_pup_offset", "value": y_offset_vector},
-        #         {"name": "bld_complete", "value": True},
+        #         {"name": "bld_x_pup_offset"},
+        #         {"range": beam_range},
+        #         {"value": [x_offset]},
         #     ]
         # }
-        #self.send_and_recv_ack(msg)
+        
+        # self.send_and_recv_ack(msg)
+
+
+        # #time.sleep(0.05)
+        
+        # ## Send y offset
+        # msg = {
+        #     "cmd": "s_bld_pup_autoalign_sky",
+        #     "data": [
+        #         {"name": "bld_y_pup_offset"},
+        #         {"range": beam_range},
+        #         {"value": [y_offset]},
+        #     ]
+        # }
+
+        # self.send_and_recv_ack(msg)
+        ############################## end old rts 
+
+
+
 
 
     def send_and_recv_ack(self, msg):
@@ -375,33 +376,43 @@ class BaldrAA:
 
 
     def test_mcs(self):
-        beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam ! 
-
-
-        ## Send x offset
+        
         msg = {
-            "cmd": "s_bld_pup_autoalign_sky",
+            "origin": "s_bld_pup_autoalign_sky",
             "data": [
-                {"name": "bld_x_pup_offset"},
-                {"range": beam_range},
-                {"value": [np.random.uniform()]},
-            ]
+                {"bld_x_pup_offset": x_offset},
+                {"bld_y_pup_offset": y_offset},
+                {"bld_complete": 1},
+            ],
         }
 
         self.send_and_recv_ack(msg)
+    
+        # beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam ! 
+        # ## Send x offset
+        # msg = {
+        #     "cmd": "s_bld_pup_autoalign_sky",
+        #     "data": [
+        #         {"name": "bld_x_pup_offset"},
+        #         {"range": beam_range},
+        #         {"value": [np.random.uniform()]},
+        #     ]
+        # }
+        
+        #self.send_and_recv_ack(msg)
 
-        ## Send y offset
-        msg = {
-            "cmd": "s_bld_pup_autoalign_sky",
-            "data": [
-                {"name": "bld_y_pup_offset"},
-                {"range": beam_range},
-                {"value": [np.random.uniform()]},
-            ]
-        }
+        # ## Send y offset
+        # msg = {
+        #     "cmd": "s_bld_pup_autoalign_sky",
+        #     "data": [
+        #         {"name": "bld_y_pup_offset"},
+        #         {"range": beam_range},
+        #         {"value": [np.random.uniform()]},
+        #     ]
+        # }
 
 
-        self.send_and_recv_ack(msg)
+        # self.send_and_recv_ack(msg)
 
 
 
