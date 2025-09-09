@@ -223,32 +223,86 @@ class MCSClient:
 
     def publish_script_data(self):
         if self.script_z.has_new_data:
-            data = self.script_z.read_data()
+            msg = self.script_z.read_most_recent_msg()
         else:
             return
-        if data is None or not isinstance(data, list) or len(data) == 0:
-            return
+        """
+        // option 1: all 4 beams updated, formatting done by MCS
+        {
+            "origin": "s_h-autoalign",
+            "data": [
+                {"hdlr_x_offset": x_offsets}, // each value is a list if needed
+                {"hdlr_y_offset": y_offsets},
+                {"hdlr_complete": True},
+            ],
+        }
 
-        for i, item in enumerate(data):
-            if not isinstance(item, dict) or len(item) != 1:
-                logging.warning(f"ignoring malformed script data item: {item}")
-                continue
-            key = list(item.keys())[0]
-            value = item[key]
-            data[i] = {"name": key, "value": value}
+        // option 2: single beam updated, formatting done by MCS
+        {
+            "origin": "s_h-autoalign",
+            "beam" : beam_no, // if this keyword exists MCS knows it is this case
+            "data": [
+                {"hdlr_x_offset": x_offset}, // each value is a single value
+                {"hdlr_y_offset": y_offset}, // constraint: only params with "unique per telescope" can be sent
+            ],
+        }
 
-        # need to append the requester field to each item
-        for item in data:
-            item["requester"] = self.requester
+        final form that is sent to wag is (in the data section):
+        // case 1
+        [
+            {
+                "name": "hdlr_x_offset",
+                "value": x_offsets,
+                "range": "(0:3)"
+            }, ... // same for all other params
+        ]
+        
+        // case 2
+        [
+            {
+                "name": "hdlr_x_offset",
+                "value": [x_offset],
+                "range": "(beam_no:beam_no)"
+            }, ... // same for all other params
+        ]
 
-        # for any lists in data, need to add the "range" field
-        for item in data:
-            if isinstance(item.get("value"), (list, tuple)):
-                item["range"] = "(0:3)"
+        """
 
-        # write all fields to MCS in a single message
+        # check if "beam" keyword exists, if so it is a single beam update
+        # otherwise it is all beams
+        if "beam" not in msg:
+            # case 1
+            # case 2
+            data = msg["data"]
+            for i, item in enumerate(data):
+                if not isinstance(item, dict) or len(item) != 1:
+                    logging.warning(f"ignoring malformed script data item: {item}")
+                    continue
+                key = list(item.keys())[0]
+                value = item[key]
+                data[i] = {"name": key, "value": value}
+
+            # for any lists in data, need to add the "range" field
+            for item in data:
+                if isinstance(item.get("value"), (list, tuple)):
+                    item["range"] = "(0:3)"
+
+        else: 
+            beam_no = msg["beam"]
+            
+            data = msg["data"]
+
+            for i, item in enumerate(data):
+                if not isinstance(item, dict) or len(item) != 1:
+                    logging.warning(f"ignoring malformed script data item: {item}")
+                    continue
+                key = list(item.keys())[0]
+                value = item[key]
+                data[i] = {"name": key, "value": [value], "range": f"({beam_no}:{beam_no})"}
+
+
+        # # write all fields to MCS in a single message
         body = self.ESO_format(data)
-
         ok, msg = self._send(body)
 
         if not ok:
@@ -457,7 +511,7 @@ class ScriptAdapter:
         self.data = {}
         self.has_new_data = False
 
-    def read_data(self):
+    def read_most_recent_msg(self):
         self.has_new_data = False
         return self.data
 
@@ -481,10 +535,8 @@ class ScriptAdapter:
             return -1
 
     def handle_message(self, msg):
-        msg = dict(json.loads(msg))
-        if not msg or msg.get("origin") != "s_h-autoalign":
-            return None
 
+        msg = dict(json.loads(msg))
         # Acknowledge receipt
         self.z.send_payload({"ok": True})
 
