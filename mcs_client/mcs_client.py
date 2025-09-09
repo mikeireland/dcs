@@ -71,13 +71,25 @@ class ZmqReq:
         self.s.SNDTIMEO = timeout_ms
         self.s.connect(endpoint)
 
-    def send_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        self.s.send_string(json.dumps(payload, sort_keys=True))
+    def send_payload(self, payload: Dict[str, Any], is_str=False, decode_ascii=True) -> Optional[Dict[str, Any]]:
+        if not is_str:
+            self.s.send_string(json.dumps(payload, sort_keys=True))
+        else:
+            self.s.send_string(payload)
+            
+
 
         try:
-            res = self.s.recv().decode("ascii")[:-1]
+
+            if decode_ascii:
+                res = self.s.recv().decode("ascii")[:-1]
+            else:
+                res = self.s.recv_string()      
+
             return json.loads(res)
         except zmq.error.Again:
+            return None
+        except json.decoder.JSONDecodeError:
             return None
 
 
@@ -149,7 +161,6 @@ class MCSClient:
         also poll the cpp databases for new data. Publish all at once.
         """
         while True:
-            self.script_z.fetch()
             self.publish_all_to_wag()
             time.sleep(self.sleep_time)
     def gather_baldr_parameters(self):
@@ -173,11 +184,13 @@ class MCSClient:
 
     def gather_hdlr_parameters(self):
         """Gather HDLR parameters as a list of dicts."""
-        self.dcs_adapters["HDLR"].fetch()
+        st = self.dcs_adapters["HDLR"].fetch()
+        if st is None:
+            return []
         Hdlr_parameters = fields(HeimdallrStatus)
         param_list = []
         for param in Hdlr_parameters:
-            values = self.dcs_adapters["HDLR"][param]  # is already a list
+            values = st[param]  # is already a list
             param_list.append({
                 "name": f"hdlr_{param}",
                 "value": values,
@@ -187,6 +200,7 @@ class MCSClient:
 
     def gather_script_parameters(self):
         """Gather script parameters if new data is available, as a list of dicts."""
+        self.script_z.fetch()
         if not self.script_z.has_new_data:
             return []
         msg = self.script_z.read_most_recent_msg()
@@ -217,19 +231,23 @@ class MCSClient:
     def publish_all_to_wag(self):
         """Publish all parameters (baldr, hdlr, script) in a single message."""
         all_params = []
-        baldr_params = self.gather_baldr_parameters()
-        if baldr_params:
-            all_params.extend(baldr_params)
+        # baldr_params = self.gather_baldr_parameters()
+        # if baldr_params:
+        #     all_params.extend(baldr_params)
         hdlr_params = self.gather_hdlr_parameters()
         if hdlr_params:
             all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
+        print("script_params",script_params)
         if script_params:
             all_params.extend(script_params)
         if not all_params:
+            logging.info("No msgs found, waiting...")
             return
         body = self.ESO_format(all_params)
+        logging.info(f"pushing: {body}")
         ok, msg = self._send(body)
+
         if not ok:
             logging.warning(f"failed to write combined data to wag: {msg}")
 
@@ -461,8 +479,8 @@ class BaldrAdapter(CppServerAdapter):
     Talks to Baldr ZMQ server ("tcp://host:6662") and returns a BaldrStatus.
     """
 
-    def __init__(self, host="127.0.0.1", port=6662):
-        super().__init__(f"tcp://{host}:{port}")
+    def __init__(self, endpoint):
+        super().__init__(endpoint)
 
         self.cur_status = None
 
@@ -478,7 +496,7 @@ class BaldrAdapter(CppServerAdapter):
         }
         """
         # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs
-        rep = self.z.send_payload({"cmd": "status"})
+        rep = self.z.send_payload("status", is_str=True, decode_ascii=False)
 
         if not rep or rep.get("ok") is False:
             return None
@@ -524,12 +542,12 @@ class HeimdallrAdapter(CppServerAdapter):
     Talks to Heimdallr ZMQ server ("tcp://host:6660") and returns a HeimdallrStatus.
     """
 
-    def __init__(self, host="127.0.0.1", port=6660):
-        super().__init__(f"tcp://{host}:{port}")
+    def __init__(self, endpoint):
+        super().__init__(endpoint)
 
     def fetch(self) -> Optional[HeimdallrStatus]:
-        rep = self.z.send_payload({"cmd": "status"})
-        if not rep or rep.get("ok") is False:
+        rep = self.z.send_payload("status", is_str=True)
+        if not rep:
             return None
 
         try:
@@ -593,28 +611,29 @@ class ScriptAdapter:
 
     def handle_message(self, msg):
 
-        msg = dict(json.loads(msg))
+        msg = json.loads(msg)
         # Acknowledge receipt
-        self.z.send_payload({"ok": True})
         if not msg:
             return None
+        self.z.send_payload({"ok": True})
         
         if msg.get("origin") == "s_h-autoalign":
-            self.data = msg.get("data", {})
-        elif msg.get("origin") != "s_bld_pup_autoalign_sky":
+            self.data = msg
+        elif msg.get("origin") == "s_bld_pup_autoalign_sky":
             # Save the data for later processing
-            self.data = msg.get("data", {})
+            self.data = msg
+            
 
 
 # ---------------- Main publish loop ----------------
 if __name__ == "__main__":
     mcs = MCSClient(
         dcs_endpoints={
-            # "BLD1": "tcp://192.168.100.2:6662",
-            # "BLD2": "tcp://192.168.100.2:6663",
-            # "BLD3": "tcp://192.168.100.2:6664",
-            # "BLD4": "tcp://192.168.100.2:6665",
-            # "HDLR": "tcp://192.168.100.2:6660",
+            "BLD1": "tcp://192.168.100.2:6662",
+            "BLD2": "tcp://192.168.100.2:6663",
+            "BLD3": "tcp://192.168.100.2:6664",
+            "BLD4": "tcp://192.168.100.2:6665",
+            "HDLR": "tcp://192.168.100.2:6660",
         },
         script_endpoint="tcp://192.168.100.2:7019",
         publish_endpoint="tcp://192.168.100.1:7050",

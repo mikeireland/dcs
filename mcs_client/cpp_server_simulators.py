@@ -49,6 +49,7 @@ def baldr_server(endpoint):
             continue
         try:
             req = json.loads(msg)
+            print(endpoint, req)
         except Exception:
             s.send_string(json.dumps({"ok": False, "error": "bad json"}))
             continue
@@ -71,6 +72,7 @@ def hdlr_server(endpoint):
             continue
         try:
             req = json.loads(msg)
+            print(req)
         except Exception:
             s.send_string(json.dumps({"ok": False, "error": "bad json"}))
             continue
@@ -83,11 +85,11 @@ def hdlr_server(endpoint):
 def spawn_all():
     # Endpoints as in mcs_client.py main
     endpoints = {
-        "BLD1": "tcp://127.0.0.1:6662",
-        "BLD2": "tcp://127.0.0.1:6663",
-        "BLD3": "tcp://127.0.0.1:6664",
-        "BLD4": "tcp://127.0.0.1:6665",
-        "HDLR": "tcp://127.0.0.1:6660",
+        "BLD1": "tcp://192.168.100.2:6662",
+        "BLD2": "tcp://192.168.100.2:6663",
+        "BLD3": "tcp://192.168.100.2:6664",
+        "BLD4": "tcp://192.168.100.2:6665",
+        "HDLR": "tcp://192.168.100.2:6650",
     }
     procs = []
     for name, ep in endpoints.items():

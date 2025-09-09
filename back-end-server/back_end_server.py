@@ -172,9 +172,10 @@ from handlers.baldr_rts_handlers import register as register_baldr_rts
 class BackEndServer:
     def __init__(
         self,
-        port=7010,
+        port=7002,
         server_ports={
-            "hdlr": 6660,
+            # "hdlr": 6660,
+            "hdlr": 6650,
             "hdlr_align": 6661,
             "baldr1": 6662,
             "baldr2": 6663,
@@ -222,7 +223,6 @@ class BackEndServer:
                 self.socket.send_json(
                     self.create_response("ERROR: Invalid JSON format")
                 )
-
             print(f"Received request: {message}")
 
             # Process the command
