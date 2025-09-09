@@ -190,12 +190,10 @@ class MCSClient:
         st = self.dcs_adapters["HDLR"].fetch()
         if st is None:
             return []
-        Hdlr_parameters = fields(HeimdallrStatus)
-        logging.info(f"Searching for fields {Hdlr_parameters}")
-        logging.info(f"data {st}")
+        Hdlr_parameters = [f.name for f in fields(HeimdallrStatus)]
         param_list = []
         for param in Hdlr_parameters:
-            values = st[param]  # is already a list
+            values = getattr(st,param)  # is already a list
             param_list.append(
                 {
                     "name": f"hdlr_{param}",
@@ -257,10 +255,13 @@ class MCSClient:
             return
         body = self.ESO_format(all_params)
         logging.info(f"pushing: {body}")
-        ok, msg = self._send(body)
+        try:
+            ok, msg = self._send(body)
+            if not ok:
+                logging.warning(f"failed to write combined data to wag: {msg}")
+        except zmq.error.ZMQError as e:
+            logging.error(f"ZMQ error to wag: {e}")
 
-        if not ok:
-            logging.warning(f"failed to write combined data to wag: {msg}")
 
     def publish_bld_databases_to_wag(self):
         adapter_names = [f"BLD{idx}" for idx in range(1, 5)]
@@ -530,10 +531,10 @@ class BaldrAdapter(CppServerAdapter):
 
 @dataclass
 class HeimdallrStatus:
-    hdr_gd_snr: list[float]
-    hdr_pd_snr: list[float]
-    hdr_v2_K1: list[float]
-    hdr_v2_K2: list[float]
+    gd_snr: list[float]
+    pd_snr: list[float]
+    v2_K1: list[float]
+    v2_K2: list[float]
 
 
 class HeimdallrAdapter(CppServerAdapter):
@@ -552,11 +553,14 @@ class HeimdallrAdapter(CppServerAdapter):
         try:
             st = rep
             # Use dataclass fields and kwargs to construct HeimdallrStatus
-            field_names = {f.name for f in fields(HeimdallrStatus)}
+            field_names = [f.name for f in fields(HeimdallrStatus)]
             kwargs = {}
             for name in field_names:
                 if name in st:
                     kwargs[name] = st[name]
+            print(st)
+            print(field_names)
+            print(kwargs)
             return HeimdallrStatus(**kwargs)
         except KeyError:
             logging.warning("KeyError in HeimdallrAdapter.fetch()")
