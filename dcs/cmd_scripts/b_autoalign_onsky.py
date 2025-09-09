@@ -324,19 +324,22 @@ class BaldrAA:
 
         ## Send x offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
                 {"name": "bld_x_pup_offset"},
                 {"range": beam_range},
                 {"value": [x_offset]},
             ]
         }
-
+        
         self.send_and_recv_ack(msg)
 
+
+        #time.sleep(0.05)
+        
         ## Send y offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
                 {"name": "bld_y_pup_offset"},
                 {"range": beam_range},
@@ -357,7 +360,7 @@ class BaldrAA:
         #         {"name": "bld_complete", "value": True},
         #     ]
         # }
-        self.send_and_recv_ack(msg)
+        #self.send_and_recv_ack(msg)
 
 
     def send_and_recv_ack(self, msg):
@@ -372,14 +375,12 @@ class BaldrAA:
 
 
     def test_mcs(self):
-
-
         beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam ! 
 
 
         ## Send x offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
                 {"name": "bld_x_pup_offset"},
                 {"range": beam_range},
@@ -391,7 +392,7 @@ class BaldrAA:
 
         ## Send y offset
         msg = {
-            "cmd": "dump",
+            "cmd": "s_bld_pup_autoalign_sky",
             "data": [
                 {"name": "bld_y_pup_offset"},
                 {"range": beam_range},
