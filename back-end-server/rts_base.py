@@ -6,23 +6,25 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Dict, List, Optional, Set
 
+import subprocess
+
 
 # ---- integer states / errors (keep attributes as plain ints) ----
 class RTSState(IntEnum):
-    INIT    = 0
-    READY   = 1
+    INIT = 0
+    READY = 1
     RUNNING = 2
-    DONE    = 3
+    DONE = 3
     ABORTED = 4
-    FAILED  = 5
+    FAILED = 5
 
 
 class RTSErr(IntEnum):
-    OK       = 0
-    INVALID  = 1
-    RUNTIME  = 2
-    ABORTED  = 3
-    UNKNOWN  = 99
+    OK = 0
+    INVALID = 1
+    RUNTIME = 2
+    ABORTED = 3
+    UNKNOWN = 99
 
 
 # ---- optional context you can pass from the server ----
@@ -34,6 +36,7 @@ class RTSContext:
     - allowed_commands: optional allowlist of RTS names
     - extras: stash anything deployment-specific (e.g., endpoints)
     """
+
     mcs_notify: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
     allowed_commands: Set[str] = field(default_factory=set)
     extras: Dict[str, Any] = field(default_factory=dict)
@@ -66,11 +69,13 @@ class AbstractRTSTask(ABC):
     err: int
     metadata: Dict[str, Any]
 
-    def __init__(self, command: Dict[str, Any], ctx: Optional[RTSContext] = None) -> None:
+    def __init__(
+        self, command: Dict[str, Any], ctx: Optional[RTSContext] = None
+    ) -> None:
         self.command: Dict[str, Any] = command or {}
         self.ctx: RTSContext = ctx or RTSContext()
         self.state = int(RTSState.INIT)
-        self.err   = int(RTSErr.OK)
+        self.err = int(RTSErr.OK)
         self.metadata = {
             "command_name": self.command.get("name"),
             "command_time": self.command.get("time"),
@@ -104,6 +109,12 @@ class AbstractRTSTask(ABC):
         now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
         return {"reply": {"time": now, "content": content}}
 
+    def mcs_notify(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the MCS notify function if provided, else return a dummy ack."""
+        if self.ctx.mcs_notify:
+            return self.ctx.mcs_notify(payload)
+        return {"ok": True, "note": "no mcs_notify function provided"}
+
     def params_as_dict(self) -> Dict[str, Any]:
         """Normalize WAG parameters [{'name','value'}, ...] -> {name: value}."""
         out: Dict[str, Any] = {}
@@ -115,30 +126,30 @@ class AbstractRTSTask(ABC):
 
     def set_error(self, msg: str, err: RTSErr = RTSErr.INVALID) -> None:
         self.state = int(RTSState.FAILED)
-        self.err   = int(err)
+        self.err = int(err)
         self.metadata["error"] = msg
 
     def set_done(self) -> None:
         self.state = int(RTSState.DONE)
-        self.err   = int(RTSErr.OK)
+        self.err = int(RTSErr.OK)
 
 
 # """
 
-# Abstract class that recieves a command from WAG 
-# and does somethings and then updates (or tells wag to update via MCS) database 
+# Abstract class that recieves a command from WAG
+# and does somethings and then updates (or tells wag to update via MCS) database
 
 # Methods
 #     ok_to_run() -> bool
 #     run(args) -> dict
 #     update_DB() -> dict
-#     abort() -> bool 
+#     abort() -> bool
 
 # Attributes
 #     state : int
-#     err : int 
-#     metadata : dict 
-    
+#     err : int
+#     metadata : dict
+
 
 # follows Asgard Top-Level Control Software User and Maintenance Manual
 # particularly section "8.5.6. RTS command"
@@ -184,7 +195,6 @@ class AbstractRTSTask(ABC):
 #     """Lightweight context you can pass into tasks (optional)."""
 #     mcs_notify: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
 #     allowed_commands: Set[str] = field(default_factory=set)
-
 
 
 # class AbstractRTSTask(ABC):
@@ -251,19 +261,19 @@ class AbstractRTSTask(ABC):
 #         raise NotImplementedError
 
 #     # =============================================================
-#     # This is the main thing that gets called for every command call 
+#     # This is the main thing that gets called for every command call
 #     def run_command(self,cmd) -> dict:
 
 #         if self.ok_to_run():
 #             return self.run( self.command.get("parameters",{})) # update_DB should be applied within run() for particular class instance
-#             # run must return 
+#             # run must return
 #         else:
 #             self.state = int(RTSState.FAILED) # update the internal state to FAILED
-#             return create_response(self, content="ERROR") # return an error response 
+#             return create_response(self, content="ERROR") # return an error response
 #     # =============================================================
 
 
-# # example 
+# # example
 # class OpenAO(AbstractRTSTask):
 #     def ok_to_run(self) -> bool:
 #         # validate command/params here
@@ -274,7 +284,7 @@ class AbstractRTSTask(ABC):
 #     def run(self, args=None) -> dict:
 #         self.state = int(RTSState.RUNNING)
 
-        
+
 #         # do work...
 #         self.state = int(RTSState.DONE)
 #         self.err = int(RTSErr.OK)
@@ -288,3 +298,44 @@ class AbstractRTSTask(ABC):
 #         self.state = int(RTSState.ABORTED)
 #         self.err = int(RTSErr.ABORTED)
 #         return True
+
+
+class S_HDLR_AUTO_ALIGN(AbstractRTSTask):
+    def ok_to_run(self) -> bool:
+        # validate command/params here
+        self.state = int(RTSState.READY)
+        self.err = int(RTSErr.OK)
+        return True
+
+    def run(self, args=None) -> dict:
+        self.state = int(RTSState.RUNNING)
+
+        subprocess.run(["h-auto-align", "-a", "ia", "-o", "mcs"])
+
+        self.state = int(RTSState.DONE)
+        self.err = int(RTSErr.OK)
+        return self.metadata
+
+    def update_DB(self) -> dict:
+        self.mcs_notify(
+            {
+                "command": {
+                    "name": "write",
+                    "time": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S"),
+                    "parameter": [
+                        {
+                            "name": "hdlr_complete",
+                            "value": 0,
+                            "requester": "mimir",
+                        },
+                    ],
+                }
+            }
+        )
+
+        return {"ok": True}
+
+    def abort(self) -> bool:
+        self.state = int(RTSState.ABORTED)
+        self.err = int(RTSErr.ABORTED)
+        return True
