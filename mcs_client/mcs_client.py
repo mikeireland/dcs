@@ -1,4 +1,6 @@
 # baldr_wag_client.py
+# TODO: Sometimes, the database parameters (i.e. values in #sym:HeimdallrStatus  and #sym:BaldrTscopeStatus ) will not change with every call. Modify the classes to be aware of their previous state, and only publish changes to database parameters
+
 import json, time, socket
 import logging
 import os
@@ -514,36 +516,20 @@ class BaldrAdapter(CppServerAdapter):
         # Below assumes the server returns a dict with keys matching your fields.
         try:
             st = rep["status"]
-
-            self.cur_status = BaldrTscopeStatus(
-                TT_state=int(st["TT_state"]),
-                HO_state=int(st["HO_state"]),
-                mode=st["mode"],
-                phasemask=st["phasemask"],
-                frequency=float(st["frequency"]),
-                configured=int(st["configured"]),
-                ctrl_type=st["ctrl_type"],
-                complete=bool(st["complete"]),
-                config_file=st["config_file"],
-                inj_enabled=int(st["inj_enabled"]),
-                auto_loop=int(st["auto_loop"]),
-                close_on_snr=float(st["close_on_snr"]),
-                open_on_snr=float(st["open_on_snr"]),
-                close_on_strehl=float(st["close_on_strehl"]),
-                open_on_strehl=float(st["open_on_strehl"]),
-                TT_offsets=int(st["TT_offsets"]),
-                x_pup_offset=float(st["x_pup_offset"]),
-                y_pup_offset=float(st["y_pup_offset"]),
-            )
+            # Use dataclass fields and kwargs to construct BaldrTscopeStatus
+            field_names = {f.name for f in fields(BaldrTscopeStatus)}
+            kwargs = {}
+            for name in field_names:
+                if name in st:
+                    kwargs[name] = st[name]
+            self.cur_status = BaldrTscopeStatus(**kwargs)
         except KeyError:
+            logging.warning("KeyError in BaldrAdapter.fetch()")
             return None
 
 
 @dataclass
 class HeimdallrStatus:
-    hdlr_x_offset: list[float]
-    hdlr_y_offset: list[float]
-    hdlr_complete: bool
     hdr_gd_snr: list[float]
     hdr_pd_snr: list[float]
     hdr_v2_K1: list[float]
@@ -565,17 +551,15 @@ class HeimdallrAdapter(CppServerAdapter):
 
         try:
             st = rep
-            print(st)
-            return HeimdallrStatus(
-                hdlr_x_offset=[float(x) for x in st["hdlr_x_offset"]],
-                hdlr_y_offset=[float(y) for y in st["hdlr_y_offset"]],
-                hdlr_complete=bool(st["hdlr_complete"]),
-                hdr_gd_snr=[float(x) for x in st["hdr_gd_snr"]],
-                hdr_pd_snr=[float(x) for x in st["hdr_pd_snr"]],
-                hdr_v2_K1=[float(x) for x in st["hdr_v2_K1"]],
-                hdr_v2_K2=[float(x) for x in st["hdr_v2_K2"]],
-            )
+            # Use dataclass fields and kwargs to construct HeimdallrStatus
+            field_names = {f.name for f in fields(HeimdallrStatus)}
+            kwargs = {}
+            for name in field_names:
+                if name in st:
+                    kwargs[name] = st[name]
+            return HeimdallrStatus(**kwargs)
         except KeyError:
+            logging.warning("KeyError in HeimdallrAdapter.fetch()")
             return None
 
 
