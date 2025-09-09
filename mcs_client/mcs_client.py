@@ -114,13 +114,14 @@ class MCSClient:
             self.script_z.fetch()
             self.publish_script_data()
 
-            self.publish_baldr_to_wag()
-            self.publish_hdlr_databases_to_wag()
+            # self.publish_baldr_to_wag()
+            # self.publish_hdlr_databases_to_wag()
 
             # TODO: database classes to know if they are different each call,
             # and only publish the different data...
 
             time.sleep(self.sleep_time)
+            print("Sleeping for new commands...")
 
     def publish_bld_databases_to_wag(self):
         adapter_names = [f"BLD{idx}" for idx in range(1, 5)]
@@ -170,6 +171,7 @@ class MCSClient:
     def publish_script_data(self):
         if self.script_z.has_new_data:
             data = self.script_z.read_data()
+            #TODO: if script data has range
         else:
             return
         if data is None or not isinstance(data, list) or len(data) == 0:
@@ -429,27 +431,31 @@ class ScriptAdapter:
 
     def handle_message(self, msg):
         msg = dict(json.loads(msg))
-        if not msg or msg.get("origin") != "s_h-autoalign":
-            return None
-
         # Acknowledge receipt
         self.z.send_payload({"ok": True})
-
-        # Save the data for later processing
-        self.data = msg.get("data", {})
+        if not msg:
+            return None
+        
+        if msg.get("origin") == "s_h-autoalign":
+            self.data = msg.get("data", {})
+        elif msg.get("origin") != "s_bld_pup_autoalign_sky":
+            # Save the data for later processing
+            self.data = msg.get("data", {})
 
 
 # ---------------- Main publish loop ----------------
 if __name__ == "__main__":
     mcs = MCSClient(
         dcs_endpoints={
-            "BLD1": "tcp://192.168.100.2:6662",
-            "BLD2": "tcp://192.168.100.2:6663",
-            "BLD3": "tcp://192.168.100.2:6664",
-            "BLD4": "tcp://192.168.100.2:6665",
-            "HDLR": "tcp://192.168.100.2:6660",
+            # "BLD1": "tcp://192.168.100.2:6662",
+            # "BLD2": "tcp://192.168.100.2:6663",
+            # "BLD3": "tcp://192.168.100.2:6664",
+            # "BLD4": "tcp://192.168.100.2:6665",
+            # "HDLR": "tcp://192.168.100.2:6660",
         },
         script_endpoint="tcp://192.168.100.2:7019",
         publish_endpoint="tcp://192.168.100.1:7050",
         sleep_time=1.0,
     )
+
+    mcs.run()
