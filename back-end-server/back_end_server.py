@@ -150,16 +150,13 @@ hdlr_align      6661
 "ICS"           5555,
 "RTD"           7000,
 """
+
 import zmq
 import json
 import datetime
 import time
-
 import os
 import signal
-
-# import baldr_back_end_server
-
 import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -167,9 +164,34 @@ from typing import Dict, Type, Any
 from pathlib import Path
 import sys
 import subprocess
+import logging
 
 # from rts_base import AbstractRTSTask, RTSContext, RTSState, RTSErr
 from handlers.baldr_rts_handlers import register as register_baldr_rts
+
+
+# --- Logging setup: file and console ---
+def _setup_logging():
+    log_dir = os.path.expanduser("~/logs/back_end_server/")
+    os.makedirs(log_dir, exist_ok=True)
+    log_name = time.strftime("back_end_server_%Y%m%d_%H%M%S.log")
+    log_path = os.path.join(log_dir, log_name)
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(log_path)
+    fh.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.handlers = []
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    logger.info(f"Logging started. Log file: {log_path}")
+
+
+_setup_logging()
 
 
 # port 7004 is used by nomachines! changed to 7010
@@ -192,9 +214,10 @@ class BackEndServer:
         self.port = port
         # self.baldr_commands = baldr_back_end_server.BaldrCommands() #This is the Ben way.
         self.context = zmq.Context()
+
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(f"tcp://*:{self.port}")
-        print(f"BackEndServer started on port {self.port}")
+        logging.info(f"BackEndServer started on port {self.port}")
 
         self.server_ports = server_ports
         self.servers = {}
@@ -203,13 +226,13 @@ class BackEndServer:
             try:
                 server.connect(f"tcp://mimir:{port}")
                 self.servers[server_name] = server
-                print(f"Connected to {server_name} on port {port}")
+                logging.info(f"Connected to {server_name} on port {port}")
             except zmq.ZMQError as e:
-                print(f"Failed to connect to {server_name} on port {port}: {e}")
+                logging.error(f"Failed to connect to {server_name} on port {port}: {e}")
                 self.servers[server_name] = None
                 # Handle connection error (e.g., retry, log, etc.)
                 continue
-        print("All server connections initialized.")
+        logging.info("All server connections initialized.")
 
         self.scripts_running = {}
 
@@ -223,11 +246,12 @@ class BackEndServer:
             try:
                 message = json.loads(message)
             except json.JSONDecodeError as e:
-                print(f"Failed to decode JSON: {e}")
+                logging.error(f"Failed to decode JSON: {e}")
                 self.socket.send_json(
                     self.create_response("ERROR: Invalid JSON format")
                 )
-            print(f"Received request: {message}")
+                continue
+            logging.info(f"Received request: {message}")
 
             # Process the command
             response = self.process_command(message)
@@ -393,16 +417,21 @@ class BackEndServer:
         # abort the process that was run using subprocess by sending SIGINT
         # for all processes in self.scripts_running
         for pid, process in self.scripts_running.items():
-            os.killpg(os.getpgid(pid), signal.SIGINT)
-            if process.poll() is not None:
-                print(f"Process has been terminated with return code: {process.poll()}")
-            else:
-                print("Process is still running, SIGINT may have been ignored.")
+            process.send_signal(signal.SIGINT)
+
+            # Wait for the process to complete and get output
+            stdout, stderr = process.communicate()
+            logging.info("Signit process output:")
+            logging.info(stdout)
+            if stderr:
+                logging.error("Signit process errors:")
+                logging.error(stderr)
 
     def handle_script(self, command):
         """
         Handle script commands, e.g., s_h-autoalign
         """
+
         def _param_value(params_obj, key, default=None):
             # Accepts the RTS list format and (optionally) a dict format, looks for a paraticular parameter
             # e.g. to get the beam parameter >beam_raw = _param_value(params, "beam", 0)
@@ -415,34 +444,34 @@ class BackEndServer:
                 return params_obj.get(key, default)
             return default
 
-
         command_name = command.get("name", "").lower()
         parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
             process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
+            logging.info("Started s_h-autoalign script process.")
         elif command_name == "s_b-autoalign":
-            script = Path("/home/asg/Progs/repos/dcs/dcs/cmd_scripts/b_autoalign_onsky.py")
+            script = Path(
+                "/home/asg/Progs/repos/dcs/dcs/cmd_scripts/b_autoalign_onsky.py"
+            )
 
-
-            # beam_raw = _param_value(parameters, "beam", 0)
-            # try:
-            #     beam_val = int(beam_raw)
-            # except Exception:
-            #     return self.create_response(
-            #         "ERROR: 'beam' must be an integer in {0,1,2,3,4}"
-            #     )
-            # if beam_val not in (0, 1, 2, 3, 4):
-            #     return self.create_response("ERROR: 'beam' must be in {0,1,2,3,4}")
-
-            # # Expand 0 -> [1,2,3,4], otherwise a single-element list
-            # target_beams = [1, 2, 3, 4] if beam_val == 0 else [beam_val]
-
-            for beam in [1,2,3,4]:
-
-                cmd = [sys.executable, str(script),"--beam",f"{beam}", "--output", "mcs", "--mode", "bright","--savepath","/home/asg/Pictures/baldr_pup_detect_onsky.png"]
+            for beam in [1, 2, 3, 4]:
+                cmd = [
+                    sys.executable,
+                    str(script),
+                    "--beam",
+                    f"{beam}",
+                    "--output",
+                    "mcs",
+                    "--mode",
+                    "bright",
+                    "--savepath",
+                    "/home/asg/Pictures/baldr_pup_detect_onsky.png",
+                ]
                 process = subprocess.Popen(cmd, cwd=str(script.parent))
-                time.sleep( 5 )
+                logging.info(f"Started s_b-autoalign script for beam {beam}.")
+                time.sleep(5)
         else:
+            logging.error(f"Unknown script command '{command_name}'")
             return self.create_response(
                 f"ERROR: Unknown script command '{command_name}'"
             )
@@ -465,18 +494,18 @@ class BackEndServer:
         # Implement setup logic here
         parameters = command.get("parameters", [])
         # Validate and process parameters as needed
+
         for param in parameters:
             name = param.get("name")
             value = param.get("value")
-            print(f"Setup parameter: {name} = {value}")
+            logging.info(f"Setup parameter: {name} = {value}")
             # Add logic to handle each parameter as needed
             # DIT, NDIT, NWORESET, etc.
             if name == "DET.DIT":
                 # Handle DIT parameter
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
-                # !!! Could the next line be recv_string?
-                print(self.servers["cam_server"].recv().decode("ascii"))
+                logging.info(self.servers["cam_server"].recv().decode("ascii"))
             elif name == "DET.NWORESET":
                 try:
                     value = int(value)
@@ -488,16 +517,16 @@ class BackEndServer:
                     self.servers["cam_server"].send_string(
                         f'cli "set mode globalresetcds"'
                     )
-                    print(self.servers["cam_server"].recv().decode("ascii"))
+                    logging.info(self.servers["cam_server"].recv().decode("ascii"))
                 elif value < 500:
                     self.servers["cam_server"].send_string(
                         f'cli "set mode globalresetbursts"'
                     )
-                    print(self.servers["cam_server"].recv().decode("ascii"))
+                    logging.info(self.servers["cam_server"].recv().decode("ascii"))
                     self.servers["cam_server"].send_string(
                         f'cli "set nbreadworeset {value}"'
                     )
-                    print(self.servers["cam_server"].recv().decode("ascii"))
+                    logging.info(self.servers["cam_server"].recv().decode("ascii"))
                 else:
                     return self.create_response(
                         f"ERROR: NWORESET value {value} is higher than the max (500)"
@@ -512,14 +541,14 @@ class BackEndServer:
                         f"ERROR: GAIN value {value} is out of range (0-100)"
                     )
                 self.servers["cam_server"].send_string(f"set_gain {value}")
-                print(self.servers["cam_server"].recv().decode("ascii"))
+                logging.info(self.servers["cam_server"].recv().decode("ascii"))
             elif name == "DET.NDIT":
-                print(
+                logging.info(
                     "DIT command should set the number of integrations in a save file - not implemented"
                 )
             else:
                 # Handle other parameters as needed
-                print(f"Unknown parameter: {name} = {value}")
+                logging.warning(f"Unknown parameter: {name} = {value}")
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
 
         return self.create_response("OK")
