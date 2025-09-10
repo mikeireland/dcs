@@ -836,15 +836,16 @@ void* fetch_imgs(void *arg) {
       //    save the data to disk
       // =============================
       if (camconf->save_mode == 1) {
-        if (liveindex == camconf->nbr_hlf) // save the first half of the live data-cube
+        if (liveindex == camconf->nbr_hlf) {// save the first half of the live data-cube
           memcpy(tosave, (unsigned short *) shm_img->array.UI16,
 		 nbpix_cub * sizeof(unsigned short));
-        
-        if (liveindex == 0) // save the second half of the live data-cube
+	  sem_post(&sync_save);
+	}
+        if (liveindex == 0) {// save the second half of the live data-cube
           memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
 		 nbpix_cub * sizeof(unsigned short));
-
-        sem_post(&sync_save);
+	  sem_post(&sync_save);
+        }
       }
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > previous_timeouts){
@@ -1020,11 +1021,11 @@ void set_save_mode(int _mode) {
  * Start or interrupt the FITS saving of data cubes acquired by the camera
  * ------------------------------------------------------------------------- */
 void trigger_save_dark() {
-  set_dark_sub_mode(0);
-  sleep(0.2);
+  // set_dark_sub_mode(0);
+  // sleep(0.2);
   camconf->save_dark = 1;
-  sleep(0.2);
-  set_dark_sub_mode(1);  
+  // sleep(0.2);
+  // set_dark_sub_mode(1);  
 }
 
 /* -------------------------------------------------------------------------

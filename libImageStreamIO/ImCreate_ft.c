@@ -39,9 +39,12 @@ pix = 24.0
  */
 
 const float hole_radius = 1.65;      // Radius of the hole in pupil pixels
-const float hole_x[4] = {-3.46*hole_radius, 0,0,3.46*hole_radius}; // Hole x center in pupil pixels
-const float hole_y[4] = {-2*hole_radius, 4*hole_radius, 0 , -2*hole_radius}; // Hole y center in pupil pixels
+//const float hole_x[4] = {-3.46*hole_radius, 0,0,3.46*hole_radius}; // Hole x center in pupil pixels
+//const float hole_y[4] = {-2*hole_radius, 4*hole_radius, 0 , -2*hole_radius}; // Hole y center in pupil pixels
 float phase=0.0;
+const float hole_x[4] = {-0.00792, -0.0085, 0.0,0.02130};
+const float hole_y[4] = {0.019,-0.01484, 0.0, -0.00015};
+const float s = SZ*24/2.1;
 
 int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_plan plan, float wavenum_scale, float flux_scale)
 {
@@ -52,7 +55,7 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Make our hole phasors
     for (int kk=0; kk<4; kk++)
-        hole_phasors[kk] = cexp(2.5*I*kk*sin(phase)*wavenum_scale);
+        hole_phasors[kk] = cexp(0.5*I*kk*sin(phase)*wavenum_scale);
 
     // Fill the pupil with the holes
     for(int jj=0; jj<SZ; jj++)            // loop rows
@@ -64,7 +67,7 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
             pupil[jj*SZ + ii] = 0.0;
             for (int kk=0; kk<4; kk++)
             {
-                if (sqrt((x-hole_x[kk]*wavenum_scale)*(x-hole_x[kk]*wavenum_scale) + (y-hole_y[kk]*wavenum_scale)*(y-hole_y[kk]*wavenum_scale)) < 1.5*wavenum_scale)
+                if (sqrt((x-s*hole_x[kk]*wavenum_scale)*(x-s*hole_x[kk]*wavenum_scale) + (y-s*hole_y[kk]*wavenum_scale)*(y-s*hole_y[kk]*wavenum_scale)) < 1.5*wavenum_scale)
                 {
                     pupil[jj*SZ + ii] += hole_phasors[kk];
                 }
@@ -76,13 +79,13 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Now take the square of the electric field and copy to the image
     // ->array is union; ->array.F is float pointer to image
-    float* dotF = imarray->array.F;
+    int* dotF = imarray->array.F;
     for (int ii=0; ii<SZ; ii++)
     {
         for (int jj=0; jj<SZ; jj++)
         {
             rnoise = rand()/(float)RAND_MAX - 0.5;
-            *(dotF++) = powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*50;
+            *(dotF++) = (int)(1000 + powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*10);
         }
     }
 
@@ -104,7 +107,7 @@ int main()
     long naxis = sizeof(imsize) / (sizeof *imsize);  // # of axes
 
     // Data type; see file ImageStruct.h for list of supported types
-    uint8_t atype = _DATATYPE_FLOAT;
+    uint8_t atype = _DATATYPE_INT32;
 
     int shared = 1;                // 1 if image in shared mem
     int NBkw = 10;                 // number of keywords allowed
@@ -119,8 +122,8 @@ int main()
     plan_K2 = fftw_plan_dft_2d(SZ, SZ, pupil_K2, image_K2, FFTW_FORWARD, FFTW_MEASURE);
 
     // create an image in shared memory
-    ImageStreamIO_createIm(imarray, "K1", naxis, imsize, atype, shared, NBkw);
-    ImageStreamIO_createIm(imarray+1, "K2", naxis, imsize, atype, shared, NBkw);
+    ImageStreamIO_createIm(imarray, "shei_k1", naxis, imsize, atype, shared, NBkw);
+    ImageStreamIO_createIm(imarray+1, "shei_k2", naxis, imsize, atype, shared, NBkw);
 
 
     // Writes an image, with random noise on top.

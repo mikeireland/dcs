@@ -3,7 +3,7 @@
 //#define PRINT_TIMING_ALL
 //#define DEBUG
 #define GD_THRESHOLD 5
-#define PD_THRESHOLD 7
+#define PD_THRESHOLD 4
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
@@ -81,6 +81,9 @@ double sinc_normalized(double x) {
 }
 
 void set_dm_piston(Eigen::Vector4d dm_piston){
+#ifdef SIMULATE
+    return;
+#endif
     // This function sets the DM piston to the given value.
     for(int i = 0; i < N_TEL; i++) {
             for (int j=0; j<144; j++){
@@ -210,7 +213,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     // This function filters the input vector x using the I6gd matrix.
     // It returns the filtered vector.
     double chi2=1e6, chi2_min=1e6;
-
+    int i_best;
     Eigen::Matrix<double, N_BL, 1> y_best, x_try;
     Eigen::Matrix<double, N_BL, 1> y;
     // Each positive element of x could be x-1, and each negative element
@@ -238,9 +241,11 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
         if (chi2 < chi2_min){
             chi2_min = chi2;
             y_best = y;
+            i_best = i;
         }
     }
-    //y = I6 * x;
+    fmt::print("Best i {:b}\n", i_best);
+    //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
     return y_best;
 }
@@ -261,7 +266,7 @@ void fringe_tracker(){
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
-    set_dm_piston(Eigen::Vector4d::Zero());
+    set_dm_piston(Eigen::Vector4d::Zero()); 
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
@@ -471,7 +476,7 @@ void fringe_tracker(){
             } 
             control_u.test_ix = (control_u.test_ix + 1) % (2*control_u.test_n);
         }
-        // Apply the signal to the DM!
+        // Apply the signal to the DM! 
         set_dm_piston(control_u.dm_piston);
 
 #ifdef PRINT_TIMING
