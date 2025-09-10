@@ -131,7 +131,7 @@ struct ControlU{
     Eigen::Vector4d dm_piston;
     Eigen::Vector4d search;
     Eigen::Vector4d dl_offload;
-    double search_delta, omega_dl, dit;
+    double search_delta, dit;
     unsigned int search_Nsteps, steps_to_turnaround;
     int test_beam, test_n, test_ix;
     double test_value;

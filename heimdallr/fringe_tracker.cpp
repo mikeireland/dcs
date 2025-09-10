@@ -184,11 +184,10 @@ void reset_search(){
     control_u.dm_piston.setZero();
     control_u.search.setZero();
     control_u.dl_offload.setZero();
-    control_u.search_delta = 0.01;
-    control_u.omega_dl = 10;
-    control_u.dit = 0.002;
+    control_u.search_delta = 2.0; // In microns
+    control_u.steps_to_turnaround = 10;
     control_u.search_Nsteps = 0;
-    control_u.steps_to_turnaround = 1000;
+    control_u.dit = 0.002;
     control_u.test_beam=0;
     control_u.test_n=0;
     control_u.test_ix=0;
@@ -481,23 +480,8 @@ void fringe_tracker(){
             std::cout << "FT Computation time: " << now.tv_nsec-then.tv_nsec << std::endl;
         then = now;
 #endif
-        double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
-        if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
-            control_u.search_Nsteps=0;
-            control_u.search.setZero();
-        } else {
-            // Now do the delay line control. This is slower, so occurs after the servo.
-            // Compute the search sign.
-            unsigned int search_level = 0;
-            unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
-            //This gives a logarithm base 2, so we search twice as far each turnaround. 
-            while (index >>= 1) ++search_level;
-            control_u.search += control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
-                * search_vector_scale;
-            control_u.search_Nsteps++;
-        }
-
-        // Compute the delay line offload.
+        // Phew! Now on to the less time-critical delay line control.
+        // Add to the delay line offload.
         control_u.dl_offload += (control_u.dit/((double)offload_time_ms*0.001)) * control_u.dm_piston * OPD_PER_DM_UNIT;
 
         // Apply the DL offload if enough time has passed since the last offload. !!! Remove 2 zeros.
@@ -505,12 +489,30 @@ void fringe_tracker(){
         // Find time since last offload in milli-seconds as a double.
         double time_since_last_offload_ms = (now.tv_sec - last_dl_offload.tv_sec) * 1000.0 +
             (now.tv_nsec - last_dl_offload.tv_nsec) * 0.000001;
-
+        // If it has been more than offload_time_ms, do the offload and the search step.
         if (time_since_last_offload_ms > offload_time_ms){
+            // Irrespective of offload type, see if we need to reset the search, 
+            // based on determining if we confidently have fringes with all telescopes.
+            double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
+            if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
+                control_u.search_Nsteps=0;
+                control_u.search.setZero();
+            } else {
+                // Now do the delay line control. This is slower, so occurs after the servo.
+                // Compute the search sign.
+                unsigned int search_level = 0;
+                unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
+                //This gives a logarithm base 2, so we search twice as far each turnaround. 
+                while (index >>= 1) ++search_level;
+                control_u.search = control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
+                    * search_vector_scale;
+                control_u.search_Nsteps++;
+            }
+
             if (offload_mode == OFFLOAD_NESTED){
                 fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
                     control_u.dl_offload(2), control_u.dl_offload(3));
-                add_to_delay_lines(-control_u.dl_offload);
+                add_to_delay_lines(control_u.search - control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD) {
@@ -520,7 +522,7 @@ void fringe_tracker(){
                 double o4 = -pid_settings.offload_gd_gain*control_a.gd(3) * config["wave"]["K1"].value_or(2.05);
                 double otot = std::fabs(o1) + std::fabs(o2) + std::fabs(o3) + std::fabs(o4);
                 fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot);
-                add_to_delay_lines(-pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
+                add_to_delay_lines(control_u.search - pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;
         }
