@@ -120,6 +120,8 @@ void set_servo_mode(std::string mode) {
         servo_mode = SERVO_FIGHT;
     } else if (mode == "lacour") {
         servo_mode = SERVO_LACOUR;
+    } else if (mode == "on") {
+        servo_mode = SERVO_LACOUR;
     } else {
         std::cout << "Servo mode not recognised" << std::endl;
         return;
@@ -339,6 +341,23 @@ void zero_dl_offload(void){
     zero_offload=true;
 }
 
+void set_search_params(double delta, uint turnaround){
+    if (delta <= 0.0 || delta > 10.0){
+        std::cout << "Search delta out of range (0.0 to 10.0 microns)" << std::endl;
+        return;
+    }
+    if (turnaround < 1 || turnaround > 100){
+        std::cout << "Search turnaround out of range (1 to 100 steps)" << std::endl;
+        return;
+    }
+    beam_mutex.lock();
+    control_u.search_delta = delta;
+    control_u.steps_to_turnaround = turnaround;
+    control_u.search_Nsteps = 0;
+    beam_mutex.unlock();
+    std::cout << "Search parameters updated: delta = " << delta << " microns, turnaround = " << turnaround << " steps" << std::endl;
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -351,7 +370,7 @@ COMMANDER_REGISTER(m)
     m.def("servo", set_servo_mode, "Set the servo mode", "mode"_arg="off");
     m.def("offload", set_offload_mode, "Set the offload (slow servo) mode", "mode"_arg="off");
     m.def("offload_time", set_offload_time, "Set the offload time in ms", "time"_arg=1000);
-    m.def("set_search_offset", set_search_offset, "Set the search offset in microns", 
+    m.def("set_search_offset", set_search_offset, "Set the search offset in microns. \n This is added to the search position when starting a search.", 
         "offset"_arg=std::vector<double>(N_TEL, 0.0));
     m.def("get_search_offset", get_search_offset, "Get the search offset in microns");
     m.def("dark", save_dark, "Save the dark frames");
@@ -366,7 +385,8 @@ COMMANDER_REGISTER(m)
     m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
     m.def("get_gd_offsets", get_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
     m.def("zero_dl_offload", zero_dl_offload, "Set the current positions of the delay lines to zero");
-    // Set gd offsets 
+    m.def("search", set_search_params, "Set the fringe tracker search parameter", 
+        "delta"_arg=2.0, "turnaround"_arg=10);    
 }
 
 int main(int argc, char* argv[]) {

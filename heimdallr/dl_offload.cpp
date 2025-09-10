@@ -114,7 +114,6 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
             return;
         }
         // Check to find the total offload requested, adding all values of
-        // last_offload - (next_offload + search_offset). 
         double total_offload = 0.0;
         for (int i = 0; i < N_TEL; i++) {
             total_offload += std::fabs(dl(i));
@@ -291,7 +290,7 @@ void dl_offload(){
         }
 
         auto now = std::chrono::high_resolution_clock::now();
-        // Only run search block if enough time has passed
+        // Only run linear search block if enough time has passed
         if (search_ix < search_length) {
             double ms_since_last = std::chrono::duration<double, std::milli>(now - last_search_time).count();
             if (ms_since_last >= search_dt_ms) {
@@ -309,20 +308,16 @@ void dl_offload(){
                 fmt::print("Search beam max SNR: {}\n", max_snr);
                 // Check if the SNR is above the threshold
                 if (max_snr > search_snr_threshold) {
-                    // Set the search value to the current search offset !!! TODO - everything is next_offload for now.
-                    //search_offset(search_dl) = search_start + search_ix * search_delta;
-                    // Finish the search by setting search_length to 0
                     search_length = 0;
                 } else {
                     // Move the piezo to the next position
-                    //search_offset(search_dl) = search_start + search_ix * search_delta;
                     next_offload(search_dl) = search_start + search_ix * search_delta;
                     // Indicate that there is another piezo offload to do.
                     offloads_to_do++;
                     search_ix++;
                 }
             }
-        } else search_offset(search_dl) = 0.0;
+        } 
         if (offloads_to_do > offloads_done) {
             offloads_done = offloads_to_do;
             if (delay_line_type == "piezo") {
