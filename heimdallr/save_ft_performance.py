@@ -82,7 +82,7 @@ def collect_ft_performance(
     for i in range(n_samples):
         t0 = time.perf_counter()
         # Record timestamp as soon as possible before query (to ms precision)
-        timestamps[i] = time.time()
+        timestamps[i] = t0
         reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
         if reply:
             for k in keys_of_interest:
@@ -90,8 +90,8 @@ def collect_ft_performance(
         elapsed = time.perf_counter() - t0
         sleep_time = max(0, (1.0 / rate_hz) - elapsed)
         time.sleep(sleep_time)
-        if (time.perf_counter() - start_time) > duration_sec:
-            break
+        # if (time.perf_counter() - start_time) > duration_sec:
+        #     break
 
     np.savez(save_path, **data, timestamps=timestamps)
 
