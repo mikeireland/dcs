@@ -406,6 +406,10 @@ class BackEndServer:
         parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
             process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
+        elif command_name == "s_b-autoalign":
+            script = Path("/home/benjamin/Documents/dcs/dcs/cmd_scripts/b_autoalign_onsky.py")
+            cmd = [sys.executable, str(script), "--output", "mcs", "--mode", "bright","--savepath","/home/Pictures/baldr_pup_detect_onsky.png"]
+            proc = subprocess.Popen(cmd, cwd=str(script.parent))
         else:
             return self.create_response(
                 f"ERROR: Unknown script command '{command_name}'"

@@ -850,6 +850,28 @@ struct bdr_rtc_config {
 };
 
 
+
+struct Status {
+    int TT_state = 0;
+    int HO_state = 0;
+    std::string mode = "";
+    std::string phasemask = "";
+    double frequency = 0.0;   // double
+    int configured   = 1;
+    std::string ctrl_type = "PID";
+    std::string config_file = "";
+    int inj_enabled = 0;
+    int auto_loop =  1;
+    double close_on_snr = 0.0; // should be a float
+    double open_on_snr = 0.0; // should be a float
+    double close_on_strehl = 0.0;    
+    double open_on_strehl = 0.0;
+    double TT_offsets = 0.0; // 1 or 0 
+
+};
+
+
+
 bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamKey, const std::string& phaseKey);
 
 

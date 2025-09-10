@@ -26,6 +26,8 @@ using json = nlohmann::json;
 //----------Globals-------------------
 
 // The input configuration
+// this is required inpy to the baldr RTC and gets set by user choice in main 
+
 int beam_id; 
 std::string phasemask;
 toml::table config;
@@ -45,6 +47,7 @@ bool user_provided_config = false;      // true if user gives a manual toml file
 std::atomic<int> servo_mode; 
 std::atomic<int> servo_mode_LO;
 std::atomic<int> servo_mode_HO;
+
 
 /////// new stuff for onsky interactions (19/8/25)
 // Definition of the extern declared in baldr.h 
@@ -102,6 +105,8 @@ bool mds_zmq_initialized = false;
 
 std::atomic<uint64_t> g_inj_cfg_epoch{0};
 
+// Tracks the currently loaded Baldr TOML config file (full path)
+std::string g_active_config_filename;
 
 // Forward declaration (implemented in telemetry.cpp)
 std::vector<std::string> list_all_numeric_telem_fields();
@@ -326,6 +331,84 @@ std::string find_latest_config_file(int beam_id, const std::string& mode = "brig
 
     return matching_files.front().path().string();
 }
+
+
+/// get status for MCS to send to wag DB 
+
+Status get_status() {
+    Status status;
+
+    // Loop states from atomics
+    status.TT_state = servo_mode_LO.load();
+    status.HO_state = servo_mode_HO.load();
+
+    // Mode / mask straight from globals
+    status.mode      = observing_mode.empty()
+                         ? std::string("unknown")
+                         : observing_mode;   // "bright" or "faint"
+    status.phasemask = phasemask.empty()
+                         ? std::string("unknown")
+                            : phasemask;        // e.g., "H3"
+    // Frequency: use runtime value set in initDerivedParameters()
+    // (This is the *actual* camera/RTC rate read via ZMQ, not the string in cam.fps)
+    status.frequency = rtc_config.fps;   // double
+
+    // Configured flag: consider “configured” if we have a non-empty runtime I2M matrix
+    const bool lo_ready = (rtc_config.matrices.I2M_LO.size() > 0);
+    const bool ho_ready = (rtc_config.matrices.I2M_HO.size() > 0);
+    status.configured   = (lo_ready || ho_ready) ? 1 : 0;
+
+    // Controller type (PID/Leaky/Kalman) from state
+    status.ctrl_type = rtc_config.state.controller_type;
+
+    // Active config file path
+    status.config_file = g_active_config_filename.empty()
+                         ? std::string("unknown")
+                         : g_active_config_filename;
+
+    // Signal injection master enable
+    status.inj_enabled = rtc_config.inj_signal.enabled ? 1 : 0;
+
+    // Auto-loop: expose a single bit if either auto_close or auto_open is set
+    status.auto_loop = rtc_config.state.auto_close  ? 1 : 0;
+
+    // Thresholds from bdr_limits (strehl-based open/close)
+    status.close_on_snr = 2.0; // should be a float
+    status.open_on_snr = rtc_config.limits.open_on_flux_limit; // should be a float
+    status.close_on_strehl = rtc_config.limits.close_on_strehl_limit;    
+    status.open_on_strehl = rtc_config.limits.open_on_strehl_limit;
+    status.TT_offsets = 0; // 1 or 0 
+
+    // If your Status has other optional fields (e.g., Strehl/SNR estimates),
+    // you can surface last-computed values here when available.
+
+    return status;
+
+
+    /** baldr fields
+    TT_state: int
+    HO_state: int
+    mode: str
+    phasemask: str
+    frequency: float
+    configured: int
+    ctrl_type: str
+    // -- --- complete: bool -- this isnt set here
+    config_file: str
+    inj_enabled: int
+    auto_loop: int
+    close_on_snr: float
+    open_on_snr: float
+    close_on_strehl: float
+    open_on_strehl: float
+    TT_offsets: int
+    /// --- x_pup_offset: float -- this isnt done by rtc
+    /// --- y_pup_offset: float -- this isnt done by rtc **/
+
+
+
+}
+
 
 // // Function to find the most recent config file for a given beam
 // std::string find_latest_config_file(int beam_id) {
@@ -561,7 +644,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
                 rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
                 rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
-                rtc.state.simulation_mode = 0; 
+                rtc.state.simulation_mode = 1; 
             }catch (const std::exception& ex) {
                 std::cerr << "Error with state read-in: " << ex.what() << std::endl;
                 std::exit(1);
@@ -1015,6 +1098,9 @@ nlohmann::json poll_telem_scalar(std::string name) {
         {"data", val}
     };
 }
+
+
+
 
 
 // // these are outdated since the darks now go through Cred1 server (camera)
@@ -2915,6 +3001,7 @@ json reload_config(json args) {
         // Parse the new TOML configuration file.
         config = toml::parse_file(newFilename);
         std::cout << "Loaded new configuration file: " << newFilename << std::endl;
+        g_active_config_filename = newFilename; // put in global variable
 
         // Update the phase mask globally.
         phasemask = newPhaseMask;
@@ -5112,8 +5199,26 @@ COMMANDER_REGISTER(m)
     // long as the signature is deductible from the type.
     // m.def("load_configuration", load_configuration, "Load a configuration file. Return true if successful.", 
     //     "filename"_arg="def.toml");
-
-    
+    m.def("status", []() {
+        Status s = get_status();
+        return nlohmann::json{
+            {"TT_state",        s.TT_state},
+            {"HO_state",        s.HO_state},
+            {"mode",            s.mode},
+            {"phasemask",       s.phasemask},
+            {"frequency",       s.frequency},
+            {"configured",      s.configured},
+            {"ctrl_type",       s.ctrl_type},
+            {"config_file",     s.config_file},
+            {"inj_enabled",     s.inj_enabled},
+            {"auto_loop",       s.auto_loop},
+            {"close_on_strehl", s.close_on_strehl},
+            {"open_on_strehl",  s.open_on_strehl},
+            {"close_on_snr",    s.close_on_snr},
+            {"open_on_snr",     s.open_on_snr},
+            {"TT_offsets",      s.TT_offsets}
+        };
+    });
     //send_cam_command ["set gain 1"]
     m.def("send_mds_command", send_mds_command,
         "Send a raw string command to the MultiDeviceServer over ZMQ.\n"

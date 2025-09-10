@@ -206,6 +206,7 @@ void reset_search(){
     pid_settings.mutex.unlock();
 }
 
+// This takes 12 microseconds on average. A little slow!
 Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eigen::Matrix<double, N_BL, 1> x, Eigen::Matrix<double, N_BL, 1> W){
     // This function filters the input vector x using the I6gd matrix.
     // It returns the filtered vector.
@@ -233,7 +234,6 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
                 }
             }
         }
-        // Now compute the filtered y and chi^2
         y = I6 * x_try;
         chi2 = (x_try - y).transpose() * W.asDiagonal() * (x_try - y);
         if (chi2 < chi2_min){
@@ -328,7 +328,8 @@ void fringe_tracker(){
             // NB We can only unwrap here if we are confident we have a algorithm that
             // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
-            if (servo_mode == SERVO_FIGHT){
+            // For now... also have this feature with the Lacour algorithm.
+            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR)){
                 // In fight mode, we just use the instantaneous phase, not the filtered phase.
                 // This is useful for debugging, but not for real operation.
                 // The 1.5 is a John Monnier hack, due to fmod's treatment of negative numbers.
@@ -431,7 +432,7 @@ void fringe_tracker(){
         }
 
         // Just use a proportional servo on group delay with fixed gain.
-        if (servo_mode==SERVO_SIMPLE){
+        if ((servo_mode==SERVO_SIMPLE) || (servo_mode==SERVO_FIGHT)){
             // Compute the piezo control signal.
             control_u.dm_piston += (pid_settings.kp * pd_gain_scale.asDiagonal() * control_a.pd +
                 pid_settings.gd_gain * control_a.gd) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
