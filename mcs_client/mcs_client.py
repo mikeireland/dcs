@@ -121,6 +121,39 @@ class ZmqRep:
 
 # ---------------- MCS client ----------------
 class MCSClient:
+
+    @staticmethod
+    def _is_zmq_socket_open(sock):
+        """
+        Returns True if the ZMQ socket is open and connected.
+        Checks for 'closed' attribute and socket type.
+        """
+        # Check if socket is not closed
+        if not hasattr(sock, "closed") or sock.closed:
+            return False
+        # Check if socket has endpoints (connected or bound)
+        try:
+            # For pyzmq >= 17, getsockopt(zmq.LAST_ENDPOINT) returns last endpoint
+            # For REQ/REP, this should be non-empty if connected
+            endpoint = (
+                sock.getsockopt(zmq.LAST_ENDPOINT)
+                if hasattr(zmq, "LAST_ENDPOINT")
+                else None
+            )
+            if endpoint is not None and endpoint != b"":
+                return True
+        except Exception:
+            pass
+        # Fallback: check if FD is valid (not -1)
+        try:
+            if hasattr(sock, "getsockopt") and hasattr(zmq, "FD"):
+                fd = sock.getsockopt(zmq.FD)
+                if fd != -1:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def __init__(
         self,
         dcs_endpoints: dict,
@@ -165,10 +198,22 @@ class MCSClient:
             time.sleep(self.sleep_time)
 
     def gather_baldr_parameters(self):
-        """Gather Baldr parameters for all beams as a list of dicts."""
+        """Gather Baldr parameters for all beams as a list of dicts. Only query if connection is open."""
         data = []
         for beam_idx in range(1, 5):
-            st = self.dcs_adapters[f"BLD{beam_idx}"].fetch()
+            adapter = self.dcs_adapters.get(f"BLD{beam_idx}")
+            if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
+                logging.warning(
+                    f"Baldr adapter for beam {beam_idx} not available or not connected."
+                )
+                return []
+            sock = adapter.z.s
+            if not self._is_zmq_socket_open(sock):
+                logging.warning(
+                    f"Baldr ZMQ socket for beam {beam_idx} is not open or not connected."
+                )
+                return []
+            st = adapter.fetch()
             if not st:
                 logging.warning(f"no Baldr status for beam {beam_idx}")
                 return []
@@ -186,14 +231,22 @@ class MCSClient:
         return param_list
 
     def gather_hdlr_parameters(self):
-        """Gather HDLR parameters as a list of dicts."""
-        st = None #self.dcs_adapters["HDLR"].fetch()
+        """Gather HDLR parameters as a list of dicts. Only query if connection is open."""
+        adapter = self.dcs_adapters.get("HDLR")
+        if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
+            logging.warning("Heimdallr adapter not available or not connected.")
+            return []
+        sock = adapter.z.s
+        if not self._is_zmq_socket_open(sock):
+            logging.warning("Heimdallr ZMQ socket is not open or not connected.")
+            return []
+        st = adapter.fetch()
         if st is None:
             return []
         Hdlr_parameters = [f.name for f in fields(HeimdallrStatus)]
         param_list = []
         for param in Hdlr_parameters:
-            values = getattr(st,param)  # is already a list
+            values = getattr(st, param)  # is already a list
             param_list.append(
                 {
                     "name": f"hdlr_{param}",
@@ -204,7 +257,15 @@ class MCSClient:
         return param_list
 
     def gather_script_parameters(self):
-        """Gather script parameters if new data is available, as a list of dicts."""
+        """Gather script parameters if new data is available, as a list of dicts. Only query if connection is open."""
+        adapter = getattr(self, "script_z", None)
+        if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
+            logging.warning("Script adapter not available or not connected.")
+            return []
+        sock = adapter.z.s
+        if not self._is_zmq_socket_open(sock):
+            logging.warning("Script ZMQ socket is not open or not connected.")
+            return []
         self.script_z.fetch()
         if not self.script_z.has_new_data:
             return []
@@ -261,7 +322,6 @@ class MCSClient:
                 logging.warning(f"failed to write combined data to wag: {msg}")
         except zmq.error.ZMQError as e:
             logging.error(f"ZMQ error to wag: {e}")
-
 
     def publish_bld_databases_to_wag(self):
         adapter_names = [f"BLD{idx}" for idx in range(1, 5)]
@@ -535,6 +595,7 @@ class HeimdallrStatus:
     pd_snr: list[float]
     v2_K1: list[float]
     v2_K2: list[float]
+    hdlr_dl_offload: list[float]
 
 
 class HeimdallrAdapter(CppServerAdapter):
