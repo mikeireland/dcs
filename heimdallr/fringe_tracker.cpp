@@ -221,20 +221,17 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     // The best combination has the minimum chi^2 of the modified x with 
     // respect to the final y
 
-    // For debugging, input a very simple I6 matrix, applicable to infinite SNR. In python, 
-    // it is:
-    /* array([[ 0.5 ,  0.25,  0.25, -0.25, -0.25, -0.  ],
-       [ 0.25,  0.5 ,  0.25,  0.25,  0.  , -0.25],
-       [ 0.25,  0.25,  0.5 , -0.  ,  0.25,  0.25],
-       [-0.25,  0.25,  0.  ,  0.5 ,  0.25, -0.25],
-       [-0.25, -0.  ,  0.25,  0.25,  0.5 ,  0.25],
-       [ 0.  , -0.25,  0.25, -0.25,  0.25,  0.5 ]]) */
-    I6 = (Eigen::Matrix<double, N_BL, N_BL>() << 0.5, 0.25, 0.25, -0.25, -0.25, -0.,
-        0.25, 0.5, 0.25, 0.25, 0., -0.25,
-        0.25, 0.25, 0.5, -0., 0.25, 0.25,
-        -0.25, 0.25, 0., 0.5, 0.25, -0.25,
-        -0.25, -0., 0.25, 0.25, 0.5, 0.25,
-        0., -0.25, 0.25, -0.25, 0.25, 0.5).finished();
+    // For debugging, input a very simple I6 matrix, applicable to infinite SNR.
+    // Instead of using << and .finished(), use a static array and Eigen::Map:
+    static const double I6_data[N_BL*N_BL] = {
+        0.5, 0.25, 0.25, -0.25, -0.25, 0.0,
+        0.25, 0.5, 0.25, 0.25, 0.0, -0.25,
+        0.25, 0.25, 0.5, 0.0, 0.25, 0.25,
+        -0.25, 0.25, 0.0, 0.5, 0.25, -0.25,
+        -0.25, 0.0, 0.25, 0.25, 0.5, 0.25,
+        0.0, -0.25, 0.25, -0.25, 0.25, 0.5
+    };
+    I6 = Eigen::Map<const Eigen::Matrix<double, N_BL, N_BL>>(I6_data);
     for (int i=0; i<(1<<N_BL); i++){
         for (int j=0; j<N_BL; j++){
             if (x(j) > 0){
@@ -262,8 +259,15 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     }
     // For debugging, print the best combination found, x_best, and y_best
     fmt::print("Best i {:b}\n", i_best);
-    fmt::print("Best x: {}\n", x_best.transpose());
-    fmt::print("Best y: {}\n", y_best.transpose());
+    // Print Eigen vectors as comma-separated values
+    fmt::print("Best x: ");
+    for (int k = 0; k < x_best.size(); ++k) {
+        fmt::print("{:.4f}{}", x_best(k), (k < x_best.size()-1) ? ", " : "\n");
+    }
+    fmt::print("Best y: ");
+    for (int k = 0; k < y_best.size(); ++k) {
+        fmt::print("{:.4f}{}", y_best(k), (k < y_best.size()-1) ? ", " : "\n");
+    }
 
     //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
@@ -574,6 +578,10 @@ void fringe_tracker(){
             // Increment the counters.
             bispectra_K1[cp].ix_bs_boxcar = (bispectra_K1[cp].ix_bs_boxcar + 1) % bispectra_K1[cp].n_bs_boxcar;
             bispectra_K2[cp].ix_bs_boxcar = (bispectra_K2[cp].ix_bs_boxcar + 1) % bispectra_K2[cp].n_bs_boxcar;
+            //std::cout << "CP: " << cp << " Phase: " << bispectra[cp].closure_phase << std::endl;
+        }
+    }
+}
             //std::cout << "CP: " << cp << " Phase: " << bispectra[cp].closure_phase << std::endl;
         }
     }
