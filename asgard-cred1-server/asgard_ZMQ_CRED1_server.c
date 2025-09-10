@@ -1020,11 +1020,11 @@ void set_save_mode(int _mode) {
  * Start or interrupt the FITS saving of data cubes acquired by the camera
  * ------------------------------------------------------------------------- */
 void trigger_save_dark() {
-  set_dark_sub_mode(0);
-  sleep(0.2);
+  // set_dark_sub_mode(0);
+  // sleep(0.2);
   camconf->save_dark = 1;
-  sleep(0.2);
-  set_dark_sub_mode(1);  
+  // sleep(0.2);
+  // set_dark_sub_mode(1);  
 }
 
 /* -------------------------------------------------------------------------

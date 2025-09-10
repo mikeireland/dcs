@@ -3,7 +3,7 @@
 //#define PRINT_TIMING_ALL
 //#define DEBUG
 #define GD_THRESHOLD 5
-#define PD_THRESHOLD 7
+#define PD_THRESHOLD 4
 #define GD_SEARCH_RESET 5
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
@@ -241,7 +241,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
             y_best = y;
         }
     }
-    //y = I6 * x;
+    //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
     return y_best;
 }
@@ -262,7 +262,7 @@ void fringe_tracker(){
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
-    set_dm_piston(Eigen::Vector4d::Zero());
+    //set_dm_piston(Eigen::Vector4d::Zero()); //!!!
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
@@ -472,8 +472,8 @@ void fringe_tracker(){
             } 
             control_u.test_ix = (control_u.test_ix + 1) % (2*control_u.test_n);
         }
-        // Apply the signal to the DM!
-        set_dm_piston(control_u.dm_piston);
+        // Apply the signal to the DM! !!!
+        //set_dm_piston(control_u.dm_piston);
 
 #ifdef PRINT_TIMING
         clock_gettime(CLOCK_REALTIME, &now);

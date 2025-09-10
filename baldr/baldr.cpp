@@ -644,7 +644,7 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.state.auto_close = ctrl_tbl["auto_close"] ? ctrl_tbl["auto_close"].value_or(int(0)) : 0;
                 rtc.state.auto_open = ctrl_tbl["auto_open"] ? ctrl_tbl["auto_open"].value_or(int(1)): 1;
                 rtc.state.auto_tune = ctrl_tbl["auto_tune"] ? ctrl_tbl["auto_tuen"].value_or(int(0)) : 0;
-                rtc.state.simulation_mode = 1; 
+                rtc.state.simulation_mode = 0; 
             }catch (const std::exception& ex) {
                 std::cerr << "Error with state read-in: " << ex.what() << std::endl;
                 std::exit(1);

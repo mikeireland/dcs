@@ -84,6 +84,7 @@ void init_controllino() {
 
 // Send a command to MDS and wait for a reply.
 std::string send_mds_cmd(const std::string& message) {
+    return "0.0"; //!!!
     init_mds_zmq();
     mds_zmq_socket.send(zmq::buffer(message), zmq::send_flags::none);
     zmq::message_t reply;

@@ -8,7 +8,8 @@ CC=g++
 CFLAGS  = -std=c++17 -W -Wall -Wextra
 LDFLAGS = -lcommander -lm -lzmq -lImageStreamIO -lpthread -lboost_program_options -lfmt -lcjson -lcfitsio
 EXEC    = asgard_cam_server
-OBJECTS = asgard_ZMQ_CRED1_server.o
+# OBJECTS = asgard_ZMQ_CRED1_server.o
+OBJECTS = cred1_onsky_server.o cred1_cli_tools.o
 
 # PREFIX is environment variable, but if it is not set, then set default value
 ifeq ($(PREFIX),)

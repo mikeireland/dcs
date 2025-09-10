@@ -1,3 +1,6 @@
+# Temporary text files
+*.txt 
+
 # Prerequisites
 *.d
 
@@ -50,3 +53,7 @@ baldr/tests/
 dm_telemetry_recorder
 baldr/latency/latency_test
 calibration_frames/products/
+
+#Binaries
+baldr/baldr
+heimdallr/heimdallr
