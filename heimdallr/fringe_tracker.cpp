@@ -447,21 +447,31 @@ void fringe_tracker(){
         cov_gd_tel = M_lacour_dag * I6gd * var_gd.asDiagonal() * I6gd.transpose() * M_lacour_dag.transpose();
 
 #ifdef DEBUG
-        // Print debugging info for bugshooting
-        fmt::print("var_gd diagonal: ");
+        // Print debugging info for bugshooting, formatted for np.array input
+        fmt::print("var_gd diagonal = [{}]\n", 
+            fmt::join(std::vector<std::string>(var_gd.size(), ""), ", "));
         for (int k = 0; k < var_gd.size(); ++k) {
-            fmt::print("{:.6f}{}", var_gd(k), (k < var_gd.size()-1) ? ", " : "\n");
+            fmt::print("{:.6f}{}", var_gd(k), (k < var_gd.size()-1) ? ", " : "]\n");
         }
-        fmt::print("Wgd diagonal: ");
+        fmt::print("Wgd diagonal = [{}]\n", 
+            fmt::join(std::vector<std::string>(Wgd.size(), ""), ", "));
         for (int k = 0; k < Wgd.size(); ++k) {
-            fmt::print("{:.6f}{}", Wgd(k), (k < Wgd.size()-1) ? ", " : "\n");
+            fmt::print("{:.6f}{}", Wgd(k), (k < Wgd.size()-1) ? ", " : "]\n");
         }
-        fmt::print("I6gd matrix:\n");
+        fmt::print("cov_gd_tel diagonal = [{}]\n", 
+            fmt::join(std::vector<std::string>(cov_gd_tel.diagonal().size(), ""), ", "));
+        for (int k = 0; k < cov_gd_tel.diagonal().size(); ++k) {
+            fmt::print("{:.6f}{}", cov_gd_tel.diagonal()(k), (k < cov_gd_tel.diagonal().size()-1) ? ", " : "]\n");
+        }
+        fmt::print("I6gd matrix = [\n");
         for (int i = 0; i < I6gd.rows(); ++i) {
+            fmt::print("[");
             for (int j = 0; j < I6gd.cols(); ++j) {
-                fmt::print("{:.6f}{}", I6gd(i, j), (j < I6gd.cols()-1) ? ", " : "\n");
+                fmt::print("{:.6f}{}", I6gd(i, j), (j < I6gd.cols()-1) ? ", " : "");
             }
+            fmt::print("]{}\n", (i < I6gd.rows()-1) ? "," : "");
         }
+        fmt::print("]\n");
 #endif
 
         // Now project the filtered gd and pd onto telescope space.
