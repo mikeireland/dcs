@@ -155,6 +155,9 @@ import json
 import datetime
 import time
 
+import os
+import signal
+
 # import baldr_back_end_server
 
 import uuid
@@ -207,7 +210,7 @@ class BackEndServer:
                 continue
         print("All server connections initialized.")
 
-        self.scripts_running = []
+        self.scripts_running = {}
 
     def run(self):
         while True:
@@ -241,8 +244,8 @@ class BackEndServer:
             return self.setup(command)
         elif command_name == "start":
             return self.start(command)
-        # elif command_name == "abort":
-        #     return self.abort(command)
+        elif command_name == "abort":
+            return self.abort()
         elif command_name == "expstatus":
             return self.expstatus(command)
         elif command_name.startswith("bld_"):
@@ -270,8 +273,6 @@ class BackEndServer:
         - beam=0 => broadcast to beams 1..4
         - beam in 1..4 => target that specific beam
         """
-        # Local-only imports to keep this method self-contained
-        import json as _json
 
         # Map WAG verbs -> Commander command strings
         cmd_map = {
@@ -339,7 +340,7 @@ class BackEndServer:
                 details = "empty reply"
             else:
                 try:
-                    rep = _json.loads(raw)
+                    rep = json.loads(raw)
                     if isinstance(rep, dict):
                         # Common patterns: {"ok":true}, {"ok":false,"error":"..."},
                         # or {"reply":{"content":"OK"}} (or an error string)
@@ -360,7 +361,7 @@ class BackEndServer:
                             details = rep
                     else:
                         details = rep
-                except _json.JSONDecodeError:
+                except json.JSONDecodeError:
                     # Non-JSON reply; consider it error only if it contains 'error'
                     if isinstance(raw, str) and "error" in raw.lower():
                         ok = False
@@ -387,6 +388,16 @@ class BackEndServer:
         @mike
         """
 
+    def abort(self):
+        # abort the process that was run using subprocess by sending SIGINT
+        # for all processes in self.scripts_running
+        for pid, process in self.scripts_running.items():
+            os.killpg(os.getpgid(pid), signal.SIGINT)
+            if process.poll() is not None:
+                print(f"Process has been terminated with return code: {process.poll()}")
+            else:
+                print("Process is still running, SIGINT may have been ignored.")
+
     def handle_script(self, command):
         """
         Handle script commands, e.g., s_h-autoalign
@@ -400,7 +411,7 @@ class BackEndServer:
                 f"ERROR: Unknown script command '{command_name}'"
             )
 
-        self.scripts_running.append(process)
+        self.scripts_running[process.pid] = process
         return self.create_response("OK")
 
     def create_response(self, content):
