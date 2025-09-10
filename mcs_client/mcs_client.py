@@ -244,6 +244,7 @@ class MCSClient:
 
     def gather_script_parameters(self):
         """Gather script parameters if new data is available, as a list of dicts. Only query if connection is open."""
+        self.script_z.fetch()
         msg = self.script_z.read_most_recent_msg()
         if not msg:
             return None
@@ -631,7 +632,11 @@ class ScriptAdapter:
         self.has_new_data = False
 
     def read_most_recent_msg(self):
+        if self.has_new_data == False:
+            return {}
+
         self.has_new_data = False
+
         return self.data
 
     def fetch(self) -> Optional[Dict[str, Any]]:

@@ -475,7 +475,7 @@ class HeimdallrAA:
         """
 
         # dummy conversion matrix TODO: per beam matrix 2x2
-        pix_to_arcsec = 1.20
+        pix_to_arcsec = 2.40
         arcsec_offsets = {
             beam: offset * pix_to_arcsec for beam, offset in pixel_offsets.items()
         }
@@ -483,7 +483,7 @@ class HeimdallrAA:
         # these are the hdlr_x_offset, hdlr_y_offset - need to reformat from dict
         # of beams to two lists - one for x offsets, one for y offsets
         # note that offset are flipped! x on the detector is y on sky
-        x_offsets = [arcsec_offsets[beam][1] for beam in range(1, 5)]
+        x_offsets = [-arcsec_offsets[beam][1] for beam in range(1, 5)]
         y_offsets = [arcsec_offsets[beam][0] for beam in range(1, 5)]
 
         msg = {
