@@ -392,14 +392,45 @@ class BackEndServer:
         """
         Handle script commands, e.g., s_h-autoalign
         """
+        def _param_value(params_obj, key, default=None):
+            # Accepts the RTS list format and (optionally) a dict format, looks for a paraticular parameter
+            # e.g. to get the beam parameter >beam_raw = _param_value(params, "beam", 0)
+            if isinstance(params_obj, list):
+                for item in params_obj:
+                    if isinstance(item, dict) and item.get("name") == key:
+                        return item.get("value", default)
+                return default
+            if isinstance(params_obj, dict):
+                return params_obj.get(key, default)
+            return default
+
+
         command_name = command.get("name", "").lower()
         parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
             process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
         elif command_name == "s_b-autoalign":
             script = Path("/home/asg/Progs/repos/dcs/dcs/cmd_scripts/b_autoalign_onsky.py")
-            cmd = [sys.executable, str(script), "--output", "mcs", "--mode", "bright","--savepath","/home/Pictures/baldr_pup_detect_onsky.png"]
-            proc = subprocess.Popen(cmd, cwd=str(script.parent))
+
+
+            # beam_raw = _param_value(parameters, "beam", 0)
+            # try:
+            #     beam_val = int(beam_raw)
+            # except Exception:
+            #     return self.create_response(
+            #         "ERROR: 'beam' must be an integer in {0,1,2,3,4}"
+            #     )
+            # if beam_val not in (0, 1, 2, 3, 4):
+            #     return self.create_response("ERROR: 'beam' must be in {0,1,2,3,4}")
+
+            # # Expand 0 -> [1,2,3,4], otherwise a single-element list
+            # target_beams = [1, 2, 3, 4] if beam_val == 0 else [beam_val]
+
+            for beam in [1,2,3,4]:
+
+                cmd = [sys.executable, str(script),"--beam",f"{beam}", "--output", "mcs", "--mode", "bright","--savepath","/home/asg/Pictures/baldr_pup_detect_onsky.png"]
+                process = subprocess.Popen(cmd, cwd=str(script.parent))
+                time.sleep( 5 )
         else:
             return self.create_response(
                 f"ERROR: Unknown script command '{command_name}'"
