@@ -3,9 +3,12 @@
 //#define PRINT_TIMING_ALL
 //#define DEBUG
 //#define DEBUG_FILTER6
-#define GD_THRESHOLD 5
-#define PD_THRESHOLD 4
-#define GD_SEARCH_RESET 5
+
+// Thresholds for fringe tracking (now variables)
+double gd_threshold = 5.0;
+double pd_threshold = 4.5;
+double gd_search_reset = 5.0;
+
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
 #define GD_MAX_VAR_FOR_JUMP 0.2*0.2
@@ -391,7 +394,7 @@ void fringe_tracker(){
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
-            if (baselines.gd_snr(bl) > GD_THRESHOLD){
+            if (baselines.gd_snr(bl) > gd_threshold){
                 Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
                 var_gd(bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
@@ -399,7 +402,7 @@ void fringe_tracker(){
                 Wgd(bl) = 0;
                 var_gd(bl) = 1e6; 
             }
-            if (baselines.pd_snr(bl) > PD_THRESHOLD){
+            if (baselines.pd_snr(bl) > pd_threshold){
                 Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
                 var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
             }
@@ -531,9 +534,10 @@ void fringe_tracker(){
             // Irrespective of offload type, see if we need to reset the search, 
             // based on determining if we confidently have fringes with all telescopes.
             double worst_gd_var = cov_gd_tel.diagonal().minCoeff();
-            if (worst_gd_var < gd_to_K1*gd_to_K1/GD_SEARCH_RESET/GD_SEARCH_RESET){
+            if (worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
+                fmt::print("Resetting search, good fringes detected. Worst GD var: {:.3f}\n", worst_gd_var);
             } else {
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.

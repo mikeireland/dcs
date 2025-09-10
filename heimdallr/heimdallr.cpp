@@ -251,6 +251,11 @@ void set_delay_line_type(std::string type) {
     }
 }
 
+// Add setter functions for thresholds
+void set_gd_threshold(double val) { gd_threshold = val; }
+void set_pd_threshold(double val) { pd_threshold = val; }
+void set_gd_search_reset(double val) { gd_search_reset = val; }
+
 Status get_status() {
     Status status;
     // Get the status of the system. This is a simple struct with the
@@ -387,6 +392,9 @@ COMMANDER_REGISTER(m)
     m.def("zero_dl_offload", zero_dl_offload, "Set the current positions of the delay lines to zero");
     m.def("search", set_search_params, "Set the fringe tracker search parameter", 
         "delta"_arg=2.0, "turnaround"_arg=10);    
+    m.def("set_gd_threshold", set_gd_threshold, "Set GD SNR threshold", "value"_arg=5.0);
+    m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
+    m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
 }
 
 int main(int argc, char* argv[]) {

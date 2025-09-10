@@ -287,3 +287,8 @@ void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);
 void dl_offload();
 void start_search(uint search_dl_in, double start, double stop, double rate, uint dt_ms, double threshold);
+
+// Thresholds for fringe tracking (now variables)
+extern double gd_threshold;
+extern double pd_threshold;
+extern double gd_search_reset;
