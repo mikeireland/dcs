@@ -187,7 +187,7 @@ class MCSClient:
 
     def gather_hdlr_parameters(self):
         """Gather HDLR parameters as a list of dicts."""
-        st = self.dcs_adapters["HDLR"].fetch()
+        st = None #self.dcs_adapters["HDLR"].fetch()
         if st is None:
             return []
         Hdlr_parameters = [f.name for f in fields(HeimdallrStatus)]
@@ -488,7 +488,7 @@ class CppServerAdapter:
 
 class BaldrAdapter(CppServerAdapter):
     """
-    Talks to Baldr ZMQ server ("tcp://host:6662") and returns a BaldrStatus.
+    Talks to Baldr ZMQ server ("tcp://host:6662 ... 6665") and returns a BaldrStatus.
     """
 
     def __init__(self, endpoint):
