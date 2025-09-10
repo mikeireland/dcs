@@ -81,6 +81,9 @@ double sinc_normalized(double x) {
 }
 
 void set_dm_piston(Eigen::Vector4d dm_piston){
+#ifdef SIMULATE
+    return;
+#endif
     // This function sets the DM piston to the given value.
     for(int i = 0; i < N_TEL; i++) {
             for (int j=0; j<144; j++){
@@ -262,7 +265,7 @@ void fringe_tracker(){
     long x_px, y_px, stride;
     initialise_baselines();
     reset_search();
-    //set_dm_piston(Eigen::Vector4d::Zero()); //!!!
+    set_dm_piston(Eigen::Vector4d::Zero()); 
     ft_cnt = K1ft->cnt;
     while(servo_mode != SERVO_STOP){
         cnt_since_init++; //This should "never" wrap around, as a long int is big.
@@ -472,8 +475,8 @@ void fringe_tracker(){
             } 
             control_u.test_ix = (control_u.test_ix + 1) % (2*control_u.test_n);
         }
-        // Apply the signal to the DM! !!!
-        //set_dm_piston(control_u.dm_piston);
+        // Apply the signal to the DM! 
+        set_dm_piston(control_u.dm_piston);
 
 #ifdef PRINT_TIMING
         clock_gettime(CLOCK_REALTIME, &now);

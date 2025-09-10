@@ -836,15 +836,16 @@ void* fetch_imgs(void *arg) {
       //    save the data to disk
       // =============================
       if (camconf->save_mode == 1) {
-        if (liveindex == camconf->nbr_hlf) // save the first half of the live data-cube
+        if (liveindex == camconf->nbr_hlf) {// save the first half of the live data-cube
           memcpy(tosave, (unsigned short *) shm_img->array.UI16,
 		 nbpix_cub * sizeof(unsigned short));
-        
-        if (liveindex == 0) // save the second half of the live data-cube
+	  sem_post(&sync_save);
+	}
+        if (liveindex == 0) {// save the second half of the live data-cube
           memcpy(tosave, (unsigned short *) (shm_img->array.UI16 + nbpix_cub),
 		 nbpix_cub * sizeof(unsigned short));
-
-        sem_post(&sync_save);
+	  sem_post(&sync_save);
+        }
       }
       timeouts = pdv_timeouts(pdv_p);
       if (timeouts > previous_timeouts){
