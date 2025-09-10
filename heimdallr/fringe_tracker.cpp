@@ -448,18 +448,15 @@ void fringe_tracker(){
 
 #ifdef DEBUG
         // Print debugging info for bugshooting, formatted for np.array input
-        fmt::print("var_gd diagonal = [{}]\n", 
-            fmt::join(std::vector<std::string>(var_gd.size(), ""), ", "));
+        fmt::print("var_gd diagonal = [");
         for (int k = 0; k < var_gd.size(); ++k) {
             fmt::print("{:.6f}{}", var_gd(k), (k < var_gd.size()-1) ? ", " : "]\n");
         }
-        fmt::print("Wgd diagonal = [{}]\n", 
-            fmt::join(std::vector<std::string>(Wgd.size(), ""), ", "));
+        fmt::print("Wgd diagonal = [");
         for (int k = 0; k < Wgd.size(); ++k) {
             fmt::print("{:.6f}{}", Wgd(k), (k < Wgd.size()-1) ? ", " : "]\n");
         }
-        fmt::print("cov_gd_tel diagonal = [{}]\n", 
-            fmt::join(std::vector<std::string>(cov_gd_tel.diagonal().size(), ""), ", "));
+        fmt::print("cov_gd_tel diagonal = [");
         for (int k = 0; k < cov_gd_tel.diagonal().size(); ++k) {
             fmt::print("{:.6f}{}", cov_gd_tel.diagonal()(k), (k < cov_gd_tel.diagonal().size()-1) ? ", " : "]\n");
         }
@@ -622,4 +619,3 @@ void fringe_tracker(){
         }
     }
 }
-
