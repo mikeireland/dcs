@@ -172,9 +172,10 @@ from handlers.baldr_rts_handlers import register as register_baldr_rts
 class BackEndServer:
     def __init__(
         self,
-        port=7010,
+        port=7002,
         server_ports={
-            "hdlr": 6660,
+            # "hdlr": 6660,
+            "hdlr": 6650,
             "hdlr_align": 6661,
             "baldr1": 6662,
             "baldr2": 6663,
@@ -222,7 +223,6 @@ class BackEndServer:
                 self.socket.send_json(
                     self.create_response("ERROR: Invalid JSON format")
                 )
-
             print(f"Received request: {message}")
 
             # Process the command
@@ -275,8 +275,8 @@ class BackEndServer:
 
         # Map WAG verbs -> Commander command strings
         cmd_map = {
-            "bld_open_lo":  'open_baldr_LO ""',
-            "bld_open_ho":  'open_baldr_HO ""',
+            "bld_open_lo": 'open_baldr_LO ""',
+            "bld_open_ho": 'open_baldr_HO ""',
             "bld_close_lo": 'close_baldr_LO ""',
             "bld_close_ho": 'close_baldr_HO ""',
         }
@@ -303,7 +303,9 @@ class BackEndServer:
         try:
             beam_val = int(beam_raw)
         except Exception:
-            return self.create_response("ERROR: 'beam' must be an integer in {0,1,2,3,4}")
+            return self.create_response(
+                "ERROR: 'beam' must be an integer in {0,1,2,3,4}"
+            )
         if beam_val not in (0, 1, 2, 3, 4):
             return self.create_response("ERROR: 'beam' must be in {0,1,2,3,4}")
 
@@ -346,7 +348,9 @@ class BackEndServer:
                             details = rep.get("error") or rep
                         elif "reply" in rep and isinstance(rep["reply"], dict):
                             content = rep["reply"].get("content", "")
-                            if isinstance(content, str) and content.upper().startswith("ERROR"):
+                            if isinstance(content, str) and content.upper().startswith(
+                                "ERROR"
+                            ):
                                 ok = False
                                 details = content
                             else:
@@ -369,7 +373,9 @@ class BackEndServer:
 
         if errors:
             if results:
-                return self.create_response(f"ERROR: partial ({'; '.join(results)}; errors: {', '.join(errors)})")
+                return self.create_response(
+                    f"ERROR: partial ({'; '.join(results)}; errors: {', '.join(errors)})"
+                )
             return self.create_response(f"ERROR: {', '.join(errors)}")
 
         # All good
