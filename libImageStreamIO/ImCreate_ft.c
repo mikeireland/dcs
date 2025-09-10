@@ -55,7 +55,7 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Make our hole phasors
     for (int kk=0; kk<4; kk++)
-        hole_phasors[kk] = cexp(2.5*I*kk*sin(phase)*wavenum_scale);
+        hole_phasors[kk] = cexp(0.5*I*kk*sin(phase)*wavenum_scale);
 
     // Fill the pupil with the holes
     for(int jj=0; jj<SZ; jj++)            // loop rows
@@ -79,13 +79,13 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Now take the square of the electric field and copy to the image
     // ->array is union; ->array.F is float pointer to image
-    float* dotF = imarray->array.F;
+    int* dotF = imarray->array.F;
     for (int ii=0; ii<SZ; ii++)
     {
         for (int jj=0; jj<SZ; jj++)
         {
             rnoise = rand()/(float)RAND_MAX - 0.5;
-            *(dotF++) = powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*5;
+            *(dotF++) = (int)(1000 + powf(cabsf(image[((ii + SZ/2) % SZ)*SZ + (jj + SZ/2) % SZ]),2)*flux_scale + rnoise*10);
         }
     }
 
@@ -107,7 +107,7 @@ int main()
     long naxis = sizeof(imsize) / (sizeof *imsize);  // # of axes
 
     // Data type; see file ImageStruct.h for list of supported types
-    uint8_t atype = _DATATYPE_FLOAT;
+    uint8_t atype = _DATATYPE_INT32;
 
     int shared = 1;                // 1 if image in shared mem
     int NBkw = 10;                 // number of keywords allowed
