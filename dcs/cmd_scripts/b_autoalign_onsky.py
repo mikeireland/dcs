@@ -324,8 +324,8 @@ class BaldrAA:
             "origin": "s_bld_pup_autoalign_sky",
             "beam":int(self.beam)-1,
             "data": [
-                {"bld_x_pup_offset": x_offset},
-                {"bld_y_pup_offset": y_offset},
+                {"bld_x_pup_offset": -x_offset}, # delta_x = ref-pos, if delta_x is neg we want to move to the left when looking at camera frame, which is +ve in VCM land 
+                {"bld_y_pup_offset": -y_offset}, # delta_y = ref-pos, if delta_y is neg we want to move to the left when looking at camera frame, which is +ve in VCM land 
                 {"bld_complete": 1},
             ],
         }
@@ -477,7 +477,7 @@ if __name__ == "__main__":
                        savepath = args.savepath,
                        )
 
-    x_offset, y_offset = baldr_aa.calculate_pixel_offsets( )
+    #x_offset, y_offset = baldr_aa.calculate_pixel_offsets( )
 
     if args.test_mcs : 
         baldr_aa.test_mcs()
