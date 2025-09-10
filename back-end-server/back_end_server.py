@@ -161,7 +161,8 @@ import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Type, Any
-
+from pathlib import Path
+import sys
 import subprocess
 
 # from rts_base import AbstractRTSTask, RTSContext, RTSState, RTSErr
@@ -396,7 +397,7 @@ class BackEndServer:
         if command_name == "s_h-autoalign":
             process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
         elif command_name == "s_b-autoalign":
-            script = Path("/home/benjamin/Documents/dcs/dcs/cmd_scripts/b_autoalign_onsky.py")
+            script = Path("/home/asg/Progs/repos/dcs/dcs/cmd_scripts/b_autoalign_onsky.py")
             cmd = [sys.executable, str(script), "--output", "mcs", "--mode", "bright","--savepath","/home/Pictures/baldr_pup_detect_onsky.png"]
             proc = subprocess.Popen(cmd, cwd=str(script.parent))
         else:
