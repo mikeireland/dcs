@@ -411,7 +411,36 @@ class BackEndServer:
         """
         Any formatting needs to be done here
         @mike
+
+        simplest command: servo off
         """
+        cmd_name = command.get("name", "").lower()
+
+        if cmd_name == "hldr_servo":
+            parameters = command.get("parameters", [])
+            servo_state = None
+            for param in parameters:
+                if param.get("name") == "state":
+                    servo_state = param.get("value")
+                    break
+            if servo_state not in ["on", "off"]:
+                return self.create_response(
+                    "ERROR: 'state' parameter must be 'on' or 'off'"
+                )
+
+            server = self.servers.get("hdlr")
+            if server is None:
+                return self.create_response("ERROR: hdlr server not connected")
+
+            try:
+                server.send_string(f"servo {servo_state}")
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+            except Exception as e:
+                return self.create_response(f"ERROR: ZMQ error: {e}")
+
+            return self.create_response("OK")
 
     def abort(self):
         # abort the process that was run using subprocess by sending SIGINT
