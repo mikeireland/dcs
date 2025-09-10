@@ -267,17 +267,6 @@ class MCSClient:
 
     def gather_script_parameters(self):
         """Gather script parameters if new data is available, as a list of dicts. Only query if connection is open."""
-        adapter = getattr(self, "script_z", None)
-        if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
-            logging.warning("Script adapter not available or not connected.")
-            return []
-        sock = adapter.z.s
-        if not self._is_zmq_socket_open(sock):
-            logging.warning("Script ZMQ socket is not open or not connected.")
-            return []
-        self.script_z.fetch()
-        if not self.script_z.has_new_data:
-            return []
         msg = self.script_z.read_most_recent_msg()
         if "beam" not in msg:
             data = msg["data"]
