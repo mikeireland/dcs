@@ -9,29 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import zmq
 from datetime import datetime, timezone
 
-
-# --- Logging setup: file and console ---
-def _setup_logging():
-    log_dir = os.path.expanduser("~/logs/mcs/")
-    os.makedirs(log_dir, exist_ok=True)
-    log_name = time.strftime("mcs_%Y%m%d_%H%M%S.log")
-    log_path = os.path.join(log_dir, log_name)
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(log_path)
-    fh.setLevel(logging.INFO)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-    logger.handlers = []
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-    logger.info(f"Logging started. Log file: {log_path}")
-
-
-_setup_logging()
 # baldr_wag_client.py
 import json, time, socket
 import logging
@@ -691,6 +668,52 @@ class ScriptAdapter:
 
 # ---------------- Main publish loop ----------------
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the MDS server.")
+    parser.add_argument(
+        "-c", "--config", type=str, required=True, help="Path to the configuration file"
+    )
+    parser.add_argument(
+        "--host", type=str, default="192.168.100.2", help="Host address"
+    )
+    parser.add_argument(
+        "--log-location",
+        type=str,
+        default="~/logs/mds/",
+        help="Path to the log directory",
+    )
+    parser.add_argument("-p", "--port", type=int, default=5555, help="Port number")
+
+    args = parser.parse_args()
+
+    # logname from the current time
+    log_fname = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
+    logging.basicConfig(
+        filename=os.path.join(os.path.expanduser(args.log_location), log_fname),
+        level=logging.INFO,
+    )
+
+    # Add stream handler to also log to stdout
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    console.setFormatter(formatter)
+    logging.getLogger().addHandler(console)
+
+    log_fname = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
+    logging.basicConfig(
+        filename=os.path.join(os.path.expanduser(args.log_location), log_fname),
+        level=logging.INFO,
+    )
+
+    # Add stream handler to also log to stdout
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    console.setFormatter(formatter)
+    logging.getLogger().addHandler(console)
+
     mcs = MCSClient(
         dcs_endpoints={
             "BLD1": "tcp://192.168.100.2:6662",
