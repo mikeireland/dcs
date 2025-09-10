@@ -245,6 +245,8 @@ class MCSClient:
     def gather_script_parameters(self):
         """Gather script parameters if new data is available, as a list of dicts. Only query if connection is open."""
         msg = self.script_z.read_most_recent_msg()
+        if not msg:
+            return None
         if "beam" not in msg:
             data = msg["data"]
             for i, item in enumerate(data):
@@ -570,7 +572,7 @@ class HeimdallrStatus:
     pd_snr: list[float]
     v2_K1: list[float]
     v2_K2: list[float]
-    hdlr_dl_offload: list[float]
+    dl_offload: list[float]
 
 
 class HeimdallrAdapter(CppServerAdapter):
@@ -672,36 +674,17 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run the MDS server.")
     parser.add_argument(
-        "-c", "--config", type=str, required=True, help="Path to the configuration file"
-    )
-    parser.add_argument(
-        "--host", type=str, default="192.168.100.2", help="Host address"
-    )
-    parser.add_argument(
         "--log-location",
         type=str,
-        default="~/logs/mds/",
+        default="~/logs/mcs/",
         help="Path to the log directory",
     )
-    parser.add_argument("-p", "--port", type=int, default=5555, help="Port number")
 
     args = parser.parse_args()
 
     # logname from the current time
-    log_fname = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
-    logging.basicConfig(
-        filename=os.path.join(os.path.expanduser(args.log_location), log_fname),
-        level=logging.INFO,
-    )
 
-    # Add stream handler to also log to stdout
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-    console.setFormatter(formatter)
-    logging.getLogger().addHandler(console)
-
-    log_fname = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
+    log_fname = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log"
     logging.basicConfig(
         filename=os.path.join(os.path.expanduser(args.log_location), log_fname),
         level=logging.INFO,
