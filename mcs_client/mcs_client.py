@@ -125,33 +125,42 @@ class MCSClient:
     @staticmethod
     def _is_zmq_socket_open(sock):
         """
-        Returns True if the ZMQ socket is open and connected.
-        Checks for 'closed' attribute and socket type.
+        Actively checks if the ZMQ socket is open and the remote endpoint is alive.
+        For REQ sockets, sends a 'status' or 'ping' and expects a reply.
+        Returns True only if a valid response is received.
         """
+
         # Check if socket is not closed
         if not hasattr(sock, "closed") or sock.closed:
             return False
-        # Check if socket has endpoints (connected or bound)
+        # Only works for REQ sockets (client side)
         try:
-            # For pyzmq >= 17, getsockopt(zmq.LAST_ENDPOINT) returns last endpoint
-            # For REQ/REP, this should be non-empty if connected
-            endpoint = (
-                sock.getsockopt(zmq.LAST_ENDPOINT)
-                if hasattr(zmq, "LAST_ENDPOINT")
-                else None
-            )
-            if endpoint is not None and endpoint != b"":
+            if sock.type == zmq.REQ:
+                poller = zmq.Poller()
+                poller.register(sock, zmq.POLLIN)
+                # Try to send a test message (non-blocking, short timeout)
+                try:
+                    # Use a unique message unlikely to interfere
+                    sock.send_string("__ping__", zmq.NOBLOCK)
+                except zmq.Again:
+                    # Socket not ready to send
+                    return False
+                # Wait for a reply (short timeout)
+                socks = dict(poller.poll(300))
+                if sock in socks and socks[sock] == zmq.POLLIN:
+                    try:
+                        _ = sock.recv(zmq.NOBLOCK)
+                        return True
+                    except Exception:
+                        return False
+                else:
+                    return False
+            # For REP sockets (server side), we can't actively check remote
+            # Just check if not closed
+            elif sock.type == zmq.REP:
                 return True
         except Exception:
-            pass
-        # Fallback: check if FD is valid (not -1)
-        try:
-            if hasattr(sock, "getsockopt") and hasattr(zmq, "FD"):
-                fd = sock.getsockopt(zmq.FD)
-                if fd != -1:
-                    return True
-        except Exception:
-            pass
+            return False
         return False
 
     def __init__(
