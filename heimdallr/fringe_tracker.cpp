@@ -2,6 +2,7 @@
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
 //#define DEBUG
+//#define DEBUG_FILTER6
 #define GD_THRESHOLD 5
 #define PD_THRESHOLD 4
 #define GD_SEARCH_RESET 5
@@ -223,7 +224,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
 
     // For debugging, input a very simple I6 matrix, applicable to infinite SNR.
     // Instead of using << and .finished(), use a static array and Eigen::Map:
-    static const double I6_data[N_BL*N_BL] = {
+    /*static const double I6_data[N_BL*N_BL] = {
         0.5, 0.25, 0.25, -0.25, -0.25, 0.0,
         0.25, 0.5, 0.25, 0.25, 0.0, -0.25,
         0.25, 0.25, 0.5, 0.0, 0.25, 0.25,
@@ -231,9 +232,11 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
         -0.25, 0.0, 0.25, 0.25, 0.5, 0.25,
         0.0, -0.25, 0.25, -0.25, 0.25, 0.5
     };
-    I6 = Eigen::Map<const Eigen::Matrix<double, N_BL, N_BL>>(I6_data);
-    for (int i=0; i<(1<<N_BL); i++){
-        for (int j=0; j<N_BL; j++){
+    I6 = Eigen::Map<const Eigen::Matrix<double, N_BL, N_BL>>(I6_data); */
+    for (unsigned int i=0; i<(1<<N_BL); i++){
+    	// We only change up to 2 baselines here. 
+    	if (__builtin_popcount(i) > 2) continue;
+        for (unsigned int j=0; j<N_BL; j++){
             if (x(j) > 0){
                 if (i & (1<<j)){
                     x_try(j) = x(j) - 1.0;
@@ -257,20 +260,25 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
             i_best = i;
         }
     }
+#ifdef DEBUG_FILTER6
     // For debugging, print the best combination found, x_best, and y_best
     fmt::print("Best i {:b}\n", i_best);
     // Print Eigen vectors as comma-separated values
-    fmt::print("Best x: ");
+    fmt::print("Initial x:       ");
+    for (int k = 0; k < x.size(); ++k) {
+        fmt::print("{:.4f}{}", x(k), (k < x.size()-1) ? ", " : "\n");
+    }
+    fmt::print("Best modified x: ");
     for (int k = 0; k < x_best.size(); ++k) {
         fmt::print("{:.4f}{}", x_best(k), (k < x_best.size()-1) ? ", " : "\n");
     }
-    fmt::print("Best y: ");
+    fmt::print("Best y:           ");
     for (int k = 0; k < y_best.size(); ++k) {
         fmt::print("{:.4f}{}", y_best(k), (k < y_best.size()-1) ? ", " : "\n");
     }
-
     //y_best = I6 * x;
-    //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
+#endif
+    chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
     return y_best;
 }
 
@@ -582,7 +590,4 @@ void fringe_tracker(){
         }
     }
 }
-            //std::cout << "CP: " << cp << " Phase: " << bispectra[cp].closure_phase << std::endl;
-        }
-    }
-}
+
