@@ -259,8 +259,15 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     }
     // For debugging, print the best combination found, x_best, and y_best
     fmt::print("Best i {:b}\n", i_best);
-    fmt::print("Best x: {}\n", x_best.transpose());
-    fmt::print("Best y: {}\n", y_best.transpose());
+    // Print Eigen vectors as comma-separated values
+    fmt::print("Best x: ");
+    for (int k = 0; k < x_best.size(); ++k) {
+        fmt::print("{:.4f}{}", x_best(k), (k < x_best.size()-1) ? ", " : "\n");
+    }
+    fmt::print("Best y: ");
+    for (int k = 0; k < y_best.size(); ++k) {
+        fmt::print("{:.4f}{}", y_best(k), (k < y_best.size()-1) ? ", " : "\n");
+    }
 
     //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
