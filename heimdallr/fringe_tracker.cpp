@@ -214,12 +214,27 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     // It returns the filtered vector.
     double chi2=1e6, chi2_min=1e6;
     int i_best;
-    Eigen::Matrix<double, N_BL, 1> y_best, x_try;
+    Eigen::Matrix<double, N_BL, 1> y_best, x_try, x_best;
     Eigen::Matrix<double, N_BL, 1> y;
     // Each positive element of x could be x-1, and each negative element
     // could be x+1. If we tried every combination, we would have 2^N_BL=64 combinations.
     // The best combination has the minimum chi^2 of the modified x with 
     // respect to the final y
+
+    // For debugging, input a very simple I6 matrix, applicable to infinite SNR. In python, 
+    // it is:
+    /* array([[ 0.5 ,  0.25,  0.25, -0.25, -0.25, -0.  ],
+       [ 0.25,  0.5 ,  0.25,  0.25,  0.  , -0.25],
+       [ 0.25,  0.25,  0.5 , -0.  ,  0.25,  0.25],
+       [-0.25,  0.25,  0.  ,  0.5 ,  0.25, -0.25],
+       [-0.25, -0.  ,  0.25,  0.25,  0.5 ,  0.25],
+       [ 0.  , -0.25,  0.25, -0.25,  0.25,  0.5 ]]) */
+    I6 = (Eigen::Matrix<double, N_BL, N_BL>() << 0.5, 0.25, 0.25, -0.25, -0.25, -0.,
+        0.25, 0.5, 0.25, 0.25, 0., -0.25,
+        0.25, 0.25, 0.5, -0., 0.25, 0.25,
+        -0.25, 0.25, 0., 0.5, 0.25, -0.25,
+        -0.25, -0., 0.25, 0.25, 0.5, 0.25,
+        0., -0.25, 0.25, -0.25, 0.25, 0.5).finished();
     for (int i=0; i<(1<<N_BL); i++){
         for (int j=0; j<N_BL; j++){
             if (x(j) > 0){
@@ -241,10 +256,15 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
         if (chi2 < chi2_min){
             chi2_min = chi2;
             y_best = y;
+            x_best = x_try;
             i_best = i;
         }
     }
+    // For debugging, print the best combination found, x_best, and y_best
     fmt::print("Best i {:b}\n", i_best);
+    fmt::print("Best x: {}\n", x_best.transpose());
+    fmt::print("Best y: {}\n", y_best.transpose());
+
     //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
     return y_best;
