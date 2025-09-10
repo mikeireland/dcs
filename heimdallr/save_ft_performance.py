@@ -116,7 +116,8 @@ def test_max_rate(n_samples=10000, save_path="ft_speedtest_data.npz"):
     print(
         f"Collected {n_samples} samples in {elapsed:.3f} s ({n_samples/elapsed:.1f} Hz)"
     )
-    np.savez(save_path, **data, timestamps=timestamps)
+    if save_path is not None:
+        np.savez(save_path, **data, timestamps=timestamps)
 
 
 def query_server(zmq_req, key_list, n_samples, out_dict, label):
@@ -207,8 +208,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "speedtest":
-        save_path = args.save_path or "ft_speedtest_data.npz"
-        test_max_rate(n_samples=args.n_samples, save_path=save_path)
+        # Allow save_path to be None (no file saved)
+        test_max_rate(n_samples=args.n_samples, save_path=args.save_path)
     elif args.mode == "single":
         save_path = args.save_path or "ft_performance_data.npz"
         collect_ft_performance(
