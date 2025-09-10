@@ -52,10 +52,11 @@ class ZmqReq:
 h_z = ZmqReq("tcp://192.168.100.2:6660")
 
 keys_of_interest = [
-    "hdlr_gd_snr",
-    "hdlr_pd_snr",
-    "hdlr_dl_offload",
+    "gd_snr",
+    "pd_snr",
+    "dl_offload",
 ]
+
 
 def collect_ft_performance(
     duration_sec=60, rate_hz=1000, save_path="ft_performance_data.npz"
@@ -74,10 +75,14 @@ def collect_ft_performance(
         k: np.zeros((n_samples,) + key_shapes[k], dtype=np.array(first_reply[k]).dtype)
         for k in keys_of_interest
     }
+    # Pre-allocate timestamps array (float64, seconds since epoch, millisecond precision)
+    timestamps = np.zeros(n_samples, dtype=np.float64)
 
     start_time = time.perf_counter()
     for i in range(n_samples):
         t0 = time.perf_counter()
+        # Record timestamp as soon as possible before query (to ms precision)
+        timestamps[i] = time.time()
         reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
         if reply:
             for k in keys_of_interest:
@@ -88,7 +93,7 @@ def collect_ft_performance(
         if (time.perf_counter() - start_time) > duration_sec:
             break
 
-    np.savez(save_path, **data)
+    np.savez(save_path, **data, timestamps=timestamps)
 
 
 def test_max_rate(n_samples=10000, save_path="ft_speedtest_data.npz"):
