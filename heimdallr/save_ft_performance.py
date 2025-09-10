@@ -51,14 +51,15 @@ class ZmqReq:
 
 h_z = ZmqReq("tcp://192.168.100.2:6660")
 
+keys_of_interest = [
+    "hdlr_gd_snr",
+    "hdlr_pd_snr",
+    "hdlr_dl_offload",
+]
 
 def collect_ft_performance(
     duration_sec=60, rate_hz=1000, save_path="ft_performance_data.npz"
 ):
-    keys_of_interest = [
-        "gd_snr",
-        "pd_snr",
-    ]
 
     # Initial call to get array shapes
     first_reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
@@ -91,10 +92,7 @@ def collect_ft_performance(
 
 
 def test_max_rate(n_samples=10000, save_path="ft_speedtest_data.npz"):
-    keys_of_interest = [
-        "gd_snr",
-        "pd_snr",
-    ]
+
     first_reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
     if not first_reply:
         raise RuntimeError("Initial status reply failed.")
