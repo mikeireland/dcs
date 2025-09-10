@@ -149,6 +149,9 @@ void start_search(uint search_dl_in, double start, double stop, double rate, uin
 }
 
 void move_piezos(){
+#ifdef SIMULATE
+    return;
+#endif
     // This function sets the piezo delay line to the stored value.
     char message[20];
     char buffer[64] = { 0 };
