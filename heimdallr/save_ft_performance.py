@@ -114,6 +114,35 @@ def test_max_rate(n_samples=10000):
     )
 
 
+# # Multithreaded version to query multiple servers simultaneously
+# def query_server(zmq_req, key_list, n_samples, out_dict, label):
+#     first_reply = zmq_req.send_payload("status", is_str=True, decode_ascii=False)
+#     key_shapes = {k: np.shape(first_reply[k]) for k in key_list}
+#     data = {k: np.zeros((n_samples,) + key_shapes[k], dtype=np.array(first_reply[k]).dtype) for k in key_list}
+#     timestamps = np.zeros(n_samples, dtype=np.float64)
+#     for i in range(n_samples):
+#         reply = zmq_req.send_payload("status", is_str=True, decode_ascii=False)
+#         timestamps[i] = time.time()
+#         if reply:
+#             for k in key_list:
+#                 data[k][i] = reply[k]
+#     out_dict[label] = (data, timestamps)
+
+# # Example usage:
+# h_z1 = ZmqReq("tcp://192.168.100.2:6660")
+# h_z2 = ZmqReq("tcp://192.168.100.2:6670")
+# n_samples = 10000
+# keys1 = ["gd_snr", "pd_snr"]
+# keys2 = ["some_other_key"]
+
+# results = {}
+# t1 = threading.Thread(target=query_server, args=(h_z1, keys1, n_samples, results, "server1"))
+# t2 = threading.Thread(target=query_server, args=(h_z2, keys2, n_samples, results, "server2"))
+# t1.start()
+# t2.start()
+# t1.join()
+# t2.join()
+
 # Example usage:
 if __name__ == "__main__":
     # collect_ft_performance()
