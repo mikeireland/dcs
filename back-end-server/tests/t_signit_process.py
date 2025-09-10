@@ -14,3 +14,6 @@ def main():
         sys.exit(1)
     print("Signit process completed successfully.")
     sys.exit(0)
+
+if __name__ == "__main__":
+    main()
