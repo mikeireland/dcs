@@ -214,7 +214,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     // This function filters the input vector x using the I6gd matrix.
     // It returns the filtered vector.
     double chi2=1e6, chi2_min=1e6;
-
+    int i_best;
     Eigen::Matrix<double, N_BL, 1> y_best, x_try;
     Eigen::Matrix<double, N_BL, 1> y;
     // Each positive element of x could be x-1, and each negative element
@@ -242,8 +242,10 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
         if (chi2 < chi2_min){
             chi2_min = chi2;
             y_best = y;
+            i_best = i;
         }
     }
+    fmt::print("Best i {:b}\n", i_best);
     //y_best = I6 * x;
     //chi2 = (x - y).transpose() * W.asDiagonal() * (x - y);
     return y_best;

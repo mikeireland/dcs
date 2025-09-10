@@ -388,9 +388,15 @@ int main(int argc, char* argv[]) {
         ImageStreamIO_openIm(&master_DMs[i], ("dm" + std::to_string(i+1)).c_str());
     }*/
 
-    // Initialise the two forward Fourier transform objects, 
+    // Initialise the two forward Fourier transform objects
+#ifdef SIMULATE
     ImageStreamIO_openIm(&K1, "shei_k1");
     ImageStreamIO_openIm(&K2, "shei_k2");
+    std::cout << "Simulation mode!" << std::endl;
+#else
+    ImageStreamIO_openIm(&K1, "hei_k1");
+    ImageStreamIO_openIm(&K2, "hei_k2");
+#endif
     K1ft = new ForwardFt(&K1);
     K2ft = new ForwardFt(&K2);
 
