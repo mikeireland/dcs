@@ -1,7 +1,7 @@
 #include "heimdallr.h"
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
-//#define DEBUG
+#define DEBUG
 //#define DEBUG_FILTER6
 
 // Thresholds for fringe tracking (now variables)
@@ -445,7 +445,24 @@ void fringe_tracker(){
         // !!! cov_pd_tel unused for now but could be useful?
 
         cov_gd_tel = M_lacour_dag * I6gd * var_gd.asDiagonal() * I6gd.transpose() * M_lacour_dag.transpose();
-        //cov_pd_tel = M_lacour_dag * I6pd * cov_pd * I6pd.transpose() * M_lacour_dag.transpose();
+
+#ifdef DEBUG
+        // Print debugging info for bugshooting
+        fmt::print("var_gd diagonal: ");
+        for (int k = 0; k < var_gd.size(); ++k) {
+            fmt::print("{:.6f}{}", var_gd(k), (k < var_gd.size()-1) ? ", " : "\n");
+        }
+        fmt::print("Wgd diagonal: ");
+        for (int k = 0; k < Wgd.size(); ++k) {
+            fmt::print("{:.6f}{}", Wgd(k), (k < Wgd.size()-1) ? ", " : "\n");
+        }
+        fmt::print("I6gd matrix:\n");
+        for (int i = 0; i < I6gd.rows(); ++i) {
+            for (int j = 0; j < I6gd.cols(); ++j) {
+                fmt::print("{:.6f}{}", I6gd(i, j), (j < I6gd.cols()-1) ? ", " : "\n");
+            }
+        }
+#endif
 
         // Now project the filtered gd and pd onto telescope space.
         control_a.gd = M_lacour_dag * gd_filtered;
