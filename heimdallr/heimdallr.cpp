@@ -364,6 +364,20 @@ void set_search_params(double delta, uint turnaround){
     std::cout << "Search parameters updated: delta = " << delta << " microns, turnaround = " << turnaround << " steps" << std::endl;
 }
 
+bool foreground_in_place = false;
+
+void set_foreground(int state) {
+    // state==1: apply offsets, state==0: reverse offsets
+    static const Eigen::Vector4d fg_offset(600.0, -200.0, 200.0, 600.0);
+    if (state == 1 && !foreground_in_place) {
+        add_to_delay_lines(fg_offset);
+        foreground_in_place = true;
+    } else if (state == 0 && foreground_in_place) {
+        add_to_delay_lines(-fg_offset);
+        foreground_in_place = false;
+    }
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -396,6 +410,7 @@ COMMANDER_REGISTER(m)
     m.def("set_gd_threshold", set_gd_threshold, "Set GD SNR threshold", "value"_arg=5.0);
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
+    m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
 }
 
 int main(int argc, char* argv[]) {

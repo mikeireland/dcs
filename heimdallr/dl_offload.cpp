@@ -324,6 +324,17 @@ void dl_offload(){
         } 
         if (offloads_to_do > offloads_done) {
             offloads_done = offloads_to_do;
+            // Log delay line type and values to file with timestamp
+            {
+                std::ofstream log_file("/data/dl_offload.log", std::ios::app);
+                auto now = std::chrono::system_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                double timestamp = ms / 1000.0;
+                log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
+                    timestamp,
+                    delay_line_type,
+                    next_offload(0), next_offload(1), next_offload(2), next_offload(3));
+            }
             if (delay_line_type == "piezo") {
                 // Move the piezo delay line to the next position
                 move_piezos();
