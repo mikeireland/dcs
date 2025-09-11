@@ -253,16 +253,13 @@ void set_delay_line_type(std::string type) {
     }
 }
 
-// A wrapper for set_delay_lines that takes a vector as input
-void set_delay_lines(std::vector<double> delays_in_microns) {
+// A wrapper for set_delay_lines that takes 4 doubles as input.
+void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3=0.0, double delay4=0.0) {
     Eigen::Vector4d delays = Eigen::Vector4d::Zero();
-    for (uint i = 0; i < N_TEL; i++) {
-        if (i < delays_in_microns.size()) {
-            delays(i) = delays_in_microns[i];
-        } else {
-            delays(i) = 0.0;
-        }
-    }
+    delays(0) = delay1;
+    delays(1) = delay2;
+    delays(2) = delay3;
+    delays(3) = delay4;
     set_delay_lines(delays);
 }
 
@@ -410,7 +407,7 @@ COMMANDER_REGISTER(m)
     m.def("dark", save_dark, "Save the dark frames");
     m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
-    m.def("dls", set_delay_lines, "Set a delay line value in microns", 
+    m.def("dls", set_delay_lines_wrapper, "Set a delay line value in microns", 
         "delays"_arg=std::vector<double>(N_TEL, 0.0));
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
