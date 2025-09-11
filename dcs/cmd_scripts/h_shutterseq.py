@@ -2,6 +2,7 @@
 
 import zmq
 import dcs.ZMQutils
+import time
 
 
 class HShutterSeq:
@@ -32,12 +33,58 @@ class HShutterSeq:
         else:
             print("msg acked")
 
+    def _send_and_get_response(self, message):
+        # print("sending", message)
+        self.mds.send_string(message)
+        response = self.mds.recv_string()
+        # print("response", response)
+        return response.strip()
+
     def run(self):
 
+        # first take all shutters
+        self._send_and_get_response("h_shut close 2")
+        self._send_and_get_response("h_shut close 3")
+        self._send_and_get_response("h_shut close 4")
+        self._send_and_get_response("h_shut open 1")
+
+        time.sleep(self.beam_time)
+
+        self._send_and_get_response("h_shut close 1")
+        self._send_and_get_response("h_shut open 2")
+
+        time.sleep(self.beam_time)
+
+        self._send_and_get_response("h_shut close 2")
+        self._send_and_get_response("h_shut open 3")
+
+        time.sleep(self.beam_time)
+
+        self._send_and_get_response("h_shut close 3")
+        self._send_and_get_response("h_shut open 4")
+
+        time.sleep(self.beam_time)
+
+        # optimized - send complete when still needing darks
         msg = {
-            "origin": "s_h-shutterseq",
+            "origin": "s_h-shutter",
             "data": [
                 {"hdlr_complete": 1},
+            ],
+        }
+
+        self.send_and_recv_ack(msg)
+
+        self._send_and_get_response("h_shut close 4")
+
+        time.sleep(self.dark_time)
+
+        self._send_and_get_response("h_shut open 1,2,3,4")
+
+        msg = {
+            "origin": "s_h-shutter",
+            "data": [
+                {"hdlr_ready": 1},
             ],
         }
 
