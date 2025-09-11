@@ -256,6 +256,8 @@ class BackEndServer:
             # Process the command
             response = self.process_command(message)
 
+
+            logging.info(f"Scripts running after processing command: {self.scripts_running}")
             # Send the reply back to wag
             self.socket.send_json(response)
 
@@ -474,10 +476,30 @@ class BackEndServer:
             return default
 
         command_name = command.get("name", "").lower()
-        parameters = command.get("parameters", [])
+        # parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
-            process = subprocess.Popen(["h-autoalign", "-a", "ia", "-o", "mcs", "-b", "K1"])
+            process = subprocess.Popen(
+                ["h-autoalign", "-a", "ia", "-o", "mcs", "-b", "K1"]
+            )
             logging.info("Started s_h-autoalign script process.")
+        elif command_name == "s_h-shutter":
+            # command requires beam_time and dark_time parameters
+            if _param_value(command.get("parameters", []), "beam_time") is None:
+                return self.create_response("ERROR: beam_time parameter is required")
+            if _param_value(command.get("parameters", []), "dark_time") is None:
+                return self.create_response("ERROR: dark_time parameter is required")
+
+            process = subprocess.Popen(
+                [
+                    "h-shutter",
+                    "--beam-time",
+                    _param_value(command.get("parameters", []), "beam_time"),
+                    "--dark-time",
+                    _param_value(command.get("parameters", []), "dark_time"),
+                ],
+            )
+            logging.info("Started s_h-shutter script process.")
+
         elif command_name == "s_b-autoalign":
             script = Path(
                 "/home/asg/Progs/repos/dcs/dcs/cmd_scripts/b_autoalign_onsky.py"
@@ -583,7 +605,10 @@ class BackEndServer:
         return self.create_response("OK")
 
     def start(self, command):
-        # Implement start logic here
+        # check that the shutter script isn't running
+        if "s_h-shutter" in self.scripts_running:
+            return self.create_response("ERROR: s_h-shutter script is already running")
+
         return self.create_response("OK")
 
     def expstatus(self, command):

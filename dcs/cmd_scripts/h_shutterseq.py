@@ -13,6 +13,8 @@ class HShutterSeq:
         self.dark_time = dark_time
         self.beam_time = beam_time
 
+        self.settling_time = 1.5
+
         self.mcs_client = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:7019")
 
     def _open_mds_connection(self):
@@ -48,22 +50,22 @@ class HShutterSeq:
         self._send_and_get_response("h_shut close 4")
         self._send_and_get_response("h_shut open 1")
 
-        time.sleep(self.beam_time)
+        time.sleep(self.beam_time + self.settling_time)
 
         self._send_and_get_response("h_shut close 1")
         self._send_and_get_response("h_shut open 2")
 
-        time.sleep(self.beam_time)
+        time.sleep(self.beam_time + self.settling_time)
 
         self._send_and_get_response("h_shut close 2")
         self._send_and_get_response("h_shut open 3")
 
-        time.sleep(self.beam_time)
+        time.sleep(self.beam_time + self.settling_time)
 
         self._send_and_get_response("h_shut close 3")
         self._send_and_get_response("h_shut open 4")
 
-        time.sleep(self.beam_time)
+        time.sleep(self.beam_time + self.settling_time)
 
         # optimized - send complete when still needing darks
         msg = {
@@ -95,8 +97,8 @@ def main():
     parser.add_argument(
         "--beam_time",
         type=float,
-        default=5.0,
-        help="Time in seconds for beam shutter (default: 5.0)",
+        default=1.0,
+        help="Time in seconds for beam shutter (default: 1.0)",
     )
 
     args = parser.parse_args()
