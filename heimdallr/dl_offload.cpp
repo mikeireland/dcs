@@ -347,7 +347,7 @@ void dl_offload(){
                 std::cout << "Delay line type not recognised" << std::endl;
             }
             // Send the delay line values to the controllino
-            std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
+            //std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
         } 
     }
     close(controllinoSocket);
