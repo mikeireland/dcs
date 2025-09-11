@@ -430,7 +430,7 @@ void fringe_tracker(){
     clock_gettime(CLOCK_REALTIME, &then_all);
 #endif
         if (servo_mode == SERVO_SIMPLE){
-            pd_filtered += gd_filtered / baselines.n_gd_boxcar;
+            pd_filtered += gd_filtered * pid_settings.gd_gain;
         } else pd_filtered = filter6(I6pd, baselines.pd, Wpd);
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &now_all);

@@ -130,6 +130,7 @@ void set_servo_mode(std::string mode) {
     control_u.dl.setZero();
     control_u.piezo.setZero();
     control_u.dm_piston.setZero();
+    control_u.search_Nsteps=0;
     std::cout << "Servo mode updated to " << servo_mode << std::endl;
     return;
 }
