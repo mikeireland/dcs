@@ -242,14 +242,14 @@ void move_main_dl()
     j["command"]["parameter"] = params;
 
     std::string msg = j.dump(); // No newlines
-    fmt::print("Sent to wag: {} \n", j.dump());
+    //fmt::print("Sent to wag: {} \n", j.dump());
 
     wag_rmn_socket.send(zmq::buffer(msg), zmq::send_flags::none);
     zmq::message_t reply;
     auto result = wag_rmn_socket.recv(reply, zmq::recv_flags::none);
     if (result.has_value()) {
-        std::string reply_str(static_cast<char*>(reply.data()), reply.size());
-        fmt::print("WAG RMN reply: {}\n", reply_str);
+        //std::string reply_str(static_cast<char*>(reply.data()), reply.size());
+        //fmt::print("WAG RMN reply: {}\n", reply_str);
     } else {
         fmt::print("Timeout or error receiving reply from WAG RMN.\n");
     }
