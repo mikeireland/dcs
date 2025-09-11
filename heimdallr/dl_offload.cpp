@@ -235,24 +235,25 @@ void move_main_dl()
 
     // Fill parameters
     nlohmann::json params = nlohmann::json::array();
-    params.push_back({{"name", "opd_offset"}, {"value", {next_offload(0), next_offload(1), next_offload(2), next_offload(3)}}});
+    params.push_back({{"name", "opd_offset"}, {"value", {-next_offload(0), -next_offload(1), -next_offload(2), -next_offload(3)}}});
     // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
     params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
     params.push_back({{"name", "fringe_det"}, {"value", {1, 1, 1, 1}}});
     j["command"]["parameter"] = params;
 
     std::string msg = j.dump(); // No newlines
-    fmt::print("Sent to wag: {} \n", j.dump());
+    //fmt::print("Sent to wag: {} \n", j.dump());
 
     wag_rmn_socket.send(zmq::buffer(msg), zmq::send_flags::none);
     zmq::message_t reply;
     auto result = wag_rmn_socket.recv(reply, zmq::recv_flags::none);
     if (result.has_value()) {
-        std::string reply_str(static_cast<char*>(reply.data()), reply.size());
-        fmt::print("WAG RMN reply: {}\n", reply_str);
+        //std::string reply_str(static_cast<char*>(reply.data()), reply.size());
+        //fmt::print("WAG RMN reply: {}\n", reply_str);
     } else {
         fmt::print("Timeout or error receiving reply from WAG RMN.\n");
     }
+    last_offload = next_offload + search_offset;
 }
 
 // The main thread function
@@ -323,6 +324,17 @@ void dl_offload(){
         } 
         if (offloads_to_do > offloads_done) {
             offloads_done = offloads_to_do;
+            // Log delay line type and values to file with timestamp
+            {
+                std::ofstream log_file("/data/dl_offload.log", std::ios::app);
+                auto now = std::chrono::system_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                double timestamp = ms / 1000.0;
+                log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
+                    timestamp,
+                    delay_line_type,
+                    next_offload(0), next_offload(1), next_offload(2), next_offload(3));
+            }
             if (delay_line_type == "piezo") {
                 // Move the piezo delay line to the next position
                 move_piezos();
@@ -335,7 +347,7 @@ void dl_offload(){
                 std::cout << "Delay line type not recognised" << std::endl;
             }
             // Send the delay line values to the controllino
-            std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
+            //std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
         } 
     }
     close(controllinoSocket);

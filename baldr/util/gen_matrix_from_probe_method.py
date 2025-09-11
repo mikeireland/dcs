@@ -52,7 +52,10 @@ if args.method == 'I2A':
     for cc in np.arange(0,8,2):     
         c_in = np.median( d[1].data['DATA'][cc].reshape(d[1].header['N'],32,32),axis=0) 
         c_out = np.median( d[1].data['DATA'][cc+1].reshape(d[1].header['N'], 32,32),axis=0)
-        img_4_corners.append( abs( c_in - c_out ) )  
+        delta_i = abs( c_in - c_out )
+        # MANUAL pixel filter to set 
+        #delta_i[delta_i > 40000] = np.mean( delta_i)
+        img_4_corners.append(  delta_i )  
 
     dm_4_corners = DM_registration.get_inner_square_indices(outer_size=12, inner_offset=4) # flattened index of the DM actuator 
 

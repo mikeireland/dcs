@@ -57,3 +57,4 @@ calibration_frames/products/
 #Binaries
 baldr/baldr
 heimdallr/heimdallr
+libImageStreamIO/imft

@@ -100,6 +100,9 @@ class Heimdallr():
         self.Kl = shm("/dev/shm/hei_k2.im.shm", nosem=False)
         self.semid = 7
 
+        self.tracking_mode = "group"
+        self.abort = False
+
         self.dms = []
         self.sems = []
 
@@ -179,12 +182,14 @@ class Heimdallr():
                                           self._pd_prev_k2[ii])
 
         self.gdlay = self._gd_rad * self.gd_factor - self.gd_offset
-        self.opd_now_k1 = self.PINV.dot(self._pd_k1)
-        self.opd_now_k2 = self.PINV.dot(self._pd_k2)
+        self.opd_now_k1 = self.PINV.dot(self._pd_k1 * self.pd1_factor)
+        self.opd_now_k2 = self.PINV.dot(self._pd_k2 * self.pd2_factor)
 
-        # self.dms_cmds = self.PINV.dot(self.gdlay)
-
-        self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
+        if self.tracking_mode == "group":
+            self.dms_cmds = self.PINV.dot(self.gdlay)
+        else:
+            self.dms_cmds = self.opd_now_k1
+        # self.dms_cmds = self.opd_now_k1  # (or k2) - as a test?
         # self.dms_cmds = np.insert(self.dms_cmds, 0, 0)
         # self.dms_cmds -= self.dms_cmds[2] # everything relative to Beam 3
         # print(f"\r{self.dms_cmds}", end="")
@@ -223,7 +228,6 @@ class Heimdallr():
     # =========================================================================
     def dispatch_opds(self):
         ref_beam = 0.25 * np.sum(self.dms_cmds)
-
 
         self.disps[0] = self.dms_cmds[0]
         self.disps[1] = self.dms_cmds[1]
@@ -297,7 +301,7 @@ class Heimdallr():
         for ii, pos in enumerate(steps):
             self.move_dl(pos, beamid)
             print(f"HFO{beamid} pos = {pos:8.2f} ", end="")
-            time.sleep(0.5)
+            time.sleep(0.25)
             vis = []
             for jj in range(nav):
                 vis.append(np.abs(sensor.cvis[0]))
@@ -315,12 +319,17 @@ class Heimdallr():
             else:
                 print()
 
+            if self.abort is True:
+                time.sleep(0.5)
+                break
+
             if (global_vis < 0.8 * best_vis) and \
                (pos > x0) and (best_vis > 0.15):
                 time.sleep(0.5)
                 break
             # time.sleep(0.5)  --> wait after moving the HFO instead?
         print(f"Done! Best pos is {best_pos:.2f} um for v = {best_vis:.2f}\n")
+        print(f"The scan went from {steps[0]:.2f} um to {steps[-1]:.2f}\n")
         self.move_dl(best_pos, beamid)
 
     # =========================================================================

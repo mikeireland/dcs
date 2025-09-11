@@ -476,7 +476,7 @@ class BackEndServer:
         command_name = command.get("name", "").lower()
         parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
-            process = subprocess.Popen(["h-autoalign", "-a", "ip", "-o", "mcs"])
+            process = subprocess.Popen(["h-autoalign", "-a", "ia", "-o", "mcs", "-b", "K1"])
             logging.info("Started s_h-autoalign script process.")
         elif command_name == "s_b-autoalign":
             script = Path(
@@ -498,7 +498,7 @@ class BackEndServer:
                 ]
                 process = subprocess.Popen(cmd, cwd=str(script.parent))
                 logging.info(f"Started s_b-autoalign script for beam {beam}.")
-                time.sleep(5)
+                time.sleep(0.8)
         else:
             logging.error(f"Unknown script command '{command_name}'")
             return self.create_response(

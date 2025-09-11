@@ -1,17 +1,18 @@
 #include "heimdallr.h"
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
-#define DEBUG
+//#define DEBUG
 //#define DEBUG_FILTER6
 
 // Thresholds for fringe tracking (now variables)
-double gd_threshold = 6.0;
+double gd_threshold = 10.0;
 double pd_threshold = 4.5;
 double gd_search_reset = 10.0;
 
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
 #define GD_MAX_VAR_FOR_JUMP 0.2*0.2
+#define GD_MIN_REAL_VAR 1E-6
 
 using namespace std::complex_literals;
 
@@ -368,13 +369,13 @@ void fringe_tracker(){
             // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
             // For now... also have this feature with the Lacour algorithm.
-            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR)){
+            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR) || (servo_mode == SERVO_SIMPLE)){
                 // In fight mode, we just use the instantaneous phase, not the filtered phase.
                 // This is useful for debugging, but not for real operation.
                 // The 1.5 is a John Monnier hack, due to fmod's treatment of negative numbers.
                 baselines.pd(bl) = std::fmod( (std::arg(K1_phasor[bl])/2/M_PI - baselines.pd_av_filtered(bl) + 1.5), 1.0) - 0.5;
             } else {
-                // This is an raw (not unwrapped) phase.
+                // This is a raw (not unwrapped) phase.
                 baselines.pd(bl) = std::arg(K1_phasor[bl])/2/M_PI; 
             }
 
@@ -428,7 +429,9 @@ void fringe_tracker(){
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &then_all);
 #endif
-        pd_filtered = filter6(I6pd, baselines.pd, Wpd);
+        if (servo_mode == SERVO_SIMPLE){
+            pd_filtered += gd_filtered * pid_settings.gd_gain;
+        } else pd_filtered = filter6(I6pd, baselines.pd, Wpd);
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &now_all);
     if (then_all.tv_sec == now_all.tv_sec)
@@ -481,7 +484,7 @@ void fringe_tracker(){
 
         // Based on whether there are fringe jumps, we may want to scale the pd gain.
         for (int i=0; i<N_TEL; i++){
-            if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+            if ((cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) && (cov_gd_tel(i,i) > GD_MIN_REAL_VAR)){
                 if (std::fabs(control_a.gd(i)) > 0.5){
                     // We are more than 0.5 waves away, so we are likely to have a fringe jump.
                     // Set the pd gain scale to zero.
@@ -494,8 +497,16 @@ void fringe_tracker(){
             }
         }
 
-        // Just use a proportional servo on group delay with fixed gain.
-        if ((servo_mode==SERVO_SIMPLE) || (servo_mode==SERVO_FIGHT)){
+        if (servo_mode == SERVO_SIMPLE){
+           // Simple integrator, no fancy stuff. The group delay is added to the phase delay earlier.
+            control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+            // Center the DM piston.
+            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
+            // Limit it to no more than +/- MAX_DM_PISTON.
+            control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
+            control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
+        }
+        if (servo_mode==SERVO_FIGHT){
             // Compute the piezo control signal.
             control_u.dm_piston += (pid_settings.kp * pd_gain_scale.asDiagonal() * control_a.pd +
                 pid_settings.gd_gain * control_a.gd) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
@@ -557,12 +568,13 @@ void fringe_tracker(){
         if (time_since_last_offload_ms > offload_time_ms){
             // Irrespective of offload type, see if we need to reset the search, 
             // based on determining if we confidently have fringes with all telescopes.
-            double worst_gd_var = cov_gd_tel.diagonal().maxCoeff();
-            if (worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset){
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N_TEL, N_TEL>> eig_solver(cov_gd_tel);
+            double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
+            if ((worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
-                fmt::print("Resetting search, good fringes detected. GD vars: {:.3f} {:.3f} {:.3f} {:.3f}\n", 
-                	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
+                //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
+                //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
             } else {
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.
@@ -570,24 +582,24 @@ void fringe_tracker(){
                 unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
                 //This gives a logarithm base 2, so we search twice as far each turnaround. 
                 while (index >>= 1) ++search_level;
-                control_u.search = control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
+                control_u.search = I4_search_projection * control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
                     * search_vector_scale;
                 control_u.search_Nsteps++;
-            }
+           }
 
-            if (offload_mode == OFFLOAD_NESTED){
-                fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
-                    control_u.dl_offload(2), control_u.dl_offload(3));
+            if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
+                //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
+                //    control_u.dl_offload(2), control_u.dl_offload(3));
                 add_to_delay_lines(control_u.search - control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD) {
-                double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);
+                /*double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);
                 double o2 = -pid_settings.offload_gd_gain*control_a.gd(1) * config["wave"]["K1"].value_or(2.05);
                 double o3 = -pid_settings.offload_gd_gain*control_a.gd(2) * config["wave"]["K1"].value_or(2.05);
                 double o4 = -pid_settings.offload_gd_gain*control_a.gd(3) * config["wave"]["K1"].value_or(2.05);
                 double otot = std::fabs(o1) + std::fabs(o2) + std::fabs(o3) + std::fabs(o4);
-                fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot);
+                fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot); */
                 add_to_delay_lines(control_u.search - pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;

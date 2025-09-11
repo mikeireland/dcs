@@ -282,9 +282,9 @@ class MCSClient:
         # baldr_params = self.gather_baldr_parameters()
         # if baldr_params:
         #     all_params.extend(baldr_params)
-        hdlr_params = self.gather_hdlr_parameters()
-        if hdlr_params:
-            all_params.extend(hdlr_params)
+        #hdlr_params = self.gather_hdlr_parameters()
+        #if hdlr_params:
+        #    all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
         print("script_params", script_params)
         if script_params:

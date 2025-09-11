@@ -1248,7 +1248,7 @@ void rtc(){
         }
 
         
-        if (c_LO.cwiseAbs().maxCoeff() > 0.2) {
+        if (c_LO.cwiseAbs().maxCoeff() > 0.3) {
             // 20-8-25
             // Reset controller state
             // for (int i = 0; i < u_LO.size(); ++i) {
@@ -1267,8 +1267,9 @@ void rtc(){
 
             updateDMSharedMemory(dm_rtc, rtc_config.zeroCmd);
             ImageStreamIO_sempost(&dm_rtc0, 1);
-            std::cout << "[SAFETY] Zeroing DM due and Reset LO integrals" << std::endl;
+            std::cout << "[SAFETY] here Zeroing DM due and Reset LO integrals" << std::endl;
             std::cout << "[SAFETY] Re-locking the loop" << std::endl;
+            std::cout << " " << std::endl;
         }
 
 

@@ -316,8 +316,8 @@ class BaldrAA:
         # mcs deals with this now 
         #beam_range = f"({int(self.beam)-1}:{int(self.beam)-1})" # we specify for only one beam !
 
-        x_offset = millimeter_offsets[1] #offset are flipped! x on the detector is y on sky
-        y_offset = millimeter_offsets[0] 
+        x_offset = millimeter_offsets[0] #offset are flipped! x on the detector is y on sky
+        y_offset = millimeter_offsets[1] 
 
 
         msg = {
