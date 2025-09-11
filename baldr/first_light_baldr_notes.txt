@@ -12,8 +12,28 @@ baldr beam 1 (good) calibrated flat results on H3  saved here
 
  /home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam1/flat_dm_beam1_maskH3_11-09-2025T19.52.00.fits
 
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM1_FLAT_MAP_OFFSETS_11-09-2025T19.52.00.txt
+
+beam 2 
+/home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam2/flat_dm_beam2_maskH3_11-09-2025T22.26.05.fits
+
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM2_FLAT_MAP_OFFSETS_11-09-2025T22.26.05.txt
+
+beam 3 
+/home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam3/flat_dm_beam3_maskH3_11-09-2025T22.35.37.fits
+
+ /home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM3_FLAT_MAP_OFFSETS_11-09-2025T22.35.37.txt
+
+beam 4
+
+ /home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam4/flat_dm_beam4_maskH3_11-09-2025T22.46.55.fits
+ 
+
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM4_FLAT_MAP_OFFSETS_11-09-2025T22.46.55.txt
+
 apply via: 
 asg@mimir:~/Progs/repos/asgard-alignment$ python common/m_apply_dm_flat.py --DM_flat baldr
+
 
 
 
