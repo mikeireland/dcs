@@ -43,6 +43,9 @@ build/
 # mac garbage
 *.DS_Store
 
+*.png
+
+*__pycache__*
 # 
 calibration_frames/products/
 
