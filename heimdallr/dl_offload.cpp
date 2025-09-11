@@ -1,5 +1,6 @@
 #include "heimdallr.h"
 #include <nlohmann/json.hpp>
+#include <fstream>
 // Sleep for this long in the offload loop. Should be much shorter than the fastest offload.
 // This should instead be done with a semaphore or condition variable.
 #define OFFLOAD_USLEEP 1000
