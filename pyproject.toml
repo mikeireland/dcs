@@ -10,6 +10,7 @@ license = {file = "LICENSE"}
 [project.scripts] 
 h-autoalign = "dcs.cmd_scripts.h_autoalign:main"
 text-clients = "utils.universal_client:main"
+h-shutter = "dcs.cmd_scripts.h_shutterseq:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dcs"]

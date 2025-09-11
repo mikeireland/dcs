@@ -81,15 +81,6 @@ class HShutterSeq:
 
         self._send_and_get_response("h_shut open 1,2,3,4")
 
-        msg = {
-            "origin": "s_h-shutter",
-            "data": [
-                {"hdlr_ready": 1},
-            ],
-        }
-
-        self.send_and_recv_ack(msg)
-
 
 def main():
     import argparse
