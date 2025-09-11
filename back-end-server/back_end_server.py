@@ -451,26 +451,11 @@ class BackEndServer:
 
             try:
                 server.send_string('servo "off"')
-                reply = server.recv_string()
-                if reply.upper().startswith("ERROR"):
-                    return self.create_response(f"ERROR: hdlr response: {reply}")
                 server.send_string('foreground 0')
-                reply = server.recv_string()
-                if reply.upper().startswith("ERROR"):
-                    return self.create_response(f"ERROR: hdlr response: {reply}")
                 server.send_string('dls 0,0,0,0')
-                reply = server.recv_string()
-                if reply.upper().startswith("ERROR"):
-                    return self.create_response(f"ERROR: hdlr response: {reply}")
                 server.send_string('offload_time 10')
-                reply = server.recv_string()
-                if reply.upper().startswith("ERROR"):
-                    return self.create_response(f"ERROR: hdlr response: {reply}")
                 server.send_string('offload "gd"')
-                reply = server.recv_string()
-                if reply.upper().startswith("ERROR"):
-                    return self.create_response(f"ERROR: hdlr response: {reply}")
-                
+                                
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
