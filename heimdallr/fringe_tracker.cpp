@@ -1,11 +1,11 @@
 #include "heimdallr.h"
 //#define PRINT_TIMING
 //#define PRINT_TIMING_ALL
-#define DEBUG
+//#define DEBUG
 //#define DEBUG_FILTER6
 
 // Thresholds for fringe tracking (now variables)
-double gd_threshold = 6.0;
+double gd_threshold = 10.0;
 double pd_threshold = 4.5;
 double gd_search_reset = 10.0;
 
@@ -558,11 +558,11 @@ void fringe_tracker(){
             // Irrespective of offload type, see if we need to reset the search, 
             // based on determining if we confidently have fringes with all telescopes.
             double worst_gd_var = cov_gd_tel.diagonal().maxCoeff();
-            if (worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset){
+            if (0){ //worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
-                fmt::print("Resetting search, good fringes detected. GD vars: {:.3f} {:.3f} {:.3f} {:.3f}\n", 
-                	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
+                //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
+                //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
             } else {
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.
@@ -570,10 +570,10 @@ void fringe_tracker(){
                 unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
                 //This gives a logarithm base 2, so we search twice as far each turnaround. 
                 while (index >>= 1) ++search_level;
-                control_u.search = control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
+                control_u.search = I4_search_projection * control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
                     * search_vector_scale;
                 control_u.search_Nsteps++;
-            }
+           }
 
             if (offload_mode == OFFLOAD_NESTED){
                 fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
