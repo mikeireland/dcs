@@ -183,7 +183,8 @@ class BaldrAA:
 
             image = image / image.max()
 
-        
+        image[ image > np.quantile(image, 0.98) ] = np.median( image )
+
         # Smooth the image
         smoothed_image = gaussian_filter(image, sigma=sigma)
         
