@@ -412,7 +412,6 @@ class BackEndServer:
     def handle_hdlr_rts(self, command):
         """
         Any formatting needs to be done here
-        @mike
 
         simplest command: servo off
         """
@@ -425,9 +424,9 @@ class BackEndServer:
                 if param.get("name") == "state":
                     servo_state = param.get("value")
                     break
-            if servo_state not in ["on", "off"]:
+            if servo_state not in ["on", "off", "lacour"]:
                 return self.create_response(
-                    "ERROR: 'state' parameter must be 'on' or 'off'"
+                    "ERROR: 'state' parameter must be 'on', 'off', or 'lacour'"
                 )
 
             server = self.servers.get("hdlr")
@@ -439,6 +438,39 @@ class BackEndServer:
                 reply = server.recv_string()
                 if reply.upper().startswith("ERROR"):
                     return self.create_response(f"ERROR: hdlr response: {reply}")
+            except Exception as e:
+                return self.create_response(f"ERROR: ZMQ error: {e}")
+
+            return self.create_response("OK")
+        elif cmd_name == "hldr_fringe_search":
+            # Execute a default fringe search, which is just 'offload "gd"'
+            # plus other standard parameters.
+            server = self.servers.get("hdlr")
+            if server is None:
+                return self.create_response("ERROR: hdlr server not connected")
+
+            try:
+                server.send_string('servo "off"')
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+                server.send_string('foreground 0')
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+                server.send_string('dls 0,0,0,0')
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+                server.send_string('offload_time 10')
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+                server.send_string('offload "gd"')
+                reply = server.recv_string()
+                if reply.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {reply}")
+                
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
