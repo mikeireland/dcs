@@ -235,7 +235,7 @@ void move_main_dl()
 
     // Fill parameters
     nlohmann::json params = nlohmann::json::array();
-    params.push_back({{"name", "opd_offset"}, {"value", {next_offload(0), next_offload(1), next_offload(2), next_offload(3)}}});
+    params.push_back({{"name", "opd_offset"}, {"value", {-next_offload(0), -next_offload(1), -next_offload(2), -next_offload(3)}}});
     // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
     params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
     params.push_back({{"name", "fringe_det"}, {"value", {1, 1, 1, 1}}});
@@ -253,6 +253,7 @@ void move_main_dl()
     } else {
         fmt::print("Timeout or error receiving reply from WAG RMN.\n");
     }
+    last_offload = next_offload + search_offset;
 }
 
 // The main thread function

@@ -491,7 +491,7 @@ class HeimdallrAA:
             "data": [
                 {"hdlr_x_offset": x_offsets},
                 {"hdlr_y_offset": y_offsets},
-                {"hdlr_complete": True},
+                {"hdlr_complete": 1},
             ],
         }
 

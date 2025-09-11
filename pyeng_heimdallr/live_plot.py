@@ -57,7 +57,7 @@ class App(QtWidgets.QMainWindow):
         self.left, self.top = 0, 0
         self.width, self.height = 650, 810
         self.band = "K1"  # default band for fringe search
-
+        self.delay2display = "Grp Delay"
         self.setWindowTitle(self.title) 
         self.setGeometry(self.left, self.top, self.width, self.height)
         self.setMinimumSize(QtCore.QSize(self.width, self.height))
@@ -160,6 +160,11 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam4 = QtWidgets.QPushButton(self)
         self.pB_scan_beam4.setText("SCAN HFO4")
 
+        # ----- scanning for fringes ----
+        self.cmB_select_delay = QtWidgets.QComboBox(self)
+        self.cmB_select_delay.addItem("Grp Delay")
+        self.cmB_select_delay.addItem("Ph Delay1")
+        self.cmB_select_delay.addItem("Ph Delay2")
 
         self.data_setup()
         self.apply_layout()
@@ -213,6 +218,7 @@ class MyMainWidget(QWidget):
     # =========================================================================
     def data_setup(self):
         self.wfs = Heimdallr()
+        self.wfs.tracking_mode = "group"
 
     # =========================================================================
     def apply_layout(self):
@@ -243,6 +249,8 @@ class MyMainWidget(QWidget):
         # the TEST button
         self.pB_test.setGeometry(QRect(btx, 600, 100, clh))
 
+        self.cmB_select_delay.setGeometry(QRect(btx, 650, 100, clh))
+        
         # -------------------
         #  the live displays
         # -------------------
@@ -286,15 +294,15 @@ class MyMainWidget(QWidget):
                 [0, self.wfs.log_len], [ii, ii],
                 pen=pg.mkPen(palette6[ii], width=2), name=f"v2 #{ii+1}"))
 
-        for ii in range(3):
-            self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
-                [0, self.wfs.log_len], [ii, ii],
-                pen=pg.mkPen(palette6[ii], width=2), name=f"OPD #{ii+1}"))
-
-        # for ii in range(6):
+        # for ii in range(3):
         #     self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
         #         [0, self.wfs.log_len], [ii, ii],
         #         pen=pg.mkPen(palette6[ii], width=2), name=f"OPD #{ii+1}"))
+
+        for ii in range(6):
+            self.logplot_gdlay.append(self.gView_plot_gdlay.plot(
+                [0, self.wfs.log_len], [ii, ii],
+                pen=pg.mkPen(palette6[ii], width=2), name=f"GD #{ii+1}"))
 
         self.pB_start.clicked.connect(self.wfs_start)
         self.pB_stop.clicked.connect(self.wfs_stop)
@@ -305,6 +313,9 @@ class MyMainWidget(QWidget):
 
         self.cmB_select_filter.activated[str].connect(self.select_filter)
         self.select_filter()
+
+        self.cmB_select_delay.activated[str].connect(self.select_delay)
+        self.select_delay()
 
         self.dspB_scan_range.valueChanged.connect(self.update_scan_range)
         self.chB_fine_scan.stateChanged[int].connect(self.update_scan_step)
@@ -318,6 +329,16 @@ class MyMainWidget(QWidget):
 
         self.pB_test.clicked.connect(self.trigger_test)
         # self.pB_dec_pscale.clicked.connect(self.dec_pscale)
+
+    # =========================================================================
+    def select_delay(self):
+        self.delay2display = str(self.cmB_select_delay.currentText())
+        if self.delay2display == "Grp Delay":
+            self.wfs.tracking_mode = "group"
+        else:
+            self.wfs.tracking_mode = "phase"
+
+        # print("Switch to ", self.delay2display)
 
     # =========================================================================
     def set_gd_offset(self):
@@ -385,10 +406,19 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def refresh_plot(self):
-        # for ii in range(6):
-        #     self.logplot_gdlay[ii].setData(self.wfs.gdlays[ii])
-        for ii in range(3):
-            self.logplot_gdlay[ii].setData(self.wfs.opds[ii])
+        if self.delay2display == "Ph Delay1":
+            for ii in range(6):
+                self.logplot_gdlay[ii].setData(self.wfs.phi_k1[ii])
+
+        elif self.delay2display == "Ph Delay1":
+            for ii in range(6):
+                self.logplot_gdlay[ii].setData(self.wfs.phi_k2[ii])
+        else:
+            for ii in range(6):
+                self.logplot_gdlay[ii].setData(self.wfs.gdlays[ii])
+            
+        # for ii in range(3):
+        #     self.logplot_gdlay[ii].setData(self.wfs.opds[ii])
         for ii in range(6):
             self.logplot_vis_k1[ii].setData(self.wfs.vis_k1[ii])
             self.logplot_vis_k2[ii].setData(self.wfs.vis_k2[ii])

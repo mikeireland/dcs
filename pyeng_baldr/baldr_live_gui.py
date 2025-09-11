@@ -23,9 +23,9 @@ SERVER_ADDR_DICT = {
     2: "tcp://127.0.0.1:6663",
     3: "tcp://127.0.0.1:6664",
     4: "tcp://127.0.0.1:6665",
-}
+} #192.168.100.2
 
-# -------------------- Commander ZMQ helper --------------------
+# -------------------- Commander ZMQ helper --------------------b792fd616d7913915fcde412207a5e85c2b72963
 class CommanderClient:
     def __init__(self, addr, rcv_timeout_ms=1000, snd_timeout_ms=1000):
         self.ctx = zmq.Context.instance()

@@ -55,7 +55,7 @@ int make_image(IMAGE *imarray, fftw_complex *pupil, fftw_complex *image, fftw_pl
 
     // Make our hole phasors
     for (int kk=0; kk<4; kk++)
-        hole_phasors[kk] = cexp(0.5*I*kk*sin(phase)*wavenum_scale);
+        hole_phasors[kk] = cexp(1.2*I*kk*sin(phase)*wavenum_scale);
 
     // Fill the pupil with the holes
     for(int jj=0; jj<SZ; jj++)            // loop rows
