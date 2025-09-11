@@ -6,12 +6,13 @@ import time
 
 
 class HShutterSeq:
-    def __init__(self, dark_time, beam_time):
+    def __init__(self, dark_time, beam_time, use_splay):
 
         self.mds = self._open_mds_connection()
 
         self.dark_time = dark_time
         self.beam_time = beam_time
+        self.use_splay = use_splay
 
         self.settling_time = 1.5
 
@@ -43,6 +44,8 @@ class HShutterSeq:
         return response.strip()
 
     def run(self):
+        if self.use_splay:
+            raise NotImplementedError("Splay shutter sequence not implemented yet")
 
         # first take all shutters
         self._send_and_get_response("h_shut close 2")
@@ -100,9 +103,14 @@ def main():
         default=1.0,
         help="Time in seconds for beam shutter (default: 1.0)",
     )
+    parser.add_argument(
+        "--use_splay",
+        type=bool
+        help="Use splay shutter sequence ",
+    )
 
     args = parser.parse_args()
 
-    shutter_seq = HShutterSeq(args.dark_time, args.beam_time)
+    shutter_seq = HShutterSeq(args.dark_time, args.beam_time, args.use_splay)
 
     shutter_seq.run()
