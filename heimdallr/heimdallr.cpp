@@ -253,6 +253,19 @@ void set_delay_line_type(std::string type) {
     }
 }
 
+// A wrapper for set_delay_lines that takes a vector as input
+void set_delay_lines(std::vector<double> delays_in_microns) {
+    Eigen::Vector4d delays = Eigen::Vector4d::Zero();
+    for (uint i = 0; i < N_TEL; i++) {
+        if (i < delays_in_microns.size()) {
+            delays(i) = delays_in_microns[i];
+        } else {
+            delays(i) = 0.0;
+        }
+    }
+    set_delay_lines(delays);
+}
+
 // Add setter functions for thresholds
 void set_gd_threshold(double val) { gd_threshold = val; }
 void set_pd_threshold(double val) { pd_threshold = val; }
@@ -397,6 +410,8 @@ COMMANDER_REGISTER(m)
     m.def("dark", save_dark, "Save the dark frames");
     m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
+    m.def("dls", set_delay_lines, "Set a delay line value in microns", 
+        "delays"_arg=std::vector<double>(N_TEL, 0.0));
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
