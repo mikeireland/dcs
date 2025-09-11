@@ -270,7 +270,7 @@ def main():
         print("Usage: python universal_client.py <ip_address>")
         sys.exit(1)
     ip_addr = sys.argv[1]
-    servers = load_servers("~/Progs/repos/dcs/utils/sockets")
+    servers = load_servers("/home/asg/Progs/repos/dcs/utils/sockets")
     app = QtWidgets.QApplication(sys.argv)
     client = UniversalClient(ip_addr, servers)
     client.show()
