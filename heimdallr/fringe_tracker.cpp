@@ -369,13 +369,13 @@ void fringe_tracker(){
             // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
             // For now... also have this feature with the Lacour algorithm.
-            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR)){
+            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR) || (servo_mode == SERVO_SIMPLE)){
                 // In fight mode, we just use the instantaneous phase, not the filtered phase.
                 // This is useful for debugging, but not for real operation.
                 // The 1.5 is a John Monnier hack, due to fmod's treatment of negative numbers.
                 baselines.pd(bl) = std::fmod( (std::arg(K1_phasor[bl])/2/M_PI - baselines.pd_av_filtered(bl) + 1.5), 1.0) - 0.5;
             } else {
-                // This is an raw (not unwrapped) phase.
+                // This is a raw (not unwrapped) phase.
                 baselines.pd(bl) = std::arg(K1_phasor[bl])/2/M_PI; 
             }
 
@@ -429,7 +429,9 @@ void fringe_tracker(){
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &then_all);
 #endif
-        pd_filtered = filter6(I6pd, baselines.pd, Wpd);
+        if (servo_mode == SERVO_SIMPLE){
+            pd_filtered += gd_filtered / baselines.n_gd_boxcar;
+        } else pd_filtered = filter6(I6pd, baselines.pd, Wpd);
 #ifdef PRINT_TIMING_ALL
     clock_gettime(CLOCK_REALTIME, &now_all);
     if (then_all.tv_sec == now_all.tv_sec)
@@ -495,8 +497,16 @@ void fringe_tracker(){
             }
         }
 
-        // Just use a proportional servo on group delay with fixed gain.
-        if ((servo_mode==SERVO_SIMPLE) || (servo_mode==SERVO_FIGHT)){
+        if (servo_mode == SERVO_SIMPLE){
+           // Simple integrator, no fancy stuff. The group delay is added to the phase delay earlier.
+            control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+            // Center the DM piston.
+            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
+            // Limit it to no more than +/- MAX_DM_PISTON.
+            control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
+            control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
+        }
+        if (servo_mode==SERVO_FIGHT){
             // Compute the piezo control signal.
             control_u.dm_piston += (pid_settings.kp * pd_gain_scale.asDiagonal() * control_a.pd +
                 pid_settings.gd_gain * control_a.gd) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
@@ -577,19 +587,19 @@ void fringe_tracker(){
                 control_u.search_Nsteps++;
            }
 
-            if (offload_mode == OFFLOAD_NESTED){
-                fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
-                    control_u.dl_offload(2), control_u.dl_offload(3));
+            if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
+                //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
+                //    control_u.dl_offload(2), control_u.dl_offload(3));
                 add_to_delay_lines(control_u.search - control_u.dl_offload);
                 control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD) {
-                double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);
+                /*double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);
                 double o2 = -pid_settings.offload_gd_gain*control_a.gd(1) * config["wave"]["K1"].value_or(2.05);
                 double o3 = -pid_settings.offload_gd_gain*control_a.gd(2) * config["wave"]["K1"].value_or(2.05);
                 double o4 = -pid_settings.offload_gd_gain*control_a.gd(3) * config["wave"]["K1"].value_or(2.05);
                 double otot = std::fabs(o1) + std::fabs(o2) + std::fabs(o3) + std::fabs(o4);
-                fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot);
+                fmt::print("Adding {:.2f} {:.2f} {:.2f} {:.2f} to GD. total: {:.2f}\n", o1,o2,o3,o4,otot); */
                 add_to_delay_lines(control_u.search - pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;
