@@ -79,7 +79,7 @@ class HeimdallrAA:
         self.output = output
 
         if self.output == "mcs":
-            self.mds_client = ZmqReq("tcp://192.168.100.2:7019")
+            self.mcs_client = ZmqReq("tcp://192.168.100.2:7019")
 
     def get_init_motors_state(self):
         motors = {}
@@ -618,7 +618,7 @@ class HeimdallrAA:
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mds_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send offsets to MCS")
