@@ -5,20 +5,16 @@ import json
 from PyQt5 import QtWidgets, QtGui, QtCore
 
 
-# Load server list from sockets file
-def load_servers(filename):
-    servers = []
-    with open(filename, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Expecting format: name port
-            parts = line.split()
-            if len(parts) == 2:
-                name, port = parts
-                servers.append((name, int(port)))
-    return servers
+sockets = [
+    ("cam_server", 6667),
+    ("DM_server", 6666),
+    ("heimdallr", 6660),
+    ("baldr1", 6662),
+    ("baldr2", 6663),
+    ("baldr3", 6664),
+    ("baldr4", 6665),
+]
+
 
 
 class HistoryLineEdit(QtWidgets.QLineEdit):
@@ -270,7 +266,7 @@ def main():
         print("Usage: python universal_client.py <ip_address>")
         sys.exit(1)
     ip_addr = sys.argv[1]
-    servers = load_servers("/home/asg/Progs/repos/dcs/utils/sockets")
+    servers = sockets
     app = QtWidgets.QApplication(sys.argv)
     client = UniversalClient(ip_addr, servers)
     client.show()
