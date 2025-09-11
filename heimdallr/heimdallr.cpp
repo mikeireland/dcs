@@ -368,7 +368,7 @@ bool foreground_in_place = false;
 
 void set_foreground(int state) {
     // state==1: apply offsets, state==0: reverse offsets
-    static const Eigen::Vector4d fg_offset(600.0, -200.0, 200.0, 600.0);
+    static const Eigen::Vector4d fg_offset(-600.0, -200.0, 200.0, 600.0);
     if (state == 1 && !foreground_in_place) {
         add_to_delay_lines(fg_offset);
         foreground_in_place = true;
