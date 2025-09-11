@@ -12,6 +12,7 @@ double gd_search_reset = 10.0;
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
 #define GD_MAX_VAR_FOR_JUMP 0.2*0.2
+#define GD_MIN_REAL_VAR 1E-6
 
 using namespace std::complex_literals;
 
@@ -481,7 +482,7 @@ void fringe_tracker(){
 
         // Based on whether there are fringe jumps, we may want to scale the pd gain.
         for (int i=0; i<N_TEL; i++){
-            if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+            if ((cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) && (cov_gd_tel(i,i) > GD_MIN_REAL_VAR)){
                 if (std::fabs(control_a.gd(i)) > 0.5){
                     // We are more than 0.5 waves away, so we are likely to have a fringe jump.
                     // Set the pd gain scale to zero.
@@ -557,8 +558,9 @@ void fringe_tracker(){
         if (time_since_last_offload_ms > offload_time_ms){
             // Irrespective of offload type, see if we need to reset the search, 
             // based on determining if we confidently have fringes with all telescopes.
-            double worst_gd_var = cov_gd_tel.diagonal().maxCoeff();
-            if (0){ //worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset){
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N_TEL, N_TEL>> eig_solver(cov_gd_tel);
+            double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
+            if ((worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset) && (cov_gd_tel.diagonal().minCoeff() > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
                 //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
