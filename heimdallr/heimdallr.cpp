@@ -160,6 +160,7 @@ void set_offload_mode(std::string mode) {
         std::cout << "Offload mode not recognised" << std::endl;
         return;
     }
+    control_u.search_Nsteps=0;
     std::cout << "Offload mode updated to " << offload_mode << std::endl;
     return;
 }
