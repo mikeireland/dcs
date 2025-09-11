@@ -36,7 +36,7 @@ ForwardFt *K1ft, *K2ft;
 bool keep_offloading = true;
 int offloads_to_do = 0;
 Eigen::Vector4d search_offset = Eigen::Vector4d::Zero();
-std::string delay_line_type="piezo";
+std::string delay_line_type="rmn";
 
 IMAGE DMs[N_TEL];
 IMAGE master_DMs[N_TEL];
