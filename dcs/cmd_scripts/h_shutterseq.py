@@ -33,12 +33,19 @@ class HShutterSeq:
             print("msg acked")
 
     def run(self):
-        pass
+
+        msg = {
+            "origin": "s_h-shutterseq",
+            "data": [
+                {"hdlr_complete": 1},
+            ],
+        }
+
+        self.send_and_recv_ack(msg)
 
 
 def main():
     import argparse
-    import time
 
     parser = argparse.ArgumentParser(description="Conduct a heimdallr shutter sequence")
     parser.add_argument(
