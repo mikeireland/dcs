@@ -44,6 +44,13 @@ def save_array_fits(arr, save_path, header_dict):
 
 args = parse_args()
 
+if args.method == 'TT_OL_img':
+    d = fits.open( args.input_file )
+
+    for cc in np.arange(0,4,2): 
+        c_in = np.median( d[1].data['DATA'][cc].reshape(d[1].header['N'],32,32),axis=0) 
+        c_out = np.median( d[1].data['DATA'][cc+1].reshape(d[1].header['N'], 32,32),axis=0)
+        delta_i = abs( c_in - c_out )
 if args.method == 'I2A':
     
     d = fits.open( args.input_file )

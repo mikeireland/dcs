@@ -136,7 +136,7 @@ class Heimdallr():
         self.cloop_on = False
         self.disps = np.zeros(self.ndm)
 
-        self.gain = 0.1
+        self.gain = 0.2
 
     # =========================================================================
     def calc_wfs_data(self):
@@ -321,6 +321,7 @@ class Heimdallr():
 
             if self.abort is True:
                 time.sleep(0.5)
+                self.abort = False
                 break
 
             if (global_vis < 0.8 * best_vis) and \
