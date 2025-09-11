@@ -55,7 +55,7 @@ class App(QtWidgets.QMainWindow):
         super().__init__()
         self.title = 'Asgard Lab Fringe Monitor'
         self.left, self.top = 0, 0
-        self.width, self.height = 650, 810
+        self.width, self.height = 750, 810
         self.band = "K1"  # default band for fringe search
         self.delay2display = "Grp Delay"
         self.setWindowTitle(self.title) 
@@ -160,11 +160,22 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam4 = QtWidgets.QPushButton(self)
         self.pB_scan_beam4.setText("SCAN HFO4")
 
+        self.pB_jump_pos = []
+        self.pB_jump_neg = []
+        for ii in range(4):
+            self.pB_jump_pos.append(QtWidgets.QPushButton(self))
+            self.pB_jump_neg.append(QtWidgets.QPushButton(self))
+            self.pB_jump_pos[ii].setText("JUMP+")
+            self.pB_jump_neg[ii].setText("JUMP-")
+
         # ----- scanning for fringes ----
         self.cmB_select_delay = QtWidgets.QComboBox(self)
         self.cmB_select_delay.addItem("Grp Delay")
         self.cmB_select_delay.addItem("Ph Delay1")
         self.cmB_select_delay.addItem("Ph Delay2")
+
+        self.pB_abort = QtWidgets.QPushButton(self)
+        self.pB_abort.setText("ABORT")
 
         self.data_setup()
         self.apply_layout()
@@ -226,7 +237,8 @@ class MyMainWidget(QWidget):
         plw = 500  # plot width
         plh = 250  # plot height
         btx = plw + 20  # buttons x position
-        
+        btx2 = plw + 140
+
         self.pB_start.setGeometry(QRect(btx, 30, 100, clh))
         self.pB_cloop.setGeometry(QRect(btx, 60, 100, clh))
         self.pB_oloop.setGeometry(QRect(btx, 90, 100, clh))
@@ -242,9 +254,16 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam2.setGeometry(QRect(btx, 320, 100, clh))
         self.pB_scan_beam3.setGeometry(QRect(btx, 350, 100, clh))
         self.pB_scan_beam4.setGeometry(QRect(btx, 380, 100, clh))
+        self.pB_abort.setGeometry(QRect(btx, 410, 100, clh))
 
-        self.pB_gd_set_offset.setGeometry(QRect(btx, 440, 100, clh))
-        self.pB_gd_fgt_offset.setGeometry(QRect(btx, 470, 100, clh))
+        for ii in range(4):
+            self.pB_jump_pos[ii].setGeometry(
+                QRect(btx2, 290 + 30 * ii, 50, clh))
+            self.pB_jump_neg[ii].setGeometry(
+                QRect(btx2 + 50, 290 + 30 * ii, 50, clh))
+
+        self.pB_gd_set_offset.setGeometry(QRect(btx, 470, 100, clh))
+        self.pB_gd_fgt_offset.setGeometry(QRect(btx, 500, 100, clh))
 
         # the TEST button
         self.pB_test.setGeometry(QRect(btx, 600, 100, clh))
@@ -323,12 +342,35 @@ class MyMainWidget(QWidget):
         self.pB_scan_beam2.clicked.connect(self.scan_beam2)
         self.pB_scan_beam3.clicked.connect(self.scan_beam3)
         self.pB_scan_beam4.clicked.connect(self.scan_beam4)
+        self.pB_abort.clicked.connect(self.abort_action)
+
+        for ii in range(4):
+            self.pB_jump_pos[ii].clicked.connect(self.jump_HFO_pos(ii))
+            self.pB_jump_neg[ii].clicked.connect(self.jump_HFO_neg(ii))
 
         self.pB_gd_set_offset.clicked.connect(self.set_gd_offset)
         self.pB_gd_fgt_offset.clicked.connect(self.fgt_gd_offset)
 
         self.pB_test.clicked.connect(self.trigger_test)
         # self.pB_dec_pscale.clicked.connect(self.dec_pscale)
+
+    # =========================================================================
+    def jump_HFO_pos(self, ii):
+        def jump():
+            pos = self.wfs.get_dl_pos(ii + 1)
+            new_pos = pos + 2 * self.srange_val
+            print(f"HFO{ii+1} = {pos:.2f} um - jump to {new_pos:.2f} um")
+            self.wfs.move_dl(new_pos, ii+1)
+        return jump
+
+    # =========================================================================
+    def jump_HFO_neg(self, ii):
+        def jump():
+            pos = self.wfs.get_dl_pos(ii + 1)
+            new_pos = pos - 2 * self.srange_val
+            print(f"HFO{ii+1} = {pos:.2f} um - jump to {new_pos:.2f} um")
+            self.wfs.move_dl(new_pos, ii+1)
+        return jump
 
     # =========================================================================
     def select_delay(self):
@@ -354,6 +396,11 @@ class MyMainWidget(QWidget):
     def select_filter(self):
         self.band = str(self.cmB_select_filter.currentText())
         # print(self.band)
+        pass
+
+    # =========================================================================
+    def abort_action(self):
+        self.wfs.abort = True
         pass
 
     # =========================================================================
@@ -410,7 +457,7 @@ class MyMainWidget(QWidget):
             for ii in range(6):
                 self.logplot_gdlay[ii].setData(self.wfs.phi_k1[ii])
 
-        elif self.delay2display == "Ph Delay1":
+        elif self.delay2display == "Ph Delay2":
             for ii in range(6):
                 self.logplot_gdlay[ii].setData(self.wfs.phi_k2[ii])
         else:

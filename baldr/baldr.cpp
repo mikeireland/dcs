@@ -4804,6 +4804,21 @@ static nlohmann::json build_probe_args_for_method(const std::string& method) {
     }
 
 
+
+
+    if (method == "TT_OL_img") {
+
+        json aberr = json::array();
+
+        for (int iii : {0,1}) { // the four inner corners (4 rows in)
+            aberr.push_back(json::array({iii,  0.03}));
+            aberr.push_back(json::array({iii, -0.03}));
+        }
+        return json::array({ aberr, "zonal", "OL", "img", 10, 5000 });
+    }
+
+
+
     if (method == "I2A_CL"){
         
         // building interaction matrix for Baldr 
