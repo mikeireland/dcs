@@ -1,3 +1,5 @@
+# magic line for install is 
+# pip install -e . --no-index --find-links ~/Downloads
 [project]
 name = "dcs"
 version = "0.0.1"
