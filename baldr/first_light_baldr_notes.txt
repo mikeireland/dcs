@@ -27,7 +27,7 @@ beam 3
 beam 4
 
  /home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam4/flat_dm_beam4_maskH3_11-09-2025T22.46.55.fits
- 
+
 
 /home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM4_FLAT_MAP_OFFSETS_11-09-2025T22.46.55.txt
 
@@ -35,6 +35,35 @@ apply via:
 asg@mimir:~/Progs/repos/asgard-alignment$ python common/m_apply_dm_flat.py --DM_flat baldr
 
 
+Running build_IM.py with:
+  cam_fps      = 1000
+  cam_gain     = 20
+  beam_id      = 1,2,3,4
+  poke_amp     = 0.05
+  LO           = 2
+  phasemask    = H3
+  signal_space = dm
+  DM_flat      = baldr
+
+python calibration/build_baldr_control_matrix.py --beam # --phasemask H3
+
+calibrate H5 too 
+
+Running build_IM.py with:
+  cam_fps      = 1000
+  cam_gain     = 20
+  beam_id      = 1,2,3,4
+  poke_amp     = 0.05
+  LO           = 2
+  phasemask    = H3
+  signal_space = dm
+  DM_flat      = baldr
+
+
+python calibration/build_baldr_control_matrix.py --beam # --phasemask H5
+
+(asgard) (asgard) asg@mimir:~/Progs/repos/asgard-alignment$ ./calibration/copy_configs_to_stable_versions.sh bright #
+Copied /usr/local/etc/baldr/baldr_config_4.toml → /usr/local/etc/baldr/rtc_config/2025-09-11/baldr_config_#_bright_2025-09-11T23-25-16.toml
 
 
 updated live baldr gui : tested with no camera, seems ok. NEED TO TEST WITH REAL FRAMES

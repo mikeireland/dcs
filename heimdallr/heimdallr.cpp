@@ -408,7 +408,7 @@ COMMANDER_REGISTER(m)
     m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
     m.def("dls", set_delay_lines_wrapper, "Set a delay line value in microns", 
-        "delays"_arg=std::vector<double>(N_TEL, 0.0));
+        "dl1"_arg, "dl2"_arg, "dl3"_arg, "dl4"_arg);
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);

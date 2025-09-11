@@ -200,8 +200,7 @@ class BackEndServer:
         self,
         port=7002,
         server_ports={
-            # "hdlr": 6660,
-            "hdlr": 6650,
+            "hdlr": 6660,
             "hdlr_align": 6661,
             "baldr1": 6662,
             "baldr2": 6663,
@@ -451,10 +450,20 @@ class BackEndServer:
 
             try:
                 server.send_string('servo "off"')
+                server.recv_string()
+                time.sleep(0.2)
+                import pdb; pdb.set_trace()
                 server.send_string('foreground 0')
+                server.recv_string()
+                time.sleep(0.2)
                 server.send_string('dls 0,0,0,0')
+                server.recv_string()
+                time.sleep(0.2)
                 server.send_string('offload_time 10')
+                server.recv_string()
+                time.sleep(0.2)
                 server.send_string('offload "gd"')
+                server.recv_string()
                                 
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
