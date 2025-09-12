@@ -548,13 +548,13 @@ class BaldrAdapter(CppServerAdapter):
         # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs
         rep = self.z.send_payload("status", is_str=True, decode_ascii=False)
 
-        if not rep or rep.get("ok") is False:
+        if not rep:
             return None
 
         # ---- Map server reply -> BaldrStatus  ----
         # Below assumes the server returns a dict with keys matching your fields.
         try:
-            st = rep["status"]
+            st = rep
             # Use dataclass fields and kwargs to construct BaldrTscopeStatus
             field_names = {f.name for f in fields(BaldrTscopeStatus)}
             kwargs = {}
