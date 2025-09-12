@@ -96,7 +96,7 @@ class HShutterSeq:
 
         self.send_and_recv_ack(msg)
 
-def main()
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Conduct a heimdallr shutter sequence")
@@ -122,7 +122,7 @@ def main()
         "--test_mcs",
         type=bool,
         default=False,
-        help="Use splay shutter sequence ",
+        help="test mcs connection, sends hdlr complete only",
     )
 
     args = parser.parse_args()
