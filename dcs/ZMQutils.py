@@ -1,6 +1,7 @@
 import json
 import zmq
 from typing import Any, Dict, Optional
+import logging
 
 
 class ZmqReq:
@@ -28,14 +29,15 @@ class ZmqReq:
             self.s.send_string(payload)
 
         try:
-
             if decode_ascii:
                 res = self.s.recv().decode("ascii")[:-1]
             else:
                 res = self.s.recv_string()
 
             return json.loads(res)
-        except zmq.error.Again:
+        except zmq.error.Again as e:
+            logging.error(f"ZMQ error occurred: {e}")
             return None
         except json.decoder.JSONDecodeError:
+            logging.error(f"JSON decode error occurred")
             return None

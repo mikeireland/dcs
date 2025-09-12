@@ -29,7 +29,9 @@ class HShutterSeq:
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mcs_client.send_payload(msg)
+        self.mcs_client.send_payload(msg)
+        # recv ack
+        resp = self.mcs_client.recv_payload()
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send complete to MCS")
