@@ -279,12 +279,12 @@ class MCSClient:
     def publish_all_to_wag(self):
         """Publish all parameters (baldr, hdlr, script) in a single message."""
         all_params = []
-        # baldr_params = self.gather_baldr_parameters()
-        # if baldr_params:
-        #     all_params.extend(baldr_params)
-        # hdlr_params = self.gather_hdlr_parameters()
-        # if hdlr_params:
-        #    all_params.extend(hdlr_params)
+        baldr_params = self.gather_baldr_parameters()
+        if baldr_params:
+            all_params.extend(baldr_params)
+        hdlr_params = self.gather_hdlr_parameters()
+        if hdlr_params:
+            all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
         print("script_params", script_params)
         if script_params:
@@ -326,25 +326,25 @@ class MCSClient:
         if not ok:
             logging.warning(f"failed to write script data to wag: {msg}")
 
-    def publish_hdlr_databases_to_wag(self):
-        self.dcs_adapters["HDLR"].fetch()
+    # def publish_hdlr_databases_to_wag(self):
+    #     self.dcs_adapters["HDLR"].fetch()
 
-        Hdlr_parameters = fields(BaldrTscopeStatus)
+    #     Hdlr_parameters = fields(HeimdallrStatus)
 
-        body = self.ESO_format([])
+    #     body = self.ESO_format([])
 
-        # append to body["parameter"]
-        for param in Hdlr_parameters:
-            values = self.dcs_adapters["HDLR"][param]  # is already a list
-            prop = {}
-            prop["name"] = f"hdlr_{param}"
-            prop["range"] = "(0:3)"
-            prop["value"] = values
-            body["parameter"].append(prop)
+    #     # append to body["parameter"]
+    #     for param in Hdlr_parameters:
+    #         values = self.dcs_adapters["HDLR"][param]  # is already a list
+    #         prop = {}
+    #         prop["name"] = f"hdlr_{param}"
+    #         prop["range"] = "(0:3)"
+    #         prop["value"] = values
+    #         body["parameter"].append(prop)
 
-        ok, msg = self._send(body)
-        if not ok:
-            logging.warning(f"failed to write script data to wag: {msg}")
+    #     ok, msg = self._send(body)
+    #     if not ok:
+    #         logging.warning(f"failed to write script data to wag: {msg}")
 
     def publish_script_data(self):
         if self.script_z.has_new_data:
@@ -503,7 +503,7 @@ class BaldrTscopeStatus:
     frequency: float
     configured: int
     ctrl_type: str
-    complete: bool
+    # complete: bool
     config_file: str
     inj_enabled: int
     auto_loop: int
@@ -512,8 +512,8 @@ class BaldrTscopeStatus:
     close_on_strehl: float
     open_on_strehl: float
     TT_offsets: int
-    x_pup_offset: float
-    y_pup_offset: float
+    # x_pup_offset: float
+    # y_pup_offset: float
 
 
 class CppServerAdapter:
