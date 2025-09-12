@@ -562,7 +562,7 @@ class BaldrAdapter(CppServerAdapter):
             for name in field_names:
                 if name in st:
                     kwargs[name] = st[name]
-            self.cur_status = BaldrTscopeStatus(**kwargs)
+            return BaldrTscopeStatus(**kwargs)
         except KeyError as e:
             logging.warning(f"KeyError in BaldrAdapter.fetch(): {e}")
             return None
