@@ -233,6 +233,9 @@ class BackEndServer:
                 continue
         logging.info("All server connections initialized.")
 
+        #Store total requested integration time
+        self.itime=0
+
         self.scripts_running = {}
 
     def run(self):
@@ -412,7 +415,7 @@ class BackEndServer:
                     # Non-JSON reply; consider it error only if it contains 'error'
                     if isinstance(raw, str) and "error" in raw.lower():
                         ok = False
-                    details = raw
+                    details = rawsend to Heimdallr the integration time.
 
             if ok:
                 results.append(f"{key}: OK")
@@ -540,9 +543,9 @@ class BackEndServer:
             process = subprocess.Popen(
                 [
                     "h-shutter",
-                    "--beam-time",
+                    "--beam_time",
                     _param_value(command.get("parameters", []), "beam_time"),
-                    "--dark-time",
+                    "--dark_time",
                     _param_value(command.get("parameters", []), "dark_time"),
                 ],
             )
@@ -593,6 +596,8 @@ class BackEndServer:
         # Implement setup logic here
         parameters = command.get("parameters", [])
         # Validate and process parameters as needed
+        dit = 0
+        ndit = 0
 
         for param in parameters:
             name = param.get("name")
@@ -600,12 +605,13 @@ class BackEndServer:
             logging.info(f"Setup parameter: {name} = {value}")
             # Add logic to handle each parameter as needed
             # DIT, NDIT, NWORESET, etc.
-            if name == "DET1.DIT":
+            if name == "DET.DIT":
                 # Handle DIT parameter
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-            elif name == "DET1.NWORESET":
+                dit = 0
+            elif name == "DET.NWORESET":
                 try:
                     value = int(value)
                 except ValueError:
@@ -630,7 +636,7 @@ class BackEndServer:
                     return self.create_response(
                         f"ERROR: NWORESET value {value} is higher than the max (500)"
                     )
-            elif name == "DET1.GAIN":
+            elif name == "DET.GAIN":
                 try:
                     value = int(value)
                 except ValueError:
@@ -641,14 +647,16 @@ class BackEndServer:
                     )
                 self.servers["cam_server"].send_string(f"set_gain {value}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-            elif name == "DET1.NDIT":
-                logging.info(
-                    "DIT command should set the number of integrations in a save file - not implemented"
-                )
+            elif name == "DET.NDIT":
+                ndit = value
             else:
                 # Handle other parameters as needed
                 logging.warning(f"Unknown parameter: {name} = {value}")
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
+
+        # If both NDIT and DIT are non-zero, we compute the total integration time.
+        if ((dit != 0) and (ndit != 0)):
+            self.itime = dit * ndit
 
         return self.create_response("OK")
 
@@ -656,11 +664,18 @@ class BackEndServer:
         # check that the shutter script isn't running
         if "s_h-shutter" in self.scripts_running:
             return self.create_response("ERROR: s_h-shutter script is already running")
+        
+        # Set the requested total integration time of Heimdallr, by sending "itime XXX", 
+        # where XXX = self.itime. !!!
 
         return self.create_response("OK")
 
     def expstatus(self, command):
         # Implement expstatus logic here
+
+        # Send "expstatus" query to heimdallr, and return if the exposure is complete !!!
+        # response is "integrating" or "success" or "failure" !!!
+
         return self.create_response("OK")
 
 

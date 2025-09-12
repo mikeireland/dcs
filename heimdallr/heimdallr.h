@@ -44,7 +44,7 @@
 // Group delay has naturally an SNR that is 2.5 times lower, so the SNR ratio is 0.2/0.04*2.5 = 12.5
 // ... this means we need 12.5^2 = ~150 times more frames to average for group delay than for
 // phase delay.
-#define MAX_N_GD_BOXCAR 32
+#define MAX_N_GD_BOXCAR 32 
 #define N_TO_JUMP 10 // Number of frames to wait before checking for a phase jump
 #define MAX_N_BS_BOXCAR 64   // Maximum number of frames to average for bispectrum
 #define MAX_N_PS_BOXCAR 64   // Maximum number of frames to average for power spectrum

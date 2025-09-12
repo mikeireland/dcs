@@ -86,8 +86,17 @@ class HShutterSeq:
 
         self._send_and_get_response("h_shut open 1,2,3,4")
 
+    def test_mcs(self):
+        msg = {
+            "origin": "s_h-shutter",
+            "data": [
+                {"hdlr_complete": 1},
+            ],
+        }
 
-def main():
+        self.send_and_recv_ack(msg)
+
+def main()
     import argparse
 
     parser = argparse.ArgumentParser(description="Conduct a heimdallr shutter sequence")
@@ -109,8 +118,17 @@ def main():
         help="Use splay shutter sequence ",
     )
 
+    parser.add_argument(
+        "--test_mcs",
+        type=bool,
+        default=False,
+        help="Use splay shutter sequence ",
+    )
+
     args = parser.parse_args()
 
     shutter_seq = HShutterSeq(args.dark_time, args.beam_time, args.use_splay)
 
+    if args.test_mcs:
+        
     shutter_seq.run()
