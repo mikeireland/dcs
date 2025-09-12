@@ -5,7 +5,7 @@
 #include <unistd.h>
 // Commander struct definitions for json. This is in a separate file to keep the main code clean.
 #include "commander_structs.h"
-
+using namespace std::complex_literals;
 extern "C" {
 #include <b64/cencode.h> // Base64 encoding, in C so Frantz can see how it works.
 }
@@ -390,6 +390,20 @@ void set_foreground(int state) {
     }
 }
 
+void tweak_gd_offsets(double offset0, double offset1, double offset3) {
+    // Add offsets to beams 0, 1, and 3, then project onto baseline space
+    Eigen::Vector4d tel_offsets = Eigen::Vector4d::Zero();
+    tel_offsets(0) = offset0;
+    tel_offsets(1) = offset1;
+    tel_offsets(3) = offset3;
+    Eigen::Matrix<double, N_BL, 1> bl_offsets = M_lacour * tel_offsets;
+    baseline_mutex.lock();
+    for (int bl = 0; bl < N_BL; bl++) {
+        baselines.gd_phasor_offset(bl) *= std::exp(-1.0i * bl_offsets(bl));
+    }
+    baseline_mutex.unlock();
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -425,6 +439,9 @@ COMMANDER_REGISTER(m)
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
+    m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 0,1,3 and project to baseline space", 
+        "offset0"_arg=0.0, "offset1"_arg=0.0, "offset3"_arg=0.0);
+    
 }
 
 int main(int argc, char* argv[]) {
