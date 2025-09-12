@@ -635,6 +635,7 @@ void fringe_tracker(){
                 add_to_delay_lines(control_u.search - pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;
+            sem_post(&sem_offload);
         }
    
         // Now we sanity check by computing the bispectrum and closure phases.

@@ -12,7 +12,6 @@ int controllinoSocket;
 Eigen::Vector4d next_offload;
 // This is non-zero to make sure if using the Piezos the DLs are centred.
 Eigen::Vector4d last_offload = Eigen::Vector4d::Constant(0.01);
-int offloads_done = 0;
 int search_ix = 0;
 int search_length = 0;
 int search_dl = 0;
@@ -100,7 +99,6 @@ std::string send_mds_cmd(const std::string& message) {
 // Set the delay line offsets (from the servo loop). Units are microns of OPD.
 void set_delay_lines(Eigen::Vector4d dl) {
     next_offload=dl;
-    offloads_to_do++;
 }
 
 void add_to_delay_lines(Eigen::Vector4d dl) {
@@ -122,7 +120,6 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
         if (total_offload < HFO_DEADBAND) return;
     }
     next_offload += dl;
-    offloads_to_do++;
 }
 
 // Set one delay line value. 
@@ -134,7 +131,6 @@ void set_delay_line(int dl, double value) {
         return;
     }
     next_offload[dl-1] = value;
-    offloads_to_do++;
 }
 
 void start_search(uint search_dl_in, double start, double stop, double rate, uint dt_ms, double threshold) {
@@ -192,7 +188,6 @@ void move_hfo(){
     }
     last_hfo_offset = std::chrono::high_resolution_clock::now();
 }
-
 
 /* Example of the RMN relay command to wag
 {"command" :
@@ -259,7 +254,7 @@ void move_main_dl()
 // The main thread function
 void dl_offload(){
     // Initialize semaphore for offload timing
-    //sem_init(&sem_offload, 0, 0);
+    sem_init(&sem_offload, 0, 0);
 
     // Try to connect just once to WAG RMN.
     init_wag_rmn();
@@ -276,9 +271,9 @@ void dl_offload(){
     auto last_search_time = std::chrono::high_resolution_clock::now();
 
     while (keep_offloading) {
-        // Wait for the next offload - nominally 200Hz max
-        //sem_wait(&sem_offload);
-        usleep(1000);
+        // Wait for the next offload - nominally 200Hz max, but controlled
+        // by the fringe tracker thread.
+        sem_wait(&sem_offload);
 
         // Check if we need to zero the dl_offload
         if (zero_offload) {
@@ -321,38 +316,33 @@ void dl_offload(){
                     // Move the piezo to the next position
                     next_offload(search_dl) = search_start + search_ix * search_delta;
                     // Indicate that there is another piezo offload to do.
-                    offloads_to_do++;
                     search_ix++;
                 }
             }
         } 
-        if (offloads_to_do > offloads_done) {
-            offloads_done = offloads_to_do;
-            // Log delay line type and values to file with timestamp
-            {
-                std::ofstream log_file("/data/dl_offload.log", std::ios::app);
-                auto now = std::chrono::system_clock::now();
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-                double timestamp = ms / 1000.0;
-                log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
-                    timestamp,
-                    delay_line_type,
-                    next_offload(0), next_offload(1), next_offload(2), next_offload(3));
-            }
-            if (delay_line_type == "piezo") {
-                // Move the piezo delay line to the next position
-                move_piezos();
-            } else if (delay_line_type == "hfo") {
-                // Move the delay line to the next position
-                move_hfo();
-            } else if (delay_line_type == "rmn") {
-                move_main_dl();
-            } else {
-                std::cout << "Delay line type not recognised" << std::endl;
-            }
-            // Send the delay line values to the controllino
-            //std::cout << "Sent delay line values: " << next_offload.transpose() << std::endl;
-        } 
+        // Do the offload! It is up to the specific function to check if the offload
+        // is significant enough to do - only if so, it will move and 
+        // update last_offload.
+        if (delay_line_type == "piezo") {
+            // Move the piezo delay line to the next position
+            move_piezos();
+        } else if (delay_line_type == "hfo") {
+            // Move the delay line to the next position
+            move_hfo();
+        } else if (delay_line_type == "rmn") {
+            move_main_dl();
+        } else {
+            std::cout << "Delay line type not recognised" << std::endl;
+        }
+        // Log delay line type and values to file with timestamp
+        std::ofstream log_file("/data/dl_offload.log", std::ios::app);
+        auto now = std::chrono::system_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        double timestamp = ms / 1000.0;
+        log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
+            timestamp,
+            delay_line_type,
+            next_offload(0), next_offload(1), next_offload(2), next_offload(3));        
     }
     close(controllinoSocket);
 }

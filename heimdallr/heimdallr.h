@@ -220,7 +220,6 @@ extern std::mutex baseline_mutex, beam_mutex;
 extern std::atomic<bool> zero_offload;
 // DL offload variables
 extern bool keep_offloading;
-extern int offloads_to_do;
 extern std::string delay_line_type;
 extern Eigen::Vector4d search_offset;
 extern Eigen::Vector4d last_offload;
@@ -285,6 +284,7 @@ void set_delay_lines(Eigen::Vector4d dl);
 extern ForwardFt *K1ft, *K2ft;
 
 // Delay line offloads
+sem_t sem_offload;
 void set_delay_lines(Eigen::Vector4d dl);
 void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);
