@@ -415,7 +415,7 @@ class BackEndServer:
                     # Non-JSON reply; consider it error only if it contains 'error'
                     if isinstance(raw, str) and "error" in raw.lower():
                         ok = False
-                    details = rawsend to Heimdallr the integration time.
+                    details = raw # send to Heimdallr the integration time.
 
             if ok:
                 results.append(f"{key}: OK")
