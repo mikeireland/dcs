@@ -101,19 +101,19 @@ def main():
 
     parser = argparse.ArgumentParser(description="Conduct a heimdallr shutter sequence")
     parser.add_argument(
-        "--dark_time",
+        "--dark-time",
         type=float,
         default=5.0,
         help="Time in seconds for dark shutter (default: 5.0)",
     )
     parser.add_argument(
-        "--beam_time",
+        "--beam-time",
         type=float,
         default=1.0,
         help="Time in seconds for beam shutter (default: 1.0)",
     )
     parser.add_argument(
-        "--use_splay",
+        "--use-splay",
         type=bool,
         help="Use splay shutter sequence ",
     )

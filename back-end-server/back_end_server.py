@@ -233,8 +233,8 @@ class BackEndServer:
                 continue
         logging.info("All server connections initialized.")
 
-        #Store total requested integration time
-        self.itime=0
+        # Store total requested integration time
+        self.itime = 0
 
         self.scripts_running = {}
 
@@ -415,7 +415,7 @@ class BackEndServer:
                     # Non-JSON reply; consider it error only if it contains 'error'
                     if isinstance(raw, str) and "error" in raw.lower():
                         ok = False
-                    details = raw # send to Heimdallr the integration time.
+                    details = raw  # send to Heimdallr the integration time.
 
             if ok:
                 results.append(f"{key}: OK")
@@ -535,18 +535,18 @@ class BackEndServer:
             logging.info("Started s_h-autoalign script process.")
         elif command_name == "s_h-shutter":
             # command requires beam_time and dark_time parameters
-            if _param_value(command.get("parameters", []), "beam_time") is None:
+            if _param_value(command.get("parameters", []), "beam-time") is None:
                 return self.create_response("ERROR: beam_time parameter is required")
-            if _param_value(command.get("parameters", []), "dark_time") is None:
+            if _param_value(command.get("parameters", []), "dark-time") is None:
                 return self.create_response("ERROR: dark_time parameter is required")
 
             process = subprocess.Popen(
                 [
                     "h-shutter",
-                    "--beam_time",
-                    _param_value(command.get("parameters", []), "beam_time"),
-                    "--dark_time",
-                    _param_value(command.get("parameters", []), "dark_time"),
+                    "--beam-time",
+                    _param_value(command.get("parameters", []), "beam-time"),
+                    "--dark-time",
+                    _param_value(command.get("parameters", []), "dark-time"),
                 ],
             )
             logging.info("Started s_h-shutter script process.")
@@ -655,7 +655,7 @@ class BackEndServer:
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
 
         # If both NDIT and DIT are non-zero, we compute the total integration time.
-        if ((dit != 0) and (ndit != 0)):
+        if (dit != 0) and (ndit != 0):
             self.itime = dit * ndit
 
         return self.create_response("OK")
@@ -664,7 +664,7 @@ class BackEndServer:
         # check that the shutter script isn't running
         if "s_h-shutter" in self.scripts_running:
             return self.create_response("ERROR: s_h-shutter script is already running")
-        
+
         self.servers["hdlr"].send_string(f"set_itime {self.itime}")
         res = self.servers["hdlr"].recv_string()
         if res.upper().startswith("ERROR"):

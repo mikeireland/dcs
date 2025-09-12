@@ -146,6 +146,7 @@ class MCSClient:
         script_endpoint: str,
         publish_endpoint: str,
         sleep_time: float = 1.0,
+        script_only: bool = False,
     ):
         self.publish_z = ZmqReq(publish_endpoint)
         logging.info(f"REQ publish set up on {publish_endpoint}")
@@ -166,6 +167,7 @@ class MCSClient:
         self.requester = "mimir"
 
         self.sleep_time = sleep_time
+        self.script_only = script_only
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
@@ -279,12 +281,14 @@ class MCSClient:
     def publish_all_to_wag(self):
         """Publish all parameters (baldr, hdlr, script) in a single message."""
         all_params = []
-        baldr_params = self.gather_baldr_parameters()
-        if baldr_params:
-            all_params.extend(baldr_params)
-        hdlr_params = self.gather_hdlr_parameters()
-        if hdlr_params:
-            all_params.extend(hdlr_params)
+
+        if not self.script_only:
+            baldr_params = self.gather_baldr_parameters()
+            if baldr_params:
+                all_params.extend(baldr_params)
+            hdlr_params = self.gather_hdlr_parameters()
+            if hdlr_params:
+                all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
         print("script_params", script_params)
         if script_params:
@@ -685,6 +689,12 @@ if __name__ == "__main__":
         help="Path to the log directory",
     )
 
+    parser.add_argument(
+        "--script-only",
+        action="store_true",
+        help="Run script only (no status messages from Heimdallr or Baldr)",
+    )
+
     args = parser.parse_args()
 
     # logname from the current time
@@ -713,6 +723,7 @@ if __name__ == "__main__":
         script_endpoint="tcp://192.168.100.2:7019",
         publish_endpoint="tcp://192.168.100.1:7050",
         sleep_time=1.0,
+        script_only=args.script_only,
     )
 
     mcs.run()
