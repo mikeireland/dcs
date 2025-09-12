@@ -26,20 +26,17 @@ class ZmqReq:
         self.s.connect(endpoint)
 
     def send_payload(
-        self, payload: Dict[str, Any], is_str=False, decode_ascii=True
-    ) -> Optional[Dict[str, Any]]:
+        self, payload, is_str=False, decode_ascii=True
+    ) -> Optional[dict]:
         if not is_str:
             self.s.send_string(json.dumps(payload, sort_keys=True))
         else:
             self.s.send_string(payload)
-
         try:
-
             if decode_ascii:
                 res = self.s.recv().decode("ascii")[:-1]
             else:
                 res = self.s.recv_string()
-
             return json.loads(res)
         except zmq.error.Again:
             return None
@@ -94,7 +91,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     log_ft_performance(log_path=args.log_path, rate_hz=args.rate)
-        time.sleep(sleep_time)
+    time.sleep(sleep_time)
         # if (time.perf_counter() - start_time) > duration_sec:
         #     break
 
@@ -236,6 +233,9 @@ if __name__ == "__main__":
             args.endpoints,
             key_lists,
             duration_sec=args.duration,
+            rate_hz=args.rate,
+            save_path=save_path,
+        )
             rate_hz=args.rate,
             save_path=save_path,
         )
