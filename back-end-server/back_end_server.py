@@ -665,8 +665,10 @@ class BackEndServer:
         if "s_h-shutter" in self.scripts_running:
             return self.create_response("ERROR: s_h-shutter script is already running")
         
-        # Set the requested total integration time of Heimdallr, by sending "itime XXX", 
-        # where XXX = self.itime. !!!
+        self.servers["hdlr"].send_string(f"set_itime {self.itime}")
+        res = self.servers["hdlr"].recv_string()
+        if res.upper().startswith("ERROR"):
+            return self.create_response(f"ERROR: hdlr response: {res}")
 
         return self.create_response("OK")
 
@@ -675,8 +677,12 @@ class BackEndServer:
 
         # Send "expstatus" query to heimdallr, and return if the exposure is complete !!!
         # response is "integrating" or "success" or "failure" !!!
+        self.servers["hdlr"].send_string(f"expstatus")
+        res = self.servers["hdlr"].recv_string()
+        if res.upper().startswith("ERROR"):
+            return self.create_response(f"ERROR: hdlr response: {res}")
 
-        return self.create_response("OK")
+        return self.create_response(res)
 
 
 if __name__ == "__main__":
