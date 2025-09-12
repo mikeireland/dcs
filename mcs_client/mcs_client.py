@@ -557,7 +557,7 @@ class BaldrAdapter(CppServerAdapter):
         try:
             st = rep
             # Use dataclass fields and kwargs to construct BaldrTscopeStatus
-            field_names = {f.name for f in fields(BaldrTscopeStatus)}
+            field_names = [f.name for f in fields(BaldrTscopeStatus)]
             kwargs = {}
             for name in field_names:
                 if name in st:
@@ -598,9 +598,6 @@ class HeimdallrAdapter(CppServerAdapter):
             for name in field_names:
                 if name in st:
                     kwargs[name] = st[name]
-            print(st)
-            print(field_names)
-            print(kwargs)
             return HeimdallrStatus(**kwargs)
         except KeyError:
             logging.warning("KeyError in HeimdallrAdapter.fetch()")
