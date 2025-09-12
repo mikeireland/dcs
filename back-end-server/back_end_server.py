@@ -449,19 +449,19 @@ class BackEndServer:
                 return self.create_response("ERROR: hdlr server not connected")
 
             try:
+                # None of these commmand have any responses.
                 server.send_string('servo "off"')
                 server.recv_string()
-                time.sleep(0.2)
-                import pdb; pdb.set_trace()
+                time.sleep(0.1)
                 server.send_string('foreground 0')
                 server.recv_string()
-                time.sleep(0.2)
+                time.sleep(0.1)
                 server.send_string('dls 0,0,0,0')
                 server.recv_string()
-                time.sleep(0.2)
+                time.sleep(0.1)
                 server.send_string('offload_time 10')
                 server.recv_string()
-                time.sleep(0.2)
+                time.sleep(0.1)
                 server.send_string('offload "gd"')
                 server.recv_string()
                                 

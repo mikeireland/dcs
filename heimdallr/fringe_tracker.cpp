@@ -200,6 +200,7 @@ void reset_search(){
     control_u.test_n=0;
     control_u.test_ix=0;
     control_u.test_value=0.1;
+    control_u.fringe_found = false;
     beam_mutex.unlock();
 
     pid_settings.mutex.lock();
@@ -573,9 +574,11 @@ void fringe_tracker(){
             if ((worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
+                control_u.fringe_found = true;
                 //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
                 //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
             } else {
+                control_u.fringe_found = false;
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.
                 unsigned int search_level = 0;

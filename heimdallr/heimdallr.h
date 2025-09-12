@@ -136,6 +136,7 @@ struct ControlU{
     unsigned int search_Nsteps, steps_to_turnaround;
     int test_beam, test_n, test_ix;
     double test_value;
+    bool fringe_found;
 };
 
 // This is our knowledge of the per-telescope delay state. Units are all in K1 wavelengths.
@@ -192,6 +193,7 @@ struct Status
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
     int test_ix, test_n;
+    bool locked{false};
 };
 //-------End of Commander structs------
 

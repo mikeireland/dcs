@@ -312,6 +312,7 @@ Status get_status() {
         status.closure_phase_K1[i] = bispectra_K1[i].closure_phase;
         status.closure_phase_K2[i] = bispectra_K2[i].closure_phase;
     }
+    status.locked = control_u.fringe_found;
     return status;
 }
 
