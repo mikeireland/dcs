@@ -11,7 +11,7 @@ import json
 import numpy as np
 import time
 import argparse
-
+from typing import Optional
 
 class ZmqReq:
     """
@@ -233,9 +233,6 @@ if __name__ == "__main__":
             args.endpoints,
             key_lists,
             duration_sec=args.duration,
-            rate_hz=args.rate,
-            save_path=save_path,
-        )
             rate_hz=args.rate,
             save_path=save_path,
         )

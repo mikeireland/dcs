@@ -1,3 +1,10 @@
+
+NOTE : UPDATING WHERE WE WRITE LOGS IN EACH NIGHT
+
+/home/asg/ben_bld_data/DD-MM-YYYY/
+
+
+
 11-09-25 Second night
 
 onsky 
@@ -73,6 +80,11 @@ asg@mimir:~/Progs/repos/dcs/pyeng_baldr$ python baldr_live_gui_patched.py --beam
 
 START NIGHT WITH H5 phasemask, calibrated on 1000Hz fps, gain 20. Remember close and open rtc with new preset to update runtime parameters
 
+note in asgard-alignment/baldr_phasemask we have that H5 is smallest , H3 is mide H1 is fattest.
+
+"H5": {"depth": 0.654, "diameter": 31},
+"H3": {"depth": 0.654, "diameter": 44},
+
 set_telem_capacity 10000
 dg ["LO","ki",0.5], no HO
 
@@ -83,12 +95,41 @@ dg ["LO","ki",0.5], no HO
 ===========
 -try apply different flats, ending with baldr. observe if noticable difference
 -take telemetry clear pupil
+beam 2: /home/asg/Music/telemetry_20250912_004817.fits
 -take telemetry aligned pupil
--try close LO and take telemetry
+beam 2:  /home/asg/Music/telemetry_20250912_005140.fits
+beam 2: /home/asg/Music/telemetry_20250912_005212.fit
+
+seeing 0.7" naomi thinks 40nm RMS..
+
+
+beam 2 
+-try close LO and take telemetry. No telemetry taken could not close loop!
+
+- try change box car on beam 2 
+change_boxcar 10 could not lock
+change_boxcar 20 semi lock
+reduce gain update_ctrl_param ["LO","ki","all",0.1]
+
+didnt save any close loop telemetry. restarting camera and rtc
+
+decided to swap back to H3 with rtcs.
+./baldr --beam # --mode bright --mask H3 --socket tcp://*:666#
+aligned mask H3 
+
+
+Start putting all the data in one folder ben_
+
+/home/asg/ben_bld_data/11-9-25_night2
+
+include the active toml files for the rtc
+telemetry saved here 
+
+
 ==========
 - could potentially try H3 mask too and repeat 
 =========
-open code insiders in my login and copy files across. Analyse 
+open code insiders in my login and copy files across. Analyse . Big questions are baldr onsky DM flat. Baldr onsky reference intensity 
 
 
 
