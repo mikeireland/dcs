@@ -96,6 +96,7 @@ class HShutterSeq:
 
         self.send_and_recv_ack(msg)
 
+
 def main():
     import argparse
 
@@ -130,5 +131,6 @@ def main():
     shutter_seq = HShutterSeq(args.dark_time, args.beam_time, args.use_splay)
 
     if args.test_mcs:
-        
-    shutter_seq.run()
+        shutter_seq.test_mcs()
+    else:
+        shutter_seq.run()
