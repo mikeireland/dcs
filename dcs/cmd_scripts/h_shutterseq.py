@@ -105,7 +105,7 @@ def main():
     )
     parser.add_argument(
         "--use_splay",
-        type=bool
+        type=bool,
         help="Use splay shutter sequence ",
     )
 

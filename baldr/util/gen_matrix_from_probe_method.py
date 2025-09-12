@@ -46,11 +46,13 @@ args = parse_args()
 
 if args.method == 'TT_OL_img':
     d = fits.open( args.input_file )
-
-    for cc in np.arange(0,4,2): 
+    tt_img = []
+    for cc in np.arange(0,10,2): 
         c_in = np.median( d[1].data['DATA'][cc].reshape(d[1].header['N'],32,32),axis=0) 
         c_out = np.median( d[1].data['DATA'][cc+1].reshape(d[1].header['N'], 32,32),axis=0)
         delta_i = abs( c_in - c_out )
+        tt_img.append( delta_i )
+
 if args.method == 'I2A':
     
     d = fits.open( args.input_file )

@@ -5,9 +5,9 @@
 //#define DEBUG_FILTER6
 
 // Thresholds for fringe tracking (now variables)
-double gd_threshold = 10.0;
+double gd_threshold = 8.0;
 double pd_threshold = 4.5;
-double gd_search_reset = 10.0;
+double gd_search_reset = 6.0;
 
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
@@ -200,6 +200,7 @@ void reset_search(){
     control_u.test_n=0;
     control_u.test_ix=0;
     control_u.test_value=0.1;
+    control_u.fringe_found = false;
     beam_mutex.unlock();
 
     pid_settings.mutex.lock();
@@ -570,12 +571,27 @@ void fringe_tracker(){
             // based on determining if we confidently have fringes with all telescopes.
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N_TEL, N_TEL>> eig_solver(cov_gd_tel);
             double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
-            if ((worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
+            double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
+
+            // Find the second smallest eigenvalue
+            Eigen::VectorXd evals = eig_solver.eigenvalues();
+            std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
+            std::sort(eval_vec.begin(), eval_vec.end());
+            double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+
+            if ((worst_gd_var < gd_var_threshold) && (second_min_eval > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
+                control_u.fringe_found = true;
                 //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
                 //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
+                 //           fmt::print("cov_gd_tel eigenvalues: ");
+                //for (int i = 0; i < eig_solver.eigenvalues().size(); ++i) {
+                // fmt::print("{:.6f}{}", eig_solver.eigenvalues()(i), (i < eig_solver.eigenvalues().size()-1) ? ", " : "\n");
+                //}
+                //fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
             } else {
+                control_u.fringe_found = false;
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.
                 unsigned int search_level = 0;

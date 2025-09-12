@@ -312,6 +312,7 @@ Status get_status() {
         status.closure_phase_K1[i] = bispectra_K1[i].closure_phase;
         status.closure_phase_K2[i] = bispectra_K2[i].closure_phase;
     }
+    status.locked = control_u.fringe_found;
     return status;
 }
 
@@ -389,6 +390,20 @@ void set_foreground(int state) {
     }
 }
 
+void tweak_gd_offsets(double offset0, double offset1, double offset3) {
+    // Add offsets to beams 0, 1, and 3, then project onto baseline space
+    Eigen::Vector4d tel_offsets = Eigen::Vector4d::Zero();
+    tel_offsets(0) = offset0;
+    tel_offsets(1) = offset1;
+    tel_offsets(3) = offset3;
+    Eigen::Matrix<double, N_BL, 1> bl_offsets = M_lacour * tel_offsets;
+    baseline_mutex.lock();
+    for (int bl = 0; bl < N_BL; bl++) {
+        baselines.gd_phasor_offset(bl) *= std::exp(-1.0i * bl_offsets(bl));
+    }
+    baseline_mutex.unlock();
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -408,7 +423,7 @@ COMMANDER_REGISTER(m)
     m.def("dl", set_delay_line, "Set a delay line value in microns", 
         "beam"_arg, "value"_arg=0.0);
     m.def("dls", set_delay_lines_wrapper, "Set a delay line value in microns", 
-        "delays"_arg=std::vector<double>(N_TEL, 0.0));
+        "dl1"_arg, "dl2"_arg, "dl3"_arg, "dl4"_arg);
     m.def("status", get_status, "Get the status of the system");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
@@ -424,6 +439,9 @@ COMMANDER_REGISTER(m)
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
+    m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 0,1,3 and project to baseline space", 
+        "offset0"_arg=0.0, "offset1"_arg=0.0, "offset3"_arg=0.0);
+    
 }
 
 int main(int argc, char* argv[]) {

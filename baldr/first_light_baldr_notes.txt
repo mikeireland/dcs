@@ -1,0 +1,249 @@
+11-09-25 Second night
+
+onsky 
+no rtc running , try slider for addjusting flat (turn flat on gui off! confirm on internal source)
+
+updates pre-sky
+
+re-calibrated pupil,dm, strehl registration all beams 
+
+Did baldr flat 
+baldr beam 1 (good) calibrated flat results on H3  saved here
+
+ /home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam1/flat_dm_beam1_maskH3_11-09-2025T19.52.00.fits
+
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM1_FLAT_MAP_OFFSETS_11-09-2025T19.52.00.txt
+
+beam 2 
+/home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam2/flat_dm_beam2_maskH3_11-09-2025T22.26.05.fits
+
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM2_FLAT_MAP_OFFSETS_11-09-2025T22.26.05.txt
+
+beam 3 
+/home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam3/flat_dm_beam3_maskH3_11-09-2025T22.35.37.fits
+
+ /home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM3_FLAT_MAP_OFFSETS_11-09-2025T22.35.37.txt
+
+beam 4
+
+ /home/asg/Progs/repos/asgard-alignment/calibration/reports/flatdm_trials/11-09-2025/beam4/flat_dm_beam4_maskH3_11-09-2025T22.46.55.fits
+
+
+/home/asg/Progs/repos/asgard-alignment/DMShapes/BEAM4_FLAT_MAP_OFFSETS_11-09-2025T22.46.55.txt
+
+apply via: 
+asg@mimir:~/Progs/repos/asgard-alignment$ python common/m_apply_dm_flat.py --DM_flat baldr
+
+
+Running build_IM.py with:
+  cam_fps      = 1000
+  cam_gain     = 20
+  beam_id      = 1,2,3,4
+  poke_amp     = 0.05
+  LO           = 2
+  phasemask    = H3
+  signal_space = dm
+  DM_flat      = baldr
+
+python calibration/build_baldr_control_matrix.py --beam # --phasemask H3
+
+calibrate H5 too 
+
+Running build_IM.py with:
+  cam_fps      = 1000
+  cam_gain     = 20
+  beam_id      = 1,2,3,4
+  poke_amp     = 0.05
+  LO           = 2
+  phasemask    = H3
+  signal_space = dm
+  DM_flat      = baldr
+
+
+python calibration/build_baldr_control_matrix.py --beam # --phasemask H5
+
+(asgard) (asgard) asg@mimir:~/Progs/repos/asgard-alignment$ ./calibration/copy_configs_to_stable_versions.sh bright #
+Copied /usr/local/etc/baldr/baldr_config_4.toml → /usr/local/etc/baldr/rtc_config/2025-09-11/baldr_config_#_bright_2025-09-11T23-25-16.toml
+
+
+updated live baldr gui : tested with no camera, seems ok. NEED TO TEST WITH REAL FRAMES
+asg@mimir:~/Progs/repos/dcs/pyeng_baldr$ python baldr_live_gui_patched.py --beam 
+
+
+
+
+10-09-2025 FIRST LIGHT 
+
+default 2s telemetry (1000 samples) for each telemetry
+set_telem_capacity [1000]
+
+set the default path for first light
+set_telem_save_path ["/home/asg/Music/first_light/"]
+
+ran some test telemetry saves , opened them in python and checked data was there
+
+preloaded LO ki gain to 0.1 for all beams!
+dg ["LO","ki",0.1]
+
+
+START
+seeing 0.8", tau0 = 
+acquire star (ome cap) 
+
+very bright reduce gain to 5
+take 200 offset in all phasemasks
+save telemetry all beams 
+
+move all beams back
+try align mask beam 2
+closed tip tilt, saved telemetry
+
+open TT.
+
+average image in gui , use glow to find alignment (to do make good script that scans and takes lots of averages)
+
+before pupil offset find best phasemask positions. DID NOT SAVE THEM. WE SHOULD TRY ALIGN THE VLTI SYSTEM TO THE PREVIOUS INTERNALLY SAVED POSITIONS
+
+Current position BMX1: 9319.998187499996 um
+Current position BMY1: 3771.995249999998 um
+
+Current position BMX2: 3515.987062499998 um
+Current position BMY2: 3440.0251874999985 um
+
+Current position BMX3: 2419.992937499999 um
+Current position BMY3: 3240.0001874999984 um
+
+Current position BMX4: 9070.014562499995 um
+Current position BMY4: 4560.0223124999975 um
+
+Turned star light off 00:17
+
+
+new preset ~00:31 UT time
+
+move all pupils +x 200
+
+with clear pupil (naomi acquired)  beam 1 (1000samples) save telemetry /home/asg/Music/first_light/telemetry_20250911_003620.fits
+(around 37)
+beam 2  /home/asg/Music/telemetry_20250911_003811.fit
+
+set beam 1 telem capcity 5000
+get another clear pupil save 
+ /home/asg/Music/first_light/telemetry_20250911_003926.fits
+
+do heimdallr image align from wag -> backend -> scripts -> mcs_client (update DB) -> wag
+
+Try baldr pupil offset too from wag!
+
+NEED then beam 1 (5000 sample) with naomi closed, baldr open, H3 mask aligned
+(maybe this one?)
+/home/asg/Music/first_light/telemetry_20250911_010753.fits
+
+beam 2
+/home/asg/Music/telemetry_20250911_011300.fit 
+
+
+
+7.37 UT on mag 5.5 , went to internal source and I0_update, N0_update on beam 2 with 10k sample telemetry. 
+
+even after this there is a 0.01 TT average bias in  e_TT even when on average aligned to 0.01 TT
+
+try on beam 2 
+run_probe_method ["I2A","/home/asg/Music/first_light/OL_IM_2.fits"]
+
+ran and rtc continued fine , but telemetry doesnt display while running
+
+implementing new probe method TT_OL_img with much less deadtime and TT in OL
+
+50 pokes 1ms deadtime
+
+Try 
+run_probe_method ["TT_OL_img","/home/asg/Music/first_light/TT_OL_img.fits"]
+
+
+
+TODO 
+try 
+
+Things to tru
+run_probe_method ["I2A","/home/asg/Music/first_light/OL_IM.fits"]
+
+run_probe_method ["I2A_CL","/home/asg/Music/first_light/OL_IM.fits"]
+
+run_probe_method ["IM_OL","/home/asg/Music/first_light/OL_IM.fits"]
+
+run_probe_method ["IM_CL","/home/asg/Music/first_light/CL_IM.fits"]
+
+first target starts at 45 deg 
+
+run_probe_method ["I2A","/home/asg/Music/first_light/"]
+
+run_probe_method ["I2A"] <- this saves to usr/local/var which doesnt exist , 
+
+beam 1 :
+> run_probe_method ["I2A","/home/asg/Music/first_light/OL_IM.fits"] with phasemask H3 in 
+
+
+get one Very long 10k phasemask H3 beam 1 mask in (aligned) 500Hz fps, gain 5
+/home/asg/Music/first_light/telemetry_20250911_025452.fits
+
+same with clear pupil
+ /home/asg/Music/first_light/telemetry_20250911_025648.fits
+
+one baldr close loop dg ["LO","ki",0.02]
+/home/asg/Music/first_light/telemetry_20250911_030325.fits
+
+I see big signal bias values
+
+
+
+later locked beam 2 : set_telem_capacity [20000]
+close TT half way through 
+ /home/asg/Music/telemetry_20250911_043514.fits
+ full TT lock how series
+ /home/asg/Music/telemetry_20250911_043607.fits
+doesnt have many drop outs
+try lock HO
+dg ["HO","ki",0.02] (saved 20k frames again beam 2)
+ /home/asg/Music/telemetry_20250911_044010.fitsw
+
+going to faint kmag = 6
+N0_update, saw e_lo change which means the N0_dm runtime updated
+Try 
+set_telem_capacity [10000]
+update N0 again 
+now try update I0 with phasemask in on sky 
+seemed to work the update but couldnt close loop 
+
+
+
+run_probe_method ["TT_OL_img","/home/asg/Music/first_light/TT_OL_img.fits"]
+
+dead time 1ms meant the telemetry wasnt empty so frames seem same. Changed deadtime back to 5000ms
+
+run_probe_method ["TT_OL_img","/home/asg/Music/first_light/TT_OL_img2.fits"]
+
+looking at the data its hard to see any systematic signal 
+
+Also going to try change box car average 
+
+>change_boxcar 20
+TT seemed a bit more stable 
+
+save telemetry beam 2 begin open close half way 10000
+
+/home/asg/Music/telemetry_20250911_092904.fits
+
+TO DO
+probe method doesn't inject on internal source !!!! 
+BALDR DM FLAT
+test probe methods on internal source
+compare onsky pupil to N0
+check DM registration - what is best method 
+
+check update I0, N0 logic, application in rtc
+update fps , gain without restarting RTC
+title on live_gui 
+
+
+

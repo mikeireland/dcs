@@ -49,6 +49,7 @@ void init_wag_rmn() {
             wag_rmn_socket.connect(wag_rmn_host_str);
             wag_rmn_initialized = true;
         } catch (const zmq::error_t& e) {
+            wag_rmn_initialized = false;
             std::cerr << "Error initializing WAG RMN: " << e.what() << std::endl;
         }
     }
