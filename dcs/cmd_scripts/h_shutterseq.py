@@ -32,7 +32,7 @@ class HShutterSeq:
         resp = self.mcs_client.send_payload(msg)
         if resp is None or resp.get("ok") == False:
             print(resp)
-            print("Failed to send offsets to MCS")
+            print("Failed to send complete to MCS")
         else:
             print("msg acked")
 

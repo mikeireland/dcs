@@ -158,7 +158,7 @@ class HeimdallrAA:
         blob_flux = full_frame[mask].sum()
         if inc_frame:
             return blob_centre, blob_flux, full_frame
-        else: 
+        else:
             return blob_centre, blob_flux
 
     @staticmethod
@@ -168,13 +168,9 @@ class HeimdallrAA:
         mask = dist_from_center <= radius
         return mask
 
-
-
-
-
     # def detect_pupil(self, image, sigma=2, threshold=0.5, plot=False, savepath=None):
     #     """
-    #     Detects an elliptical pupil (with possible rotation) in a cropped image using edge detection 
+    #     Detects an elliptical pupil (with possible rotation) in a cropped image using edge detection
     #     and least-squares fitting. Returns both the ellipse parameters and a pupil mask.
 
     #     The ellipse is modeled by:
@@ -205,25 +201,25 @@ class HeimdallrAA:
 
     #     # Smooth the image
     #     smoothed_image = gaussian_filter(image, sigma=sigma)
-        
+
     #     # Compute gradients (Sobel-like edge detection)
     #     grad_x = np.gradient(smoothed_image, axis=1)
     #     grad_y = np.gradient(smoothed_image, axis=0)
     #     edges = np.sqrt(grad_x**2 + grad_y**2)
-        
+
     #     # Threshold edges to create a binary mask
     #     binary_edges = edges > (threshold * edges.max())
-        
+
     #     # Get edge pixel coordinates
     #     y_coords, x_coords = np.nonzero(binary_edges)
-        
+
     #     # Initial guess: center from mean, radius from average distance, and theta = 0.
     #     def initial_guess(x, y):
     #         center_x = np.mean(x)
     #         center_y = np.mean(y)
     #         r_init = np.sqrt(np.mean((x - center_x)**2 + (y - center_y)**2))
     #         return center_x, center_y, r_init, r_init, 0.0  # (cx, cy, a, b, theta)
-        
+
     #     # Ellipse model function with rotation.
     #     def ellipse_model(params, x, y):
     #         cx, cy, a, b, theta = params
@@ -240,7 +236,7 @@ class HeimdallrAA:
     #     guess = initial_guess(x_coords, y_coords)
     #     result, _ = leastsq(ellipse_model, guess, args=(x_coords, y_coords))
     #     center_x, center_y, a, b, theta = result
-        
+
     #     # Create a boolean pupil mask for the fitted ellipse
     #     yy, xx = np.ogrid[:image.shape[0], :image.shape[1]]
     #     cos_t = np.cos(theta)
@@ -255,7 +251,7 @@ class HeimdallrAA:
     #         # Overlay for visualization
     #         overlay = np.zeros_like(image)
     #         overlay[pupil_mask] = 1
-            
+
     #         plt.figure(figsize=(6, 6))
     #         plt.imshow(image, cmap="gray", origin="upper")
     #         plt.contour(binary_edges, colors="cyan", linewidths=1)
@@ -268,9 +264,6 @@ class HeimdallrAA:
     #         plt.close()
     #     return center_x, center_y, a, b, theta, pupil_mask
 
-
-
-    
     def open_all_shutters(self):
         msg = f"h_shut open 1,2,3,4"
         self._send_and_get_response(msg)
@@ -305,12 +298,14 @@ class HeimdallrAA:
                 self._send_and_get_response(msg)
                 time.sleep(self._shutter_pause_time)
 
-            blob_centre, flux, frame = self._get_blob_with_flux(flux_radius,inc_frame=True)
+            blob_centre, flux, frame = self._get_blob_with_flux(
+                flux_radius, inc_frame=True
+            )
 
             frames.append(frame)
-            # to try 
-            #center_x, center_y, _, _, _,_ = detect_pupil(flux_radius, sigma=2, threshold=0.5, plot=False, savepath=None)
-            
+            # to try
+            # center_x, center_y, _, _, _,_ = detect_pupil(flux_radius, sigma=2, threshold=0.5, plot=False, savepath=None)
+
             if flux < self.flux_threshold:
                 print(
                     f"Beam {target_beam} has low flux: {flux}. setting delta to zero."
@@ -325,10 +320,9 @@ class HeimdallrAA:
                         self.target_pixels[0] - blob_centre[1],
                     ]
                 )
-        
+
         if self.savepth is not None:
             np.savez(os.path.join(self.savepth, "heim_autoalign.npz"), frames=frames)
-
 
         # 5. unshutter all beams
         self.open_all_shutters()
@@ -695,7 +689,7 @@ def main():
         "--output",
         type=str,
         default="internal",
-        choices=["internal", "mcs","none"],
+        choices=["internal", "mcs", "none"],
         help="If the actuation should be done internally, or offset commands sent to MCS (default: internal)",
     )
     args = parser.parse_args()

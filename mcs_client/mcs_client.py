@@ -282,8 +282,8 @@ class MCSClient:
         # baldr_params = self.gather_baldr_parameters()
         # if baldr_params:
         #     all_params.extend(baldr_params)
-        #hdlr_params = self.gather_hdlr_parameters()
-        #if hdlr_params:
+        # hdlr_params = self.gather_hdlr_parameters()
+        # if hdlr_params:
         #    all_params.extend(hdlr_params)
         script_params = self.gather_script_parameters()
         print("script_params", script_params)
@@ -667,6 +667,8 @@ class ScriptAdapter:
         self.z.send_payload({"ok": True})
 
         if msg.get("origin") == "s_h-autoalign":
+            self.data = msg
+        elif msg.get("origin") == "s_h-shutter":
             self.data = msg
         elif msg.get("origin") == "s_bld_pup_autoalign_sky":
             # Save the data for later processing

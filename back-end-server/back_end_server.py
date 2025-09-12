@@ -236,6 +236,8 @@ class BackEndServer:
         self.scripts_running = {}
 
     def run(self):
+        check_scripts_every = 5  # seconds
+        last_check = time.time()
         while True:
             # Wait for the next request from wag
             message = self.socket.recv().decode("ascii")
@@ -255,8 +257,27 @@ class BackEndServer:
             # Process the command
             response = self.process_command(message)
 
+            logging.info(
+                f"Scripts running after processing command: {self.scripts_running}"
+            )
 
-            logging.info(f"Scripts running after processing command: {self.scripts_running}")
+            # Periodically check the status of running scripts and remove from dict if done
+            if time.time() - last_check > check_scripts_every:
+                last_check = time.time()
+                for pid, process in list(self.scripts_running.items()):
+                    retcode = process.poll()
+                    if retcode is not None:  # Process has finished
+                        logging.info(
+                            f"Script with PID {pid} finished with return code {retcode}."
+                        )
+                        stdout, stderr = process.communicate()
+                        logging.info("Process output:")
+                        logging.info(stdout)
+                        if stderr:
+                            logging.error("Process errors:")
+                            logging.error(stderr)
+                        del self.scripts_running[pid]
+
             # Send the reply back to wag
             self.socket.send_json(response)
 
@@ -453,18 +474,19 @@ class BackEndServer:
                 server.send_string('servo "off"')
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('foreground 0')
+                server.send_string("foreground 0")
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('dls 0,0,0,0')
+                server.send_string("dls 0,0,0,0")
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('offload_time 10')
+                # slower
+                server.send_string("offload_time 50")
                 server.recv_string()
                 time.sleep(0.1)
                 server.send_string('offload "gd"')
                 server.recv_string()
-                                
+
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
