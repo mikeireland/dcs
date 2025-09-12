@@ -1,15 +1,13 @@
 #include "heimdallr.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
-// Sleep for this long in the offload loop. Should be much shorter than the fastest offload.
-// This should instead be done with a semaphore or condition variable.
-#define OFFLOAD_USLEEP 1000
 // usleep for the controllino - this is actually a wait because we are 
 // waiting for an external device.
 #define CONTROLLINO_USLEEP 1000
 #define HFO_DEADBAND 3.5 //Deadband of HFO motion in microns of OPD. This is a sum over all DLs
 
 // Local globals.
+sem_t sem_offload;
 int controllinoSocket;
 Eigen::Vector4d next_offload;
 // This is non-zero to make sure if using the Piezos the DLs are centred.
@@ -127,15 +125,15 @@ void add_to_delay_lines(Eigen::Vector4d dl) {
     offloads_to_do++;
 }
 
-// Set one delay line value. !!! Code needs neatening as this should be in heimdallr.cpp
+// Set one delay line value. 
 void set_delay_line(int dl, double value) {
     // This function sets the delay line value for a specific telescope.
     // The value is in K1 wavelengths.
-    if (dl < 0 || dl >= N_TEL) {
+    if (dl == 0 || dl >= N_TEL) {
         std::cout << "Delay line number out of range" << std::endl;
         return;
     }
-    next_offload[dl] = value;
+    next_offload[dl-1] = value;
     offloads_to_do++;
 }
 
@@ -260,6 +258,9 @@ void move_main_dl()
 
 // The main thread function
 void dl_offload(){
+    // Initialize semaphore for offload timing
+    //sem_init(&sem_offload, 0, 0);
+
     // Try to connect just once to WAG RMN.
     init_wag_rmn();
     // Connect to MDS and find the delay line positions.
@@ -276,7 +277,8 @@ void dl_offload(){
 
     while (keep_offloading) {
         // Wait for the next offload - nominally 200Hz max
-        usleep(OFFLOAD_USLEEP);
+        //sem_wait(&sem_offload);
+        usleep(1000);
 
         // Check if we need to zero the dl_offload
         if (zero_offload) {
