@@ -91,6 +91,7 @@ class ZmqRep:
     def send_payload(self, payload: Dict[str, Any]) -> bool:
         try:
             self.s.send_string(json.dumps(payload))
+            logging.info(f"Sent payload: {payload}")
             return True
         except zmq.error.Again:
             return False
