@@ -66,9 +66,29 @@ python calibration/build_baldr_control_matrix.py --beam # --phasemask H5
 Copied /usr/local/etc/baldr/baldr_config_4.toml → /usr/local/etc/baldr/rtc_config/2025-09-11/baldr_config_#_bright_2025-09-11T23-25-16.toml
 
 
-updated live baldr gui : tested with no camera, seems ok. NEED TO TEST WITH REAL FRAMES
-asg@mimir:~/Progs/repos/dcs/pyeng_baldr$ python baldr_live_gui_patched.py --beam 
+updated live baldr gui : tested with no camera, seems ok. NEED TO TEST WITH REAL FRAMES. --- tested with frames and ok, PSD and frame rate could be imporved a bit laggy funny behaviour
 
+asg@mimir:~/Progs/repos/dcs/pyeng_baldr$ python baldr_live_gui_patched.py --beam
+
+
+START NIGHT WITH H5 phasemask, calibrated on 1000Hz fps, gain 20. Remember close and open rtc with new preset to update runtime parameters
+
+set_telem_capacity 10000
+dg ["LO","ki",0.5], no HO
+
+-offset phasemask 
+-pupil offset 
+-bring masks back 
+-align masks
+===========
+-try apply different flats, ending with baldr. observe if noticable difference
+-take telemetry clear pupil
+-take telemetry aligned pupil
+-try close LO and take telemetry
+==========
+- could potentially try H3 mask too and repeat 
+=========
+open code insiders in my login and copy files across. Analyse 
 
 
 

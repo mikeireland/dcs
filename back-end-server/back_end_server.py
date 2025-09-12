@@ -277,7 +277,7 @@ class BackEndServer:
         elif command_name.startswith("bld_"):
             # Fire-and-forget RTS
             return self.handle_bld_rts(command)
-        elif command_name.startswith("hldr_"):
+        elif command_name.startswith("hdlr_"):
             return self.handle_hdlr_rts(command)
         elif command_name.startswith("s_"):
             return self.handle_script(command)
@@ -416,7 +416,7 @@ class BackEndServer:
         """
         cmd_name = command.get("name", "").lower()
 
-        if cmd_name == "hldr_servo":
+        if cmd_name == "hdlr_servo":
             parameters = command.get("parameters", [])
             servo_state = None
             for param in parameters:
@@ -441,7 +441,7 @@ class BackEndServer:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
             return self.create_response("OK")
-        elif cmd_name == "hldr_fringe_search":
+        elif cmd_name == "hdlr_fringe_search":
             # Execute a default fringe search, which is just 'offload "gd"'
             # plus other standard parameters.
             server = self.servers.get("hdlr")
@@ -578,12 +578,12 @@ class BackEndServer:
             logging.info(f"Setup parameter: {name} = {value}")
             # Add logic to handle each parameter as needed
             # DIT, NDIT, NWORESET, etc.
-            if name == "DET.DIT":
+            if name == "DET1.DIT":
                 # Handle DIT parameter
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-            elif name == "DET.NWORESET":
+            elif name == "DET1.NWORESET":
                 try:
                     value = int(value)
                 except ValueError:
@@ -608,7 +608,7 @@ class BackEndServer:
                     return self.create_response(
                         f"ERROR: NWORESET value {value} is higher than the max (500)"
                     )
-            elif name == "DET.GAIN":
+            elif name == "DET1.GAIN":
                 try:
                     value = int(value)
                 except ValueError:
@@ -619,7 +619,7 @@ class BackEndServer:
                     )
                 self.servers["cam_server"].send_string(f"set_gain {value}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-            elif name == "DET.NDIT":
+            elif name == "DET1.NDIT":
                 logging.info(
                     "DIT command should set the number of integrations in a save file - not implemented"
                 )

@@ -94,7 +94,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     log_ft_performance(log_path=args.log_path, rate_hz=args.rate)
-        time.sleep(sleep_time)
+    time.sleep(sleep_time)
         # if (time.perf_counter() - start_time) > duration_sec:
         #     break
 
