@@ -562,8 +562,8 @@ class BaldrAdapter(CppServerAdapter):
                 if name in st:
                     kwargs[name] = st[name]
             self.cur_status = BaldrTscopeStatus(**kwargs)
-        except KeyError:
-            logging.warning("KeyError in BaldrAdapter.fetch()")
+        except KeyError as e:
+            logging.warning(f"KeyError in BaldrAdapter.fetch(): {e}")
             return None
 
 
