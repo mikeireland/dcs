@@ -11,6 +11,7 @@ import json
 import numpy as np
 import time
 import argparse
+from typing import Optional
 
 
 class ZmqReq:
@@ -57,21 +58,34 @@ keys_of_interest = [
 
 
 def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
+    # Write header only if file is empty
+    write_header = True
+    try:
+        with open(log_path, "r") as f_check:
+            if f_check.read(1):
+                write_header = False
+    except FileNotFoundError:
+        pass
     with open(log_path, "a") as f:
+        if write_header:
+            f.write("# timestamp gd_snr pd_snr gd_bl pd_tel gd_tel dm_piston (all values space-separated, 3 decimal places)\n")
         while True:
             t0 = time.time()
             reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
             if reply:
                 # Timestamp to ms precision
                 timestamp = "{:.3f}".format(t0)
-                # Flatten all key values into a single line
+                # Flatten all key values into a single line, 3 decimal places
                 values = []
                 for k in keys_of_interest:
                     v = reply.get(k)
                     if isinstance(v, (list, np.ndarray)):
-                        values.extend([str(x) for x in v])
+                        values.extend(["{:.3f}".format(float(x)) for x in v])
                     else:
-                        values.append(str(v))
+                        try:
+                            values.append("{:.3f}".format(float(v)))
+                        except Exception:
+                            values.append(str(v))
                 line = "{} {}".format(timestamp, " ".join(values))
                 f.write(line + "\n")
                 f.flush()
@@ -233,9 +247,6 @@ if __name__ == "__main__":
             args.endpoints,
             key_lists,
             duration_sec=args.duration,
-            rate_hz=args.rate,
-            save_path=save_path,
-        )
             rate_hz=args.rate,
             save_path=save_path,
         )

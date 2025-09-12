@@ -5,9 +5,9 @@
 //#define DEBUG_FILTER6
 
 // Thresholds for fringe tracking (now variables)
-double gd_threshold = 10.0;
+double gd_threshold = 8.0;
 double pd_threshold = 4.5;
-double gd_search_reset = 10.0;
+double gd_search_reset = 6.0;
 
 #define MAX_DM_PISTON 0.4
 // Group delay is in wavelengths at 2.05 microns. Need 0.5 waves to be 2.5 sigma.
@@ -571,7 +571,13 @@ void fringe_tracker(){
             // based on determining if we confidently have fringes with all telescopes.
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N_TEL, N_TEL>> eig_solver(cov_gd_tel);
             double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
-            if ((worst_gd_var < gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
+            double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
+            fmt::print("cov_gd_tel eigenvalues: ");
+            for (int i = 0; i < eig_solver.eigenvalues().size(); ++i) {
+                fmt::print("{:.6f}{}", eig_solver.eigenvalues()(i), (i < eig_solver.eigenvalues().size()-1) ? ", " : "\n");
+            }
+            fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
+            if ((worst_gd_var < gd_var_threshold) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
                 control_u.fringe_found = true;
