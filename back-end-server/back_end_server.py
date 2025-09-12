@@ -484,7 +484,7 @@ class BackEndServer:
                 server.recv_string()
                 time.sleep(0.1)
                 # slower
-                server.send_string("offload_time 50")
+                server.send_string("offload_time 20")
                 server.recv_string()
                 time.sleep(0.1)
                 server.send_string('offload "gd"')

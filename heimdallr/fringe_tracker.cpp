@@ -192,7 +192,10 @@ void reset_search(){
     control_u.dm_piston.setZero();
     control_u.search.setZero();
     control_u.dl_offload.setZero();
-    control_u.search_delta = 2.0; // In microns
+    // In microns. If running at 250Hz with 50Hz offloading, 
+    // we can't move more than a fraction of a  
+    // coherence length in 32 samples=~6 offloads.
+    control_u.search_delta = 1.0; 
     control_u.steps_to_turnaround = 10;
     control_u.search_Nsteps = 0;
     control_u.dit = 0.002;
@@ -600,8 +603,21 @@ void fringe_tracker(){
                 while (index >>= 1) ++search_level;
                 control_u.search = I4_search_projection * control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
                     * search_vector_scale;
+                for (int i=0; i<N_TEL; i++) control_u.search(i) *= control_u.beams_active[i];
                 control_u.search_Nsteps++;
-           }
+            }
+
+            // if test_n is negative, over-write this with a test pattern.
+            if (control_u.test_n < 0){
+                control_u.search.setZero();
+                // Set the test_beam to have a square wave of amplitude test_value, half period 1 offloads.
+                if (control_u.test_ix % 2 == 0){
+                    control_u.search(control_u.test_beam) = control_u.test_value;
+                } else {
+                    control_u.search(control_u.test_beam) = 0;
+                }
+                control_u.test_ix = (control_u.test_ix + 1) % 2;
+            }
 
             if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
                 //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
@@ -619,6 +635,7 @@ void fringe_tracker(){
                 add_to_delay_lines(control_u.search - pid_settings.offload_gd_gain*control_a.gd * config["wave"]["K1"].value_or(2.05));
             }
             last_dl_offload = now;
+            sem_post(&sem_offload);
         }
    
         // Now we sanity check by computing the bispectrum and closure phases.
