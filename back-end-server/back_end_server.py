@@ -474,18 +474,19 @@ class BackEndServer:
                 server.send_string('servo "off"')
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('foreground 0')
+                server.send_string("foreground 0")
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('dls 0,0,0,0')
+                server.send_string("dls 0,0,0,0")
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string('offload_time 10')
+                # slower
+                server.send_string("offload_time 50")
                 server.recv_string()
                 time.sleep(0.1)
                 server.send_string('offload "gd"')
                 server.recv_string()
-                                
+
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
