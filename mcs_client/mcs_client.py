@@ -548,6 +548,7 @@ class BaldrAdapter(CppServerAdapter):
         # Example: ask a 'status' command.. this needs to be defined in the baldr or heim commander functs
         rep = self.z.send_payload("status", is_str=True, decode_ascii=False)
 
+        logging.info(f"BaldrAdapter.fetch() got reply (type {type(rep)}): {rep}")
         if not rep:
             return None
 
