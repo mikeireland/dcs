@@ -572,17 +572,24 @@ void fringe_tracker(){
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N_TEL, N_TEL>> eig_solver(cov_gd_tel);
             double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
             double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
-            fmt::print("cov_gd_tel eigenvalues: ");
-            for (int i = 0; i < eig_solver.eigenvalues().size(); ++i) {
-                fmt::print("{:.6f}{}", eig_solver.eigenvalues()(i), (i < eig_solver.eigenvalues().size()-1) ? ", " : "\n");
-            }
-            fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
-            if ((worst_gd_var < gd_var_threshold) && (eig_solver.eigenvalues().minCoeff() > GD_MIN_REAL_VAR)){
+
+            // Find the second smallest eigenvalue
+            Eigen::VectorXd evals = eig_solver.eigenvalues();
+            std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
+            std::sort(eval_vec.begin(), eval_vec.end());
+            double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+
+            if ((worst_gd_var < gd_var_threshold) && (second_min_eval > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
                 control_u.fringe_found = true;
                 //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
                 //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
+                 //           fmt::print("cov_gd_tel eigenvalues: ");
+                //for (int i = 0; i < eig_solver.eigenvalues().size(); ++i) {
+                // fmt::print("{:.6f}{}", eig_solver.eigenvalues()(i), (i < eig_solver.eigenvalues().size()-1) ? ", " : "\n");
+                //}
+                //fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
             } else {
                 control_u.fringe_found = false;
                 // Now do the delay line control. This is slower, so occurs after the servo.
