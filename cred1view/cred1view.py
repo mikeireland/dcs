@@ -228,7 +228,9 @@ class MyMainWidget(QtWidgets.QWidget):
         for roi in self.split_config:
             x0, y0 = self.split_config[roi]["x0"], self.split_config[roi]["y0"]
             if roi.startswith("baldr"):
-                y0 -= 104
+                img_height = self.data_img.shape[0]
+                full_img_height = 256
+                y0 -= (full_img_height-img_height)
             xsz, ysz = self.split_config[roi]["xsz"], self.split_config[roi]["ysz"]
             obox = pg.RectROI(
                 [x0, y0],
