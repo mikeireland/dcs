@@ -298,6 +298,8 @@ class BackEndServer:
             return self.abort()
         elif command_name == "expstatus":
             return self.expstatus(command)
+        elif command_name == "foreground":
+            return self.foreground(command)
         elif command_name.startswith("bld_"):
             # Fire-and-forget RTS
             return self.handle_bld_rts(command)
@@ -663,7 +665,7 @@ class BackEndServer:
     def start(self, command):
         # check that the shutter script isn't running
         if "s_h-shutter" in self.scripts_running:
-            return self.create_response("ERROR: s_h-shutter script is already running")
+            return self.create_response("ERROR: s_h-shutter script is running")
 
         self.servers["hdlr"].send_string(f"set_itime {self.itime}")
         res = self.servers["hdlr"].recv_string()
@@ -678,6 +680,20 @@ class BackEndServer:
         # Send "expstatus" query to heimdallr, and return if the exposure is complete !!!
         # response is "integrating" or "success" or "failure" !!!
         self.servers["hdlr"].send_string(f"expstatus")
+        res = self.servers["hdlr"].recv_string()
+        if res.upper().startswith("ERROR"):
+            return self.create_response(f"ERROR: hdlr response: {res}")
+
+        return self.create_response(res)
+
+    def foreground(self, command):
+        # Implement expstatus logic here
+        self.servers["hdlr"].send_string(f'servo "off"')
+        res = self.servers["hdlr"].recv_string()
+        self.servers["hdlr"].send_string(f'offload "off"')
+        res = self.servers["hdlr"].recv_string()
+
+        self.servers["hdlr"].send_string(f"foreground")
         res = self.servers["hdlr"].recv_string()
         if res.upper().startswith("ERROR"):
             return self.create_response(f"ERROR: hdlr response: {res}")
