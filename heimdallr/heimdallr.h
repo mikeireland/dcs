@@ -194,7 +194,7 @@ struct Status
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
-    int test_ix, test_n;
+    int test_ix, test_n, cnt;
     bool locked{false};
 };
 //-------End of Commander structs------
@@ -215,6 +215,7 @@ extern Baselines baselines;
 extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
 extern double gd_to_K1;
+extern long unsigned int ft_cnt;
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;

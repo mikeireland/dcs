@@ -53,6 +53,7 @@ keys_of_interest = [
     "pd_tel",
     "gd_tel",
     "dm_piston",
+    "test_ix",
 ]
 
 
@@ -68,10 +69,16 @@ def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
     with open(log_path, "a") as f:
         if write_header:
             f.write("# timestamp gd_snr pd_snr gd_bl pd_tel gd_tel dm_piston (all values space-separated, 3 decimal places)\n")
+        last_cnt = 0
         while True:
             t0 = time.time()
             reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
             if reply:
+                if "cnt" in reply:
+                    cnt = reply["cnt"]
+                    if last_cnt == cnt:
+                        continue
+                    last_cnt = cnt
                 # Timestamp to ms precision
                 timestamp = "{:.3f}".format(t0)
                 # Flatten all key values into a single line, 3 decimal places

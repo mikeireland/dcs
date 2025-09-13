@@ -326,6 +326,9 @@ Status get_status() {
         status.closure_phase_K2[i] = bispectra_K2[i].closure_phase;
     }
     status.locked = control_u.fringe_found;
+    // Count modulo 10000. This is mostly to look for skipped 
+    // frames. 
+    status.cnt = ft_cnt % 10000; 
     return status;
 }
 
