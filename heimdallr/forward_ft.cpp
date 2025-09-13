@@ -134,7 +134,16 @@ void ForwardFt::loop() {
                 std::cout << "Window and FFT time: " << now.tv_nsec-then.tv_nsec << std::endl;
             then = now;
 #endif
-
+            // If the flux is negative, signal a bad frame.
+            if (ft[0][0] > 0)
+                bad_frame=false;
+            else
+                {
+                    bad_frame=true;
+                    cnt++;
+                    sem_post(&sem_new_frame);
+                    continue;
+                }
             // Compute the power spectrum. Other than SNR purposes, this isn't 
             // time critical, but doesn't take long so we can do it here. 
             ps_index = (subarray->md->cnt0 + 1) % MAX_N_PS_BOXCAR;

@@ -137,6 +137,7 @@ struct ControlU{
     int test_beam, test_n, test_ix;
     double test_value;
     bool fringe_found;
+    double itime, target_itime;
     int beams_active[N_TEL]={1,1,1,1};
 };
 
@@ -193,7 +194,7 @@ struct Status
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
-    int test_ix, test_n;
+    int test_ix, test_n, cnt;
     bool locked{false};
 };
 //-------End of Commander structs------
@@ -214,6 +215,7 @@ extern Baselines baselines;
 extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
 extern double gd_to_K1;
+extern long unsigned int ft_cnt;
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;
@@ -241,6 +243,8 @@ public:
 
     // The Fourier transformed image.
     fftw_complex *ft;
+
+    bool bad_frame=false;
 
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
@@ -284,7 +288,7 @@ void set_delay_lines(Eigen::Vector4d dl);
 extern ForwardFt *K1ft, *K2ft;
 
 // Delay line offloads
-sem_t sem_offload;
+extern sem_t sem_offload;
 void set_delay_lines(Eigen::Vector4d dl);
 void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);
