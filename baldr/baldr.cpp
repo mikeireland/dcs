@@ -54,6 +54,7 @@ std::atomic<int> servo_mode_HO;
 // to hold baldr (DM channel 2) open loop offsets 
 std::shared_ptr<const OLOffsets> g_ol_offsets{nullptr};
 
+double g_subframe_int = 1.0; // sum of intensity in the current subframe //post TTonsky
 
 std::string telemFormat = "fits";//"json";
 std::string telem_save_path = "/home/asg/Music/"; // /home/rtc/Downloads/"; //"/home/benjamin/Downloads/"//"/home/asg/Music/";
@@ -1632,7 +1633,7 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
     {"N0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
     {"I0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
-    {"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
+    //{"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
     {"sec_idx",              make_scalar_field_getter(&bdr_rtc_config::sec_idx, "int")},
     {"m_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::m_s_runtime, "double")},
     {"b_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::b_s_runtime, "double")},
@@ -1792,17 +1793,17 @@ nlohmann::json set_rtc_field(std::string path, nlohmann::json value) {
     // Matrices that affect runtime projections (cheap scale/update)
     if (path == "matrices.I2M_LO" || path == "scale") {
         std::lock_guard<std::mutex> lk(rtc_mutex);
-        rtc_config.I2M_LO_runtime = rtc_config.scale * rtc_config.matrices.I2M_LO;
+        rtc_config.I2M_LO_runtime = rtc_config.matrices.I2M_LO;//rtc_config.scale * rtc_config.matrices.I2M_LO;
     }
     if (path == "matrices.I2M_HO" || path == "scale") {
         std::lock_guard<std::mutex> lk(rtc_mutex);
-        rtc_config.I2M_HO_runtime = rtc_config.scale * rtc_config.matrices.I2M_HO;
+        rtc_config.I2M_HO_runtime = rtc_config.matrices.I2M_HO; //rtc_config.scale * rtc_config.matrices.I2M_HO;
     }
     // Strehl/rms model (m,b) recompute
     if (path == "matrices.I2rms_sec" || path == "scale") {
         std::lock_guard<std::mutex> lk(rtc_mutex);
         if (rtc_config.matrices.I2rms_sec.rows() >= 2 && rtc_config.matrices.I2rms_sec.cols() >= 2) {
-            rtc_config.m_s_runtime = rtc_config.scale * rtc_config.matrices.I2rms_sec(0,0);
+            rtc_config.m_s_runtime = rtc_config.matrices.I2rms_sec(0,0); //rtc_config.scale * rtc_config.matrices.I2rms_sec(0,0);
             rtc_config.b_s_runtime =                       rtc_config.matrices.I2rms_sec(1,1);
         }
     }
