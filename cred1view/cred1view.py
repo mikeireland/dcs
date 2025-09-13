@@ -21,7 +21,8 @@ import json
 #                           global variables
 # =====================================================================
 
-myqt = 0   # myqt is a global variable
+myqt = 0  # myqt is a global variable
+
 
 # =====================================================================
 #                               Tools
@@ -29,66 +30,70 @@ myqt = 0   # myqt is a global variable
 def bound(val, low, high):
     return max(low, min(high, val))
 
+
 def arr2im(arr, vmin=False, vmax=False, pwr=1.0, cmap=None, gamma=1.0):
-    ''' --------------------------------------------------------
+    """--------------------------------------------------------
     convert 2D numpy array into image for display
 
     limits dynamic range, power coefficient and applies colormap
-    -------------------------------------------------------- '''
-    arr2 = arr.astype('float')  # local array is modified
-    
+    --------------------------------------------------------"""
+    arr2 = arr.astype("float")  # local array is modified
+
     mmin = np.percentile(arr2, 5) if vmin is False else vmin
     mmax = np.percentile(arr2, 99.9) if vmax is False else vmax
     mycmap = cm.magma if cmap is None else cmap
 
     arr2 -= mmin
     if mmax != mmin:
-        arr2 /= (mmax-mmin)
+        arr2 /= mmax - mmin
     arr2 = arr2**pwr
 
     res = mycmap(arr2)
     res[:, :, 3] = gamma
-    return(res)
+    return res
+
 
 # ============================================================
 #                   Thread specifics
 # ============================================================
 class GenericThread(QtCore.QThread):
-    ''' ---------------------------------------------------
+    """---------------------------------------------------
     generic thread class used to externalize the execution
     of a function (calibration, closed-loop) to a separate
     thread.
-    --------------------------------------------------- '''
+    ---------------------------------------------------"""
+
     def __init__(self, function, *args, **kwargs):
         QtCore.QThread.__init__(self)
         self.function = function
         self.args = args
         self.kwargs = kwargs
- 
+
     def __del__(self):
         self.wait()
- 
+
     def run(self):
-        self.function(*self.args,**self.kwargs)
+        self.function(*self.args, **self.kwargs)
         return
+
 
 # ==========================================================
 #              Creating the Application
 # ==========================================================
-class App(QtWidgets.QMainWindow): 
+class App(QtWidgets.QMainWindow):
     # ------------------------------------------------------
     def __init__(self):
         super().__init__()
-        self.title = 'Asgard CRED1 viewer'
+        self.title = "Asgard CRED1 viewer"
         self.left, self.top = 0, 0
         self.width, self.height = 850, 550
 
-        self.setWindowTitle(self.title) 
+        self.setWindowTitle(self.title)
         self.setGeometry(self.left, self.top, self.width, self.height)
         self.setMinimumSize(QtCore.QSize(self.width, self.height))
         self.setMaximumSize(QtCore.QSize(self.width, self.height))
-        self.main_widget = MyMainWidget(self) 
-        self.setCentralWidget(self.main_widget) 
+        self.main_widget = MyMainWidget(self)
+        self.setCentralWidget(self.main_widget)
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.refresh)
@@ -106,31 +111,35 @@ class App(QtWidgets.QMainWindow):
     def mouseMoved(self, evt):
         pos = evt[0]
         if self.main_widget.gView_live.sceneBoundingRect().contains(pos):
-            mousePoint = self.main_widget.gView_live.getPlotItem().vb.mapSceneToView(pos)
+            mousePoint = self.main_widget.gView_live.getPlotItem().vb.mapSceneToView(
+                pos
+            )
             self.main_widget.vline.setPos(mousePoint.x())
             self.main_widget.hline.setPos(mousePoint.y())
             yi, xi = int(mousePoint.y()), int(mousePoint.x())
-            self.main_widget.pyi = bound(yi, 0, self.main_widget.imsize[0]-1)
-            self.main_widget.pxi = bound(xi, 0, self.main_widget.imsize[1]-1)
+            self.main_widget.pyi = bound(yi, 0, self.main_widget.imsize[0] - 1)
+            self.main_widget.pxi = bound(xi, 0, self.main_widget.imsize[1] - 1)
 
 
 # =============================================================================
 # =============================================================================
 class MyMainWidget(QtWidgets.QWidget):
-    def __init__(self, parent): 
+    def __init__(self, parent):
         super(QtWidgets.QWidget, self).__init__(parent)
 
         # ---------------------------------------------------------------------
         #                              top menu
         # ---------------------------------------------------------------------
         self.actionOpen = QtWidgets.QAction(
-            QtGui.QIcon(":/images/open.png"), "&Open...", self)
+            QtGui.QIcon(":/images/open.png"), "&Open...", self
+        )
 
         self.actionQuit = QtWidgets.QAction(
-            QtGui.QIcon(":/images/open.png"), "&Quit", self)
+            QtGui.QIcon(":/images/open.png"), "&Quit", self
+        )
 
         self.actionQuit.triggered.connect(self.close_program)
-        self.actionQuit.setShortcut('Ctrl+Q')
+        self.actionQuit.setShortcut("Ctrl+Q")
 
         self.menu = parent.menuBar()
         file_menu = self.menu.addMenu("&File")
@@ -143,7 +152,7 @@ class MyMainWidget(QtWidgets.QWidget):
             self.split_config = json.load(file)
         # ===============
 
-        self.imw, self.imh = 2*self.imsize[1], 2*self.imsize[0]
+        self.imw, self.imh = 2 * self.imsize[1], 2 * self.imsize[0]
         self.vmin = False
         self.vmax = False
         self.pwr = 1.0
@@ -155,7 +164,7 @@ class MyMainWidget(QtWidgets.QWidget):
         self.gView_live = pg.PlotWidget(self)
 
         self.lbl_stats = QtWidgets.QLabel(self)
-        
+
         # ============= display controls =============
         self.chB_nonlinear = QtWidgets.QCheckBox("non-linear", self)
         self.chB_average = QtWidgets.QCheckBox("averaging", self)
@@ -170,17 +179,17 @@ class MyMainWidget(QtWidgets.QWidget):
         self.dspB_disp_max.setMaximum(65000)
         self.dspB_disp_min.setValue(1000)
         self.dspB_disp_max.setValue(10000)
-        
+
         self.chB_min = QtWidgets.QCheckBox("apply min", self)
         self.chB_max = QtWidgets.QCheckBox("apply max", self)
 
         self.cmB_cbar = QtWidgets.QComboBox(self)
         self.cmB_cbar.addItems(
-            ['magma', 'gray', 'hot', 'cool', 'bone', 'jet', 'viridis'])
+            ["magma", "gray", "hot", "cool", "bone", "jet", "viridis"]
+        )
         self.cmB_cbar.activated[str].connect(self.update_cbar)
 
         self.apply_layout()
-
 
     # =========================================================================
     def close_program(self):
@@ -190,8 +199,8 @@ class MyMainWidget(QtWidgets.QWidget):
 
     # =========================================================================
     def apply_layout(self):
-        pad = 10   # border width
-        clh = 28   # control line height
+        pad = 10  # border width
+        clh = 28  # control line height
         btw = 100  # button width
         xcol1 = self.imw + 2 * pad
         xcol2 = xcol1 + btw + 5
@@ -200,14 +209,14 @@ class MyMainWidget(QtWidgets.QWidget):
         #  the live displays
         # -------------------
         self.gView_live.setGeometry(QRect(pad, pad, self.imw, self.imh))
-        self.gView_live.hideAxis('left')
-        self.gView_live.hideAxis('bottom')
+        self.gView_live.hideAxis("left")
+        self.gView_live.hideAxis("bottom")
         self.imv_data = pg.ImageItem()
         self.overlay = pg.GraphItem()
         self.gView_live.addItem(self.imv_data)
 
         # stat display
-        self.lbl_stats.setGeometry(QRect(self.imw+2*pad, 40, 180, 10 * clh))
+        self.lbl_stats.setGeometry(QRect(self.imw + 2 * pad, 40, 180, 10 * clh))
         # cross-hair
         self.vline = pg.InfiniteLine(angle=90, movable=False)
         self.hline = pg.InfiniteLine(angle=0, movable=False)
@@ -218,12 +227,22 @@ class MyMainWidget(QtWidgets.QWidget):
         self.oboxes = []
         for roi in self.split_config:
             x0, y0 = self.split_config[roi]["x0"], self.split_config[roi]["y0"]
+            if roi.startswith("baldr"):
+                img_height = self.data_img.shape[0]
+                full_img_height = 256
+                y0 -= (full_img_height-img_height)
             xsz, ysz = self.split_config[roi]["xsz"], self.split_config[roi]["ysz"]
-            obox = pg.RectROI([x0, y0], [xsz, ysz], pen='r', aspectLocked=True,
-                               movable=False, removable=False, resizable=False)
+            obox = pg.RectROI(
+                [x0, y0],
+                [xsz, ysz],
+                pen="r",
+                aspectLocked=True,
+                movable=False,
+                removable=False,
+                resizable=False,
+            )
             self.oboxes.append(obox)
             self.gView_live.addItem(obox)
-
 
         # ============= display controls =============
         y0 = 370
@@ -235,18 +254,17 @@ class MyMainWidget(QtWidgets.QWidget):
 
         y0 = 400
         self.dspB_disp_min.setGeometry(QRect(xcol1, y0, btw, clh))
-        self.dspB_disp_max.setGeometry(QRect(xcol1, y0+30, btw, clh))
+        self.dspB_disp_max.setGeometry(QRect(xcol1, y0 + 30, btw, clh))
         self.dspB_disp_min.valueChanged[float].connect(self.update_vmin)
         self.dspB_disp_max.valueChanged[float].connect(self.update_vmax)
 
         self.chB_min.setGeometry(QRect(xcol2, y0, btw, clh))
-        self.chB_max.setGeometry(QRect(xcol2, y0+30, btw, clh))
+        self.chB_max.setGeometry(QRect(xcol2, y0 + 30, btw, clh))
         self.chB_min.stateChanged[int].connect(self.update_vmin_apply)
         self.chB_max.stateChanged[int].connect(self.update_vmax_apply)
 
         # color scale
-        self.cmB_cbar.setGeometry(
-            QRect(xcol1, self.imh + pad - clh, btw, clh))
+        self.cmB_cbar.setGeometry(QRect(xcol1, self.imh + pad - clh, btw, clh))
         self.cmB_cbar.activated[str].connect(self.update_cbar)
         self.cmB_cbar.setCurrentIndex(0)
         self.update_cbar()
@@ -264,7 +282,7 @@ class MyMainWidget(QtWidgets.QWidget):
         self.chB_min.setCheckState(True)
         # if self.chB_min.isChecked():
         self.vmin = self.dspB_disp_min.value()
-    
+
     # =========================================================
     def update_vmax_apply(self):
         if not self.chB_max.isChecked():
@@ -302,7 +320,7 @@ class MyMainWidget(QtWidgets.QWidget):
     def update_cbar(self):
         cbar = str(self.cmB_cbar.currentText()).lower()
         try:
-            exec('self.mycmap = cm.%s' % (cbar,))
+            exec("self.mycmap = cm.%s" % (cbar,))
         except AttributeError:
             self.mycmap = cm.jet
 
@@ -319,10 +337,15 @@ class MyMainWidget(QtWidgets.QWidget):
     # =========================================================
     def refresh_img(self):
         self.imv_data.setImage(
-            arr2im(self.data_img.T,
-                   vmin=self.vmin, vmax=self.vmax,
-                   pwr=self.pwr,
-                   cmap=self.mycmap), border=2)
+            arr2im(
+                self.data_img.T,
+                vmin=self.vmin,
+                vmax=self.vmax,
+                pwr=self.pwr,
+                cmap=self.mycmap,
+            ),
+            border=2,
+        )
         if self.pxi < self.imsize[1] and self.pyi < self.imsize[0]:
             self.pxval = self.data_img[self.pyi, self.pxi]
 
@@ -362,16 +385,18 @@ def main():
 
     gui = App()
     gui.show()
-    
+
     proxy = pg.SignalProxy(
         gui.main_widget.gView_live.scene().sigMouseMoved,
-        rateLimit=60, slot=gui.mouseMoved)
-    
+        rateLimit=60,
+        slot=gui.mouseMoved,
+    )
+
     myqt.mainloop()
     myqt.gui_quit()
 
 
 # ==========================================================
 # ==========================================================
-if __name__ == '__main__': 
+if __name__ == "__main__":
     main()
