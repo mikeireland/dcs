@@ -303,7 +303,7 @@ void fringe_tracker(){
     Eigen::Matrix<double, N_TEL, N_TEL> cov_gd_tel;
     Eigen::Matrix<double, N_TEL, N_TEL> cov_pd_tel;
     Eigen::Vector4d pd_gain_scale = Eigen::Vector4d::Ones();
-    unsigned long int last_gd_jump[N_TEL] = {0,0,0,0};
+    unsigned long int last_gd_jump=0;
 
     long x_px, y_px, stride;
     initialise_baselines();
@@ -528,24 +528,15 @@ void fringe_tracker(){
 
         } else if (servo_mode == SERVO_LACOUR){
             // Compute the piezo control signal from the phase delay.
-            control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
-            // Use the group delay to make full fringe jumps, only if there has been at least
-            // baselines.n_gd_boxcar frames since initialisation or the last jump.
-            for (int i=0; i<N_TEL; i++){
-                if (cnt_since_init - last_gd_jump[i] > baselines.n_gd_boxcar){
-                    if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
-                        if (std::fabs(control_a.gd(i)) > 0.5){
-                            control_u.dm_piston(i) += std::round(control_a.gd(i)) * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
-                            last_gd_jump[i] = cnt_since_init;
-                        } 
-                    }
-                }
+            if ((cnt_since_init == last_gd_jump+1) || (cnt_since_init > last_gd_jump + 3)){
+	        control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
+            
+           	// Center the DM piston.
+            	control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
+            	// Limit it to no more than +/- MAX_DM_PISTON.
+            	control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
+            	control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
             }
-            // Center the DM piston.
-            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
-            // Limit it to no more than +/- MAX_DM_PISTON.
-            control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
-            control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
         }
         // Make the test pattern.
         if (control_u.test_n > 0){
@@ -566,8 +557,6 @@ void fringe_tracker(){
         then = now;
 #endif
         // Phew! Now on to the less time-critical delay line control.
-        // Add to the delay line offload.
-        control_u.dl_offload += (control_u.dit/((double)offload_time_ms*0.001)) * control_u.dm_piston * OPD_PER_DM_UNIT;
 
         // Apply the DL offload if enough time has passed since the last offload. !!! Remove 2 zeros.
         clock_gettime(CLOCK_REALTIME, &now);
@@ -635,16 +624,31 @@ void fringe_tracker(){
                 if (control_u.test_ix % 2 == 0){
                     control_u.search(control_u.test_beam) = control_u.test_value;
                 } else {
-                    control_u.search(control_u.test_beam) = 0;
+                    control_u.search(control_u.test_beam) = -control_u.test_value;
                 }
                 control_u.test_ix = (control_u.test_ix + 1) % 2;
             }
 
             if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
+            	// Add to the delay line offload.
+        	control_u.dl_offload = 0.5*control_u.dm_piston * OPD_PER_DM_UNIT;
+            	if ((servo_mode == SERVO_LACOUR) && (cnt_since_init - last_gd_jump > baselines.n_gd_boxcar)){
+            	  // Use the group delay to make full fringe jumps, only if there has been at least
+            	  // baselines.n_gd_boxcar frames since initialisation or the last jump.
+            	  for (int i=0; i<N_TEL; i++){
+                    if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+                        if (std::fabs(control_a.gd(i)) > 0.5){
+                            control_u.dl_offload(i) -=  config["wave"]["K1"].value_or(2.05);
+                            last_gd_jump = cnt_since_init;
+                        } 
+                    }
+                  }
+                }
                 //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
                 //    control_u.dl_offload(2), control_u.dl_offload(3));
+                
                 add_to_delay_lines(control_u.search - control_u.dl_offload);
-                control_u.dl_offload.setZero();
+                //control_u.dl_offload.setZero();
             }
             else if (offload_mode == OFFLOAD_GD) {
                 /*double o1 = -pid_settings.offload_gd_gain*control_a.gd(0) * config["wave"]["K1"].value_or(2.05);

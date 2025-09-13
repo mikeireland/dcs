@@ -52,6 +52,7 @@ keys_of_interest = [
     "pd_tel",
     "gd_tel",
     "dm_piston",
+    "dl_offload",
     "test_ix",
 ]
 
