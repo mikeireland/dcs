@@ -91,7 +91,9 @@ std::string send_mds_cmd(const std::string& message) {
     zmq::message_t reply;
     auto result = mds_zmq_socket.recv(reply, zmq::recv_flags::none);
     if (!result.has_value()) {
-        throw std::runtime_error("Timeout or error receiving reply from MDS.");
+        fmt::print("Timeout or error receiving reply from MDS.");
+        mds_zmq_initialized=false;
+        return "0.0";
     }
     return std::string(static_cast<char*>(reply.data()), reply.size());
 }
