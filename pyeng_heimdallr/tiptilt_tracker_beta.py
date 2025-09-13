@@ -53,9 +53,9 @@ a0 = 0.1
 
 dms, sems = [], []
 
-for ii in range(ndm):
-    dms.append(shm(f"/dev/shm/dm{dmids[ii]}disp{chn:02d}.im.shm"))
-    sems.append(shm(f"/dev/shm/dm{ii+1}.im.shm", nosem=False))
+# for ii in range(ndm):
+#     dms.append(shm(f"/dev/shm/dm{dmids[ii]}disp{chn:02d}.im.shm"))
+#     sems.append(shm(f"/dev/shm/dm{ii+1}.im.shm", nosem=False))
 
 # ------------ hole center coordinates --------------
 hc = np.loadtxt("N1_hole_coordinates.txt")
@@ -116,9 +116,6 @@ for ii in range(2):
 
 print(tt_modes[0].max())
 print(tt_modes[1].max())
-
-for ii in range(ndm):
-    dms[ii].set_data(0.0 * tt_modes[0])
 
 # ============================================================
 #                   Thread specifics
@@ -201,10 +198,17 @@ class MyMainWidget(QWidget):
         self.pB_calibrate = QtWidgets.QPushButton(self)
         self.pB_calibrate.setText("CALIB")
 
+        self.pB_reset = QtWidgets.QPushButton(self)
+        self.pB_reset.setText("RESET")
+
         self.pB_iteration = QtWidgets.QPushButton(self)
         self.pB_iteration.setText("ITERATE")
-        self.apply_layout()
 
+        self.pB_cloop = QtWidgets.QPushButton("CLOOP", self)
+        self.pB_abort = QtWidgets.QPushButton("ABORT", self)
+
+        self.apply_layout()
+        
         # response matrices in tip-tilt
         # self.rx = np.array([[0, -16.9, 0, 0, 22.94,  17.88],
         #                     [41.76, 0.0, 0.0, 59.32, 0.0, 36.88],
@@ -229,6 +233,7 @@ class MyMainWidget(QWidget):
         clh = 28   # control line height
         plw = 500  # plot width
         plh = 500  # plot height
+        btx = 520  # button X-coordinate
 
         # -------------------
         #  the live displays
@@ -252,16 +257,27 @@ class MyMainWidget(QWidget):
         self.scatter_plot = pg.ScatterPlotItem(x=uu, y=vv, size=8)
         self.gView_psp.addItem(self.scatter_plot)
 
-        self.pB_calibrate.setGeometry(QRect(520, 30, 100, 28))
+        self.pB_calibrate.setGeometry(QRect(btx, 30, 100, 28))
         self.pB_calibrate.clicked.connect(self.trigger_calibration)
 
-        self.pB_iteration.setGeometry(QRect(520, 60, 100, 28))
+        self.pB_reset.setGeometry(QRect(btx, 30, 100, 28))
+        self.pB_reset.clicked.connect(self.reset_correction)
+
+        self.pB_iteration.setGeometry(QRect(btx, 90, 100, 28))
         self.pB_iteration.clicked.connect(self.trigger_iteration)
+
+        self.pB_cloop.setGeometry(QRect(btx, 120, 100, 28))
+        self.pB_cloop.clicked.connect(self.trigger_cloop)
+
+        self.pB_abort.setGeometry(QRect(btx, 150, 100, 28))
+        self.pB_abort.clicked.connect(self.abort)
+
+        self.keepgoing = False
 
     # =========================================================================
     def fourier_signal(self, phase=True):
-        frame = dstream.get_latest_data(semid).astype(float) - im_offset
-        # frame = 1 + 0.5 * np.random.randn(isz, isz)
+        # frame = dstream.get_latest_data(semid).astype(float) - im_offset
+        frame = 1 + 0.5 * np.random.randn(isz, isz)
         cvis = hdlr.extract_cvis_from_img(frame) / 19
         cvis0 = hdlr0.extract_cvis_from_img(frame)
 
@@ -329,9 +345,7 @@ class MyMainWidget(QWidget):
             btx, bty = self.get_slopes(phi)
             ry[ii,:] = (bty - bty0) / a0
 
-            dms[ii].set_data(0 * tt_modes[0]) # reset DM to initial state
-            time.sleep(1)
-
+            self.reset_correction(ii)
 
         print(np.round(rx.T, 3))
         print(np.round(ry.T, 3))
@@ -339,8 +353,12 @@ class MyMainWidget(QWidget):
         self.rx, self.ry = rx, ry
         self.cx = np.linalg.pinv(self.rx.T)
         self.cy = np.linalg.pinv(self.ry.T)
-        # return rx, ry
-        
+
+    # =========================================================================
+    def reset_correction(self, ii):
+        dms[ii].set_data(0 * tt_modes[0]) # reset DM to initial state
+        time.sleep(1)
+
     # =========================================================================
     def get_slopes(self, phi):
         btx, bty = np.array([]), np.array([])
@@ -379,13 +397,37 @@ class MyMainWidget(QWidget):
         self.scatter_plot.setData(x=uu, y=vv, pen=colors, brush=colors, size=8)
         # pass
 
+    # =========================================================================
     def trigger_calibration(self):
         print("start calibration")
         self.calib_thread = GenericThread(
             self.calibrate_response, a0=a0)
         self.calib_thread.start()
 
+    # =========================================================================
+    def abort(self):
+        self.keepgoing = False
+
+    # =========================================================================
+    def trigger_cloop(self):
+        print("start loop")
+        self.keepgoing = True
+        self.cloop_thread = GenericThread(
+            self.cloop)
+        self.cloop_thread.start()
+
+    # =========================================================================
     def trigger_iteration(self):
+        self.iteration()
+
+    # =========================================================================
+    def cloop(self):
+        while keepgoing:
+            self.iteration()
+            time.sleep(0.1)
+
+    # =========================================================================
+    def iteration(self):
         phi = self.fourier_signal()
         btx, bty = self.get_slopes(phi)
 
@@ -400,7 +442,6 @@ class MyMainWidget(QWidget):
             correc = (corrx[ii] * tt_modes[0] + corry[ii] * tt_modes[1])
             dm0 = dms[ii].get_data()
             dms[ii].set_data(0.99 * (dm0 - gain * correc))
-
 
 # ==========================================================
 # ==========================================================
