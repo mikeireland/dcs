@@ -886,7 +886,16 @@ void rtc(){
         // auto start2 = Clock::now();
         
         // model of residual rms in DM units using secondary obstruction 
-        dm_rms_est_1 = rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
+        //dm_rms_est_1 = img[ rtc_config.pixels.exterior_pixels ].template cast<double>().mean(); //rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
+        // new using average of all exterior pixels.
+        double sum_ext_px = 0.0;
+        for (Eigen::Index k = 0; k < rtc_config.pixels.exterior_pixels.size(); ++k) {
+            sum_ext_px += img(rtc_config.pixels.exterior_pixels(k));
+        }
+        double dm_rms_est_1 = (rtc_config.pixels.exterior_pixels.size() > 0)
+            ? sum_ext_px / static_cast<double>(rtc_config.pixels.exterior_pixels.size())
+            : std::numeric_limits<double>::quiet_NaN();
+            
 
         //std::cout << dm_rms_est_1 << std::endl;
 
