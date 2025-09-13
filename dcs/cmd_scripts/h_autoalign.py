@@ -28,11 +28,12 @@ import json
 class HeimdallrAA:
     def __init__(self, shutter_pause_time, band, flux_threshold, savepth, output):
         # Set target_pixels and col_bnds based on band
+        centres = self.load_centre_positions()
         if band.upper() == "K1":
-            self.target_pixels = (27, 49)
+            self.target_pixels = centres["K1"]
             self.col_bnds = (0, 160)
         elif band.upper() == "K2":
-            self.target_pixels = (289, 51)
+            self.target_pixels = centres["K2"]
             self.col_bnds = (160, 320)
         else:
             raise ValueError("Unknown band: choose 'K1' or 'K2'.")
@@ -62,6 +63,26 @@ class HeimdallrAA:
 
         if self.output == "mcs":
             self.mcs_client = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:7019")
+
+    @staticmethod
+    def load_centre_positions():
+        # read in ~/.config/cred1_split.json
+        config_path = os.path.expanduser("~/.config/cred1_split.json")
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file {config_path} does not exist.")
+        with open(config_path, "r") as f:
+            config = json.load(f)
+
+        centre_pixels = {}
+        x_c = config["hei_k1"]["x_0"] + config["hei_k1"]["xsz"] / 2
+        y_c = config["hei_k1"]["y_0"] + config["hei_k1"]["ysz"] / 2
+        centre_pixels["K1"] = (x_c, y_c)
+
+        x_c = config["hei_k2"]["x_0"] + config["hei_k2"]["xsz"] / 2
+        y_c = config["hei_k2"]["y_0"] + config["hei_k2"]["ysz"] / 2
+        centre_pixels["K2"] = (x_c, y_c)
+
+        return centre_pixels
 
     def get_init_motors_state(self):
         motors = {}
