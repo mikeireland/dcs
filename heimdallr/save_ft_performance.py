@@ -87,7 +87,12 @@ def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
                 for k in keys_of_interest:
                     v = reply.get(k)
                     if isinstance(v, (list, np.ndarray)):
-                        values.extend(["{:.3f}".format(float(x)) for x in v])
+                        values.extend(
+                            [
+                                "{:.3f}".format(float(x) if x is not None else np.nan)
+                                for x in v
+                            ]
+                        )
                     else:
                         try:
                             values.append("{:.3f}".format(float(v)))
