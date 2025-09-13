@@ -306,24 +306,24 @@ Status get_status() {
 
     // Now fill these in with the values from the control structures.
     for (int i = 0; i < N_BL; i++) {
-        status.gd_bl[i] = baselines.gd(i);
-        status.pd_bl[i] = baselines.pd(i);
-        status.gd_snr[i] = baselines.gd_snr(i);
-        status.pd_snr[i] = baselines.pd_snr(i);
-        status.v2_K1[i] = baselines.v2_K1(i);
-        status.v2_K2[i] = baselines.v2_K2(i);
-        status.pd_av[i] = baselines.pd_av(i);
-        status.pd_av_filtered[i] = baselines.pd_av_filtered(i);
+        status.gd_bl[i] = std::round(baselines.gd(i)* 1000.0)/1000.0;
+        status.pd_bl[i] = std::round(baselines.pd(i)* 1000.0)/1000.0;
+        status.gd_snr[i] = std::round(baselines.gd_snr(i)* 100.0)/100.0;
+        status.pd_snr[i] = std::round(baselines.pd_snr(i)* 100.0)/100.0;
+        status.v2_K1[i] = std::round(baselines.v2_K1(i)* 10000.0)/10000.0;
+        status.v2_K2[i] = std::round(baselines.v2_K2(i) * 10000.0)/10000.0;
+        status.pd_av[i] = std::round(baselines.pd_av(i)* 1000.0)/1000.0; //Not needed anymore !!!
+        status.pd_av_filtered[i] = std::round(baselines.pd_av_filtered(i)* 1000.0)/1000.0; //Not needed anymore !!!
     }
     for (int i = 0; i < N_TEL; i++) {
-        status.gd_tel[i] = control_a.gd(i);
-        status.pd_tel[i] = control_a.pd(i);
-        status.dm_piston[i] = control_u.dm_piston(i);
-        status.dl_offload[i] = last_offload(i); // not the offload increment, but the total offload!
+        status.gd_tel[i] = std::round(control_a.gd(i)* 1000.0)/1000.0;
+        status.pd_tel[i] = std::round(control_a.pd(i)* 1000.0)/1000.0;
+        status.dm_piston[i] = std::round(control_u.dm_piston(i)* 1000.0)/1000.0;
+        status.dl_offload[i] = std::round(last_offload(i)* 1000.0)/1000.0; // not the offload increment, but the total offload!
     }
     for (int i = 0; i < N_CP; i++) {
-        status.closure_phase_K1[i] = bispectra_K1[i].closure_phase;
-        status.closure_phase_K2[i] = bispectra_K2[i].closure_phase;
+        status.closure_phase_K1[i] = std::round(bispectra_K1[i].closure_phase* 1000.0)/1000.0;
+        status.closure_phase_K2[i] = std::round(bispectra_K2[i].closure_phase* 1000.0)/1000.0;
     }
     status.locked = control_u.fringe_found;
     // Count modulo 10000. This is mostly to look for skipped 

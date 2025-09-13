@@ -621,9 +621,10 @@ void fringe_tracker(){
                 unsigned int index = control_u.search_Nsteps/control_u.steps_to_turnaround + 1;
                 //This gives a logarithm base 2, so we search twice as far each turnaround. 
                 while (index >>= 1) ++search_level;
-                control_u.search = I4_search_projection * control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
-                    * search_vector_scale;
-                for (int i=0; i<N_TEL; i++) control_u.search(i) *= control_u.beams_active[i];
+                Eigen::Vector4d beams_active(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
+                control_u.search = I4_search_projection *control_u.search_delta * (1.0 - (search_level % 2) * 2.0)
+                    * beams_active.asDiagonal() * search_vector_scale;
+                control_u.search -= (beams_active.asDiagonal() * control_u.search).mean() * beams_active;
                 control_u.search_Nsteps++;
             }
 
