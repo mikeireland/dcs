@@ -204,6 +204,8 @@ void reset_search(){
     control_u.test_ix=0;
     control_u.test_value=0.1;
     control_u.fringe_found = false;
+    control_u.itime=0;
+    control_u.target_itime=0;
     beam_mutex.unlock();
 
     pid_settings.mutex.lock();
@@ -313,6 +315,10 @@ void fringe_tracker(){
         // See if there was a semaphore signalled for the next frame to be ready in K1 and K2
         sem_wait(&K1ft->sem_new_frame);
         sem_wait(&K2ft->sem_new_frame);
+        if ((K1ft->bad_frame) || (K1ft->bad_frame)) {
+            ft_cnt++;
+            continue;
+        }
         // If we are here, then a new frame is available in both K1 and K2. 
         // Check that there has not been a counting error.
         if(K1ft->cnt == ft_cnt || K2ft->cnt == ft_cnt){
@@ -586,6 +592,7 @@ void fringe_tracker(){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
                 control_u.fringe_found = true;
+                control_u.itime += offload_time_ms/1000.0;
                 //fmt::print("Resetting search, good fringes detected. GD vars: {:.4f} {:.4f} {:.4f} {:.4f}\n", 
                 //	cov_gd_tel.diagonal()(0), cov_gd_tel.diagonal()(1),cov_gd_tel.diagonal()(2), cov_gd_tel.diagonal()(3));
                  //           fmt::print("cov_gd_tel eigenvalues: ");
@@ -607,7 +614,7 @@ void fringe_tracker(){
                 control_u.search_Nsteps++;
             }
 
-            // if test_n is negative, over-write this with a test pattern.
+            // if testauto now_n is negative, over-write this with a test pattern.
             if (control_u.test_n < 0){
                 control_u.search.setZero();
                 // Set the test_beam to have a square wave of amplitude test_value, half period 1 offloads.

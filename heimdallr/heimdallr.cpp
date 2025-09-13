@@ -92,8 +92,8 @@ void linear_search(uint beam, double start, double stop, double rate, uint searc
     // Set the delay line to the start position
     set_delay_line(beam, start);
 
-    // Set the piston DM to zero. 
-    set_dm_piston(Eigen::Vector4d::Zero());
+    // Set the piston DM to zero. !!! Can't be called from this thread.
+    //set_dm_piston(Eigen::Vector4d::Zero());
 
     beam_mutex.unlock();
     usleep(DELAY_MOVE_USEC); // Wait for the delay line to move
@@ -418,17 +418,33 @@ void beams_active(std::vector<int> beams) {
     beam_mutex.lock();
     for (uint i = 0; i < N_TEL; i++) {
         if (beams[i] == 1) {
-            control_a.beam_active(i) = 1;
+            control_u.beams_active[i] = 1;
         } else {
-            control_a.beam_active(i) = 0;
+            control_u.beams_active[i] = 0;
         }
     }
     beam_mutex.unlock();
     std::cout << "Active beams updated to: ";
     for (uint i = 0; i < N_TEL; i++) {
-        std::cout << control_a.beam_active(i) << " ";
+        std::cout << control_u.beams_active[i] << " ";
     }
     std::cout << std::endl;
+}
+
+void set_itime(double itime) {
+    // Set the integration time in seconds
+    if ((itime < 0) || itime>1000) {
+        std::cout << "Target integration time out of range (0 to 1000)" << std::endl;
+        return;
+    }
+    beam_mutex.lock();
+    control_u.target_itime=itime;
+    beam_mutex.unlock();   
+}
+
+std::string expstatus(void){
+    if (control_u.itime < control_u.target_itime) return "integrating";
+    return "success";
 }
 
 COMMANDER_REGISTER(m)
@@ -468,7 +484,8 @@ COMMANDER_REGISTER(m)
     m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 0,1,3 and project to baseline space", 
         "offset0"_arg=0.0, "offset1"_arg=0.0, "offset3"_arg=0.0);
     m.def("beams_active", beams_active, "Set which beams are active", "beams"_arg=std::vector<int>{1,1,1,1});
-    
+    m.def("set_itime", set_itime, "Set the target integration time", "itime"_arg=100);
+    m.def("expstatus", expstatus, "Get the exposure time status (success if complete)");
 }
 
 int main(int argc, char* argv[]) {

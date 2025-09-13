@@ -137,6 +137,7 @@ struct ControlU{
     int test_beam, test_n, test_ix;
     double test_value;
     bool fringe_found;
+    double itime, target_itime;
     int beams_active[N_TEL]={1,1,1,1};
 };
 
@@ -242,6 +243,8 @@ public:
     // The Fourier transformed image.
     fftw_complex *ft;
 
+    bool bad_frame=false;
+
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
     double *power_spectrum;
@@ -284,7 +287,7 @@ void set_delay_lines(Eigen::Vector4d dl);
 extern ForwardFt *K1ft, *K2ft;
 
 // Delay line offloads
-sem_t sem_offload;
+extern sem_t sem_offload;
 void set_delay_lines(Eigen::Vector4d dl);
 void add_to_delay_lines(Eigen::Vector4d dl);
 void set_delay_line(int dl, double value);

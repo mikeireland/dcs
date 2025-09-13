@@ -218,6 +218,7 @@ void move_main_dl()
     // (!!! following the method of other functions, we could initialize 
     // here, but that risks repeated failed attempts)
     if (!wag_rmn_initialized) return;
+    //fmt::print("Here...\n");
     // Build the JSON message
     nlohmann::json j;
     j["command"]["name"] = "writermn";
@@ -336,8 +337,8 @@ void dl_offload(){
         }
         // Log delay line type and values to file with timestamp
         std::ofstream log_file("/data/dl_offload.log", std::ios::app);
-        auto now = std::chrono::system_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        auto lnow = std::chrono::system_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(lnow.time_since_epoch()).count();
         double timestamp = ms / 1000.0;
         log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
             timestamp,
