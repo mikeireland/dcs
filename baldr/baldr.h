@@ -686,7 +686,7 @@ struct bdr_rtc_config {
 
     // darks (generated in dcs/calibration_frames/gen_dark_bias_badpix.py ) are adu/s in the gain setting (not normalized by gain)
     // I should review the darks and perhaps normalize by gain setting too! 
-    Eigen::VectorXd dark_dm_runtime ;
+    //Eigen::VectorXd dark_dm_runtime ;
 
     // Strehl models
     // secondary pixel. Solarstein mask closer to UT size - this will be invalid on internal source 
@@ -739,16 +739,20 @@ struct bdr_rtc_config {
 
         scale = gain / fps;
 
-        I2M_LO_runtime = scale * matrices.I2M_LO;
-        I2M_HO_runtime = scale * matrices.I2M_HO;
-        N0_dm_runtime = scale * reference_pupils.norm_pupil_dm;
-        I0_dm_runtime = scale * reference_pupils.I0_dm;
-        dark_dm_runtime = (1.0 / fps) * (gain/cal_gain) * reduction.dark_dm; // our dark is in ADU/s but not normalized by gain, so we need to multiply by ratio of the IM gain and gain for runnning rtc. 
+        // post TTonsky , we normalize reference intensities used to build these matricies by subframe total intensity 
+        // yetto verifiy scale factor not needed here. 
+        I2M_LO_runtime = matrices.I2M_LO; //scale * matrices.I2M_LO;
+        I2M_HO_runtime = matrices.I2M_HO; //scale * matrices.I2M_HO;
+        N0_dm_runtime = reference_pupils.norm_pupil_dm; //scale * reference_pupils.norm_pupil_dm;
+        I0_dm_runtime = reference_pupils.I0_dm; //scale * reference_pupils.I0_dm;
+        //dark_dm_runtime = (1.0 / fps) * (gain/cal_gain) * reduction.dark_dm; // our dark is in ADU/s but not normalized by gain, so we need to multiply by ratio of the IM gain and gain for runnning rtc. 
         // ^^ this feature should be optimized .. by considering gain normalized darks or keep input image in adu/s/gain
 
         sec_idx = pixels.secondary_pixels(4);
-        m_s_runtime = scale * matrices.I2rms_sec(0, 0);
+        m_s_runtime = matrices.I2rms_sec(0, 0);
         b_s_runtime = matrices.I2rms_sec(1, 1);
+
+
     }
 
 
@@ -914,6 +918,7 @@ extern bdr_rtc_config rtc_config;
 //extern float loop_time ; //us 
 //extern bool loop_time_override ;
 
+extern double g_subframe_int; // sum of intensity in the current subframe //post TTonsky
 
 // uncomment and build July 2025 AIV
 extern std::atomic<int> global_boxcar;

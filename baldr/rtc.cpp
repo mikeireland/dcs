@@ -273,6 +273,25 @@ Eigen::VectorXd getFrameFromSharedMemory(int expectedPixels) {
 //     dm_rtc.md->write = 0;
 //}
 
+// median helper to make bad_pixels = frame median (used in normalization) post TTonsky , 
+namespace {
+inline double median_of(const Eigen::VectorXd& v) {
+    const auto N = static_cast<size_t>(v.size());
+    if (N == 0) return 0.0;
+    std::vector<double> tmp(v.data(), v.data() + v.size());
+    const size_t mid = N / 2;
+    std::nth_element(tmp.begin(), tmp.begin() + mid, tmp.end());
+    double med_hi = tmp[mid];
+    if ((N & 1) == 1) return med_hi;  // odd
+
+    // even: need the max of the lower half
+    auto lo_end = tmp.begin() + mid;
+    auto lo_max_it = std::max_element(tmp.begin(), lo_end);
+    return 0.5 * (med_hi + *lo_max_it);
+}
+} // namespace
+
+
 
 // A helper function to print the dimension information of a matrix.
 template <typename Derived>
@@ -286,7 +305,6 @@ void printMatrixDimensions(const std::string &name,
 void printVectorSize(const std::string &name, const Eigen::VectorXd& v) {
     std::cout << name << " size: " << v.size() << std::endl;
 }
-
 
 
 // -- specific helpers for signal injection in command space 
@@ -399,7 +417,7 @@ static Eigen::VectorXd tikhonov_ls(const Eigen::MatrixXd& A,
                                    const Eigen::VectorXd& b,
                                    double lambda = 1e-8)
 {
-    // (AᵀA + λI) v = Aᵀ b
+    // (A.T A + lambda I) v = A.T b
     const int m = static_cast<int>(A.cols());
     Eigen::MatrixXd AtA = A.transpose() * A;
     AtA.diagonal().array() += lambda;
@@ -865,6 +883,33 @@ void rtc(){
         int32_t *raw = subarray.array.SI32;
         Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
         Eigen::VectorXd img = rawArr.cast<double>();
+
+
+        // --- Bad-pixel repair -> subframe flux -> normalization ---
+        // If we have bad pixels listed, set those indices to the frame median BEFORE summing.
+        // post TTonsky
+        if (rtc_config.pixels.bad_pixels.size() > 0) {
+            const double med = median_of(img);
+            const auto& bp = rtc_config.pixels.bad_pixels; // Eigen::Matrix<int32_t, Dyn, 1>
+            for (Eigen::Index k = 0; k < bp.size(); ++k) {
+                const int32_t idx = bp(k);
+                if (idx >= 0 && idx < img.size()) {
+                    img(idx) = med;
+                }
+            }
+        }
+
+        // Compute subframe flux (sum of intensities) and store it globally.
+        g_subframe_int = img.sum();
+
+        // Guard against pathological cases (negative/zero/NaN/Inf)
+        if (!std::isfinite(g_subframe_int) || g_subframe_int <= 0.0) {
+            g_subframe_int = 1.0;
+        }
+
+        // Normalize the image by subframe intensity sum
+        img /= g_subframe_int;
+        // --- End normalization patch ---
 
 
         // auto end1   = Clock::now();
