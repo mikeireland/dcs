@@ -29,7 +29,7 @@ class HShutterSeq:
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mcs_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg, decode_ascii=False)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send complete to MCS")
@@ -115,14 +115,13 @@ def main():
     )
     parser.add_argument(
         "--use-splay",
-        type=bool,
+        action="store_true",
         help="Use splay shutter sequence ",
     )
 
     parser.add_argument(
-        "--test_mcs",
-        type=bool,
-        default=False,
+        "--test-mcs",
+        action="store_true",
         help="test mcs connection, sends hdlr complete only",
     )
 

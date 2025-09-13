@@ -17,30 +17,12 @@ import os
 from tqdm import tqdm
 import scipy.ndimage as ndi
 
+import dcs.ZMQutils
+
 from scipy.optimize import curve_fit
 import argparse
 
 import json
-
-
-class ZmqReq:
-    """
-    An adapter for a ZMQ REQ socket (client).
-    """
-
-    def __init__(self, endpoint: str, timeout_ms: int = 1500):
-        self.ctx = zmq.Context.instance()
-        self.s = self.ctx.socket(zmq.REQ)
-        self.s.RCVTIMEO = timeout_ms
-        self.s.SNDTIMEO = timeout_ms
-        self.s.connect(endpoint)
-
-    def send_payload(self, payload):
-        self.s.send_string(json.dumps(payload))
-        try:
-            return json.loads(self.s.recv_string())
-        except zmq.error.Again:
-            return None
 
 
 class HeimdallrAA:
@@ -79,7 +61,7 @@ class HeimdallrAA:
         self.output = output
 
         if self.output == "mcs":
-            self.mcs_client = ZmqReq("tcp://192.168.100.2:7019")
+            self.mcs_client = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:7019")
 
     def get_init_motors_state(self):
         motors = {}
@@ -612,7 +594,7 @@ class HeimdallrAA:
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mcs_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg, decode_ascii=False)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send offsets to MCS")

@@ -26,25 +26,8 @@ import json
 import toml
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import leastsq
+import dcs.ZMQutils
 
-class ZmqReq:
-    """
-    An adapter for a ZMQ REQ socket (client).
-    """
-
-    def __init__(self, endpoint: str, timeout_ms: int = 1500):
-        self.ctx = zmq.Context.instance()
-        self.s = self.ctx.socket(zmq.REQ)
-        self.s.RCVTIMEO = timeout_ms
-        self.s.SNDTIMEO = timeout_ms
-        self.s.connect(endpoint)
-
-    def send_payload(self, payload):
-        self.s.send_string(json.dumps(payload))
-        try:
-            return json.loads(self.s.recv_string())
-        except zmq.error.Again:
-            return None
 
 
 
@@ -75,7 +58,7 @@ class BaldrAA:
             self.output = output
 
         if self.output.strip().lower() == "mcs":
-            self.mcs_client = ZmqReq("tcp://192.168.100.2:7019")
+            self.mcs_client = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:7019")
 
         self.savepath = savepath
 
@@ -362,14 +345,10 @@ class BaldrAA:
         # self.send_and_recv_ack(msg)
         ############################## end old rts 
 
-
-
-
-
     def send_and_recv_ack(self, msg):
         # recieve ack
         print(f"sending {msg}")
-        resp = self.mcs_client.send_payload(msg)
+        resp = self.mcs_client.send_payload(msg, decode_ascii=False)
         if resp is None or resp.get("ok") == False:
             print(resp)
             print("Failed to send offsets to MCS. Is the MCS running?")
