@@ -17,6 +17,8 @@ class HShutterSeq:
         self.settling_time = 1.5
 
         self.mcs_client = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:7019")
+        self.cam_server = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:6667")
+        self.hdlr_server = dcs.ZMQutils.ZmqReq("tcp://192.168.100.2:6660")
 
     def _open_mds_connection(self):
         context = zmq.Context()
@@ -85,6 +87,15 @@ class HShutterSeq:
         time.sleep(self.dark_time)
 
         self._send_and_get_response("h_shut open 1,2,3,4")
+
+        self.cam_server.send_string("save_mode 0")
+        res = self.cam_server.recv_string()
+
+        self.hdlr_server.send_string("foreground 0")
+        res = self.hdlr_server.recv_string()
+
+        self.hdlr_server.send_string("dls 0,0,0,0")
+        res = self.hdlr_server.recv_string()
 
     def test_mcs(self):
         msg = {
