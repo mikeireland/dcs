@@ -249,6 +249,7 @@ void move_main_dl()
         //std::string reply_str(static_cast<char*>(reply.data()), reply.size());
         //fmt::print("WAG RMN reply: {}\n", reply_str);
     } else {
+        wag_rmn_initialized=false;
         fmt::print("Timeout or error receiving reply from WAG RMN.\n");
     }
     last_offload = next_offload + search_offset;

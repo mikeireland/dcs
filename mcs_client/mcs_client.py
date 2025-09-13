@@ -580,6 +580,7 @@ class HeimdallrStatus:
     v2_K1: list[float]
     v2_K2: list[float]
     dl_offload: list[float]
+    locked: int
 
 
 class HeimdallrAdapter(CppServerAdapter):
@@ -602,7 +603,10 @@ class HeimdallrAdapter(CppServerAdapter):
             kwargs = {}
             for name in field_names:
                 if name in st:
-                    kwargs[name] = st[name]
+                    if name == "locked":
+                        kwargs[name] = int(st[name] == "true")
+                    else:
+                        kwargs[name] = st[name]
             return HeimdallrStatus(**kwargs)
         except KeyError:
             logging.warning("KeyError in HeimdallrAdapter.fetch()")

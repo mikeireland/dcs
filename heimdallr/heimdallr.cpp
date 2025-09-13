@@ -83,7 +83,7 @@ std::string encode(const char* input, unsigned int size)
 
 //----------commander functions from here---------------
 void linear_search(uint beam, double start, double stop, double rate, uint search_dt_ms, double search_snr_threashold) {
-    if ((beam >= N_TEL) || (beam == 0)) {
+    if ((beam > N_TEL) || (beam == 0)) {
         std::cout << "Beam number (arg 0) out of range (1 to " << N_TEL-1 << ")" << std::endl;
         return;
     }
@@ -332,10 +332,10 @@ Status get_status() {
     return status;
 }
 
-void test(uint beam, double value, uint n) {
+void test(uint beam, double value, int n) {
     // This is a test function that sets the DM piston to a value
     // and then waits for n seconds.
-    if ((beam >= N_TEL) || beam==0) {
+    if ((beam > N_TEL) || beam==0) {
         std::cout << "Beam number (arg 0) out of range (1 to " << N_TEL-1 << ")" << std::endl;
         return;
     }
@@ -413,19 +413,24 @@ void tweak_gd_offsets(double offset0, double offset1, double offset3) {
 }
 
 // Set which beams are active (1=active, 0=inactive)
-void beams_active(std::vector<int> beams) {
-    if (beams.size() != N_TEL) {
-        std::cout << "Beams vector must have " << N_TEL << " elements." << std::endl;
-        return;
-    }
+void beams_active(int b1, int b2, int b3, int b4) {
     beam_mutex.lock();
-    for (uint i = 0; i < N_TEL; i++) {
-        if (beams[i] == 1) {
-            control_u.beams_active[i] = 1;
-        } else {
-            control_u.beams_active[i] = 0;
-        }
-    }
+    if (b1==1) 
+    	control_u.beams_active[0] = 1; 
+    else 
+    	control_u.beams_active[0] = 0;
+    if (b2==1) 
+    	control_u.beams_active[1] = 1; 
+    else 
+    	control_u.beams_active[1] = 0;
+    if (b3==1) 
+    	control_u.beams_active[2] = 1; 
+    else 
+    	control_u.beams_active[2] = 0;
+    if (b4==1) 
+    	control_u.beams_active[3] = 1; 
+    else 
+    	control_u.beams_active[3] = 0;
     beam_mutex.unlock();
     std::cout << "Active beams updated to: ";
     for (uint i = 0; i < N_TEL; i++) {
@@ -486,7 +491,7 @@ COMMANDER_REGISTER(m)
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
     m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 0,1,3 and project to baseline space", 
         "offset0"_arg=0.0, "offset1"_arg=0.0, "offset3"_arg=0.0);
-    m.def("beams_active", beams_active, "Set which beams are active", "beams"_arg=std::vector<int>{1,1,1,1});
+    m.def("beams_active", beams_active, "Set which beams are active", "b1"_arg=1,"b2"_arg=1,"b3"_arg=1,"b4"_arg=1);
     m.def("set_itime", set_itime, "Set the target integration time", "itime"_arg=100);
     m.def("expstatus", expstatus, "Get the exposure time status (success if complete)");
 }
