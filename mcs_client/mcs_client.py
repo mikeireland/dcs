@@ -708,6 +708,8 @@ if __name__ == "__main__":
     logging.basicConfig(
         filename=os.path.join(os.path.expanduser(args.log_location), log_fname),
         level=logging.INFO,
+        format="%(asctime)s.%(msecs)03d %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Add stream handler to also log to stdout
