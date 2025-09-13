@@ -583,12 +583,25 @@ void fringe_tracker(){
             double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
 
             // Find the second smallest eigenvalue
+            // Eigen::VectorXd evals = eig_solver.eigenvalues();
+            // std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
+            // std::sort(eval_vec.begin(), eval_vec.end());
+            // double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+
+            int num_zeros = 0;
+            for (int i = 0; i < N_TEL; ++i) {
+                if (control_u.beams_active[i] == 0) num_zeros++;
+            }
+            int n = 2 + num_zeros;
+
+            // Find the nth minimum eigenvalue (n is 1-based, so n=1 is the smallest)
             Eigen::VectorXd evals = eig_solver.eigenvalues();
             std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
             std::sort(eval_vec.begin(), eval_vec.end());
-            double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+            double nth_min_eval = eval_vec.size() >= n ? eval_vec[n-1] : eval_vec.back();
 
-            if ((worst_gd_var < gd_var_threshold) && (second_min_eval > GD_MIN_REAL_VAR)){
+
+            if ((worst_gd_var < gd_var_threshold) && (nth_min_eval > GD_MIN_REAL_VAR)){
                 control_u.search_Nsteps=0;
                 control_u.search.setZero();
                 control_u.fringe_found = true;
