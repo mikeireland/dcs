@@ -539,6 +539,18 @@ class HeimdallrAA:
                 optimal_offset_x2=optimal_offset_x2,
             )
 
+        return {
+            "meas_locs_x": measurement_locs_x,
+            "meas_locs_y": measurement_locs_x,
+            "fluxes_x": fluxes_x,
+            "fluxes_y": fluxes_y,
+            "optimal_offset_x": optimal_offset_x,
+            "optimal_offset_y": optimal_offset_y,
+            "measurement_locs_x2": measurement_locs_x,
+            "fluxes_x2": fluxes_x2,
+            "optimal_offset_x2": optimal_offset_x2,
+        }
+
     def autoalign_pupil_all(self, plot):
         # just like autoalign_3_pupil but for all beams
         datas = {}
