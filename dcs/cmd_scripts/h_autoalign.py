@@ -333,7 +333,9 @@ class HeimdallrAA:
                 self._send_and_get_response(msg)
                 time.sleep(self._shutter_pause_time)
 
-            blob_centre, flux, frame = self._get_blob(radius=flux_radius, return_flux=True, inc_frame=True)
+            blob_centre, flux, frame = self._get_blob(
+                radius=flux_radius, return_flux=True, inc_frame=True
+            )
 
             frames.append(frame)
             # to try
@@ -419,10 +421,12 @@ class HeimdallrAA:
         # 2. rough align beam 3
         blob_centre = self._get_blob()
 
-        pix_offset = np.array([
-            self.target_pixels[1] - blob_centre[0],
-            self.target_pixels[0] - blob_centre[1],
-        ])
+        pix_offset = np.array(
+            [
+                self.target_pixels[1] - blob_centre[0],
+                self.target_pixels[0] - blob_centre[1],
+            ]
+        )
         uv_cmd = asgE.move_img_calc("c_red_one_focus", beam, pix_offset)
 
         axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
@@ -445,10 +449,12 @@ class HeimdallrAA:
         flux_beam_radius = 6  # pixels
 
         measurement_locs_x = np.linspace(-pup_offset, pup_offset, n_samp)
-        relative_measurement_locs = np.array([
-            measurement_locs_x[i] - measurement_locs_x[i - 1]
-            for i in range(1, n_samp)
-        ])
+        relative_measurement_locs = np.array(
+            [
+                measurement_locs_x[i] - measurement_locs_x[i - 1]
+                for i in range(1, n_samp)
+            ]
+        )
         relative_measurement_locs = np.concatenate(
             [[-pup_offset], relative_measurement_locs]
         )
@@ -634,6 +640,15 @@ class HeimdallrAA:
         arcsec_offsets = {
             beam: offset * pix_to_arcsec for beam, offset in pixel_offsets.items()
         }
+
+        # if any value is bigger than 100 in magnitude, set it to zero and print a warning
+        for beam, offset in arcsec_offsets.items():
+            offset_length = np.linalg.norm(offset)
+            if offset_length > 100:
+                print(
+                    f"Warning: Beam {beam} offset too large ({offset_length:.2f} arcsec). Setting to zero."
+                )
+                arcsec_offsets[beam] = np.array([0.0, 0.0])
 
         # these are the hdlr_x_offset, hdlr_y_offset - need to reformat from dict
         # of beams to two lists - one for x offsets, one for y offsets
