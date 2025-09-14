@@ -333,6 +333,7 @@ class BackEndServer:
             "bld_open_ho": 'open_baldr_HO ""',
             "bld_close_lo": 'close_baldr_LO ""',
             "bld_close_ho": 'close_baldr_HO ""',
+            "bld_n0_update" : 'N0_update ""', 
         }
 
         name = (command.get("name") or "").lower()
@@ -468,7 +469,7 @@ class BackEndServer:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
             return self.create_response("OK")
-        elif "hdlr_foreground":
+        elif cmd_name == "hdlr_foreground":
             # Implement expstatus logic here
             self.servers["hdlr"].send_string(f'servo "off"')
             res = self.servers["hdlr"].recv_string()
@@ -490,15 +491,16 @@ class BackEndServer:
 
             try:
                 # None of these commmand have any responses.
+                logging.info("Starting sending commands to hdlr server")
                 server.send_string('servo "off"')
                 server.recv_string()
                 time.sleep(0.1)
                 server.send_string("foreground 0")
                 server.recv_string()
                 time.sleep(0.1)
-                server.send_string("dls 0,0,0,0")
-                server.recv_string()
-                time.sleep(0.1)
+                # server.send_string("dls 0,0,0,0")
+                # server.recv_string()
+                # time.sleep(0.1)
                 # slower
                 server.send_string("offload_time 20")
                 server.recv_string()
@@ -506,6 +508,7 @@ class BackEndServer:
                 server.send_string('offload "gd"')
                 server.recv_string()
 
+                logging.info("Done")
             except Exception as e:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 

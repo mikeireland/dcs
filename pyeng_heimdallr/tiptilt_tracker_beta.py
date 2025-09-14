@@ -24,6 +24,7 @@ import threading
 
 import time
 import sys
+import zmq
 
 # =====================================================================
 #                   global variables and tools
@@ -49,7 +50,7 @@ im_offset = 1000
 chn = 1  # DM test channel
 dmids = np.array([1, 2, 4]) # controling everything relative to Beam 3
 ndm = 3
-a0 = 0.1
+a0 = 0.15
 
 dms, sems = [], []
 
@@ -161,6 +162,14 @@ class App(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(200)
 
+        self.zmq_context = zmq.Context()
+        self.socket = self.zmq_context.socket(zmq.REQ)
+        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+        self.socket.connect("tcp://192.168.100.2:5555")
+
+        self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
+                            'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
+
     # ------------------------------------------------------
     def refresh(self):
         self.main_widget.refresh_plot()
@@ -271,6 +280,24 @@ class MyMainWidget(QWidget):
         self.keepgoing = False
 
     # =========================================================================
+    def tt_actuator_command(self, devname, step_size, n_steps):
+        cmd = f"tt_config_step {devname} {step_size}"
+        self.socket.send_string(cmd)
+        self.socket.recv_string() # acknowledgement
+
+        cmd = f"tt_step {devname} {n_steps}"
+        self.socket.send_string(cmd)
+        self.socket.recv_string() # acknowledgement
+
+
+    # =========================================================================
+    def move_htpi(self,):
+        pass
+
+    def move_htpi(self,):
+        pass
+
+    # =========================================================================
     def fourier_signal(self, phase=True):
         frame = dstream.get_latest_data(semid).astype(float) - im_offset
         # frame = 1 + 0.5 * np.random.randn(isz, isz)
@@ -304,7 +331,58 @@ class MyMainWidget(QWidget):
         return phi
         
     # =========================================================================
-    def calibrate_response(self, a0=0.08):
+    def calibrate_response_dm(self, a0=0.08):
+        nav = 20
+
+        phi_ref = []
+        for kk in range(nav):
+            phi_ref.append(self.fourier_signal())
+
+        phi_ref = np.mean(np.array(phi_ref), axis=0)
+        btx0, bty0 = self.get_slopes(phi_ref)
+
+        rx, ry = np.zeros((ndm, nbuv)), np.zeros((ndm, nbuv))
+
+        time.sleep(0.5)
+
+        for ii in range(ndm):
+            print(f"calibrating response of DM #{dmids[ii]}:")
+            phi = []
+            # send DM tip command
+            dms[ii].set_data(a0 * tt_modes[0])
+            time.sleep(1)
+            for kk in range(nav):
+                phi.append(self.fourier_signal())
+            phi = np.mean(np.array(phi), axis=0)
+            btx, bty = self.get_slopes(phi)
+
+            rx[ii,:] = (btx - btx0) / a0
+
+            phi = []
+            # send DM tilt command
+            dms[ii].set_data(a0 * tt_modes[1])
+            time.sleep(1)
+            for kk in range(nav):
+                phi.append(self.fourier_signal())
+            phi = np.mean(np.array(phi), axis=0)
+            btx, bty = self.get_slopes(phi)
+            ry[ii,:] = (bty - bty0) / a0
+
+            self.reset_correction(ii)
+
+        print(np.round(rx.T, 3))
+        print(np.round(ry.T, 3))
+
+        self.rx, self.ry = rx, ry
+        self.cx = np.linalg.pinv(self.rx.T)
+        self.cy = np.linalg.pinv(self.ry.T)
+
+        np.savetxt(
+            "tt_calibration.txt", np.append(self.rx, self.ry, axis=0), fmt='%.3f',
+            header=f"Tip-tilt response matrix for a0 = {a0:.2f}")
+
+    # =========================================================================
+    def calibrate_response_mds(self, step_si=0.08):
         nav = 20
 
         phi_ref = []
@@ -402,7 +480,7 @@ class MyMainWidget(QWidget):
     def trigger_calibration(self):
         print("start calibration")
         self.calib_thread = GenericThread(
-            self.calibrate_response, a0=a0)
+            self.calibrate_response_mds, a0=a0)
         self.calib_thread.start()
 
     # =========================================================================

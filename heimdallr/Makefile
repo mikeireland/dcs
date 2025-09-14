@@ -29,3 +29,9 @@ mrproper: clean
 
 install:
 	install -D $(EXEC) $(PREFIX)/bin/
+	chmod +s $(PREFIX)/bin/$(EXEC)
+	cp def.toml $(PREFIX)/etc
+	cp run_heimdallr /home/asg/bin
+	chown asg /home/asg/bin/run_heimdallr
+	chgrp asg /home/asg/bin/run_heimdallr
+	chmod u+x /home/asg/bin/run_heimdallr

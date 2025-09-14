@@ -3,7 +3,7 @@
 #define DARK_OFFSET 1000.0
 
 //------------------------------------------------------------------------------
-// Drain any outstanding semaphore “posts” so that
+// Drain any outstanding semaphore posts so that
 // the next semwait() really waits for a fresh frame.
 //------------------------------------------------------------------------------
 static inline void catch_up_with_sem(IMAGE* img, int semid) {
@@ -108,6 +108,7 @@ void ForwardFt::loop() {
             szj = subim_sz/2 + 1;
             if ((subarray->md->cnt0 > cnt+2)  && (mode == FT_RUNNING)) {
                 std::cout << "Missed cam frames: " << subarray->md->cnt0 << " " << cnt << std::endl;
+                catch_up_with_sem(subarray,2);
                 nerrors++;
             }
             mode = FT_RUNNING;

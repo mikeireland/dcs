@@ -228,7 +228,7 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
     // This function filters the input vector x using the I6gd matrix.
     // It returns the filtered vector.
     double chi2=1e6, chi2_min=1e6;
-    int i_best;
+    //int i_best;
     Eigen::Matrix<double, N_BL, 1> y_best, x_try, x_best;
     Eigen::Matrix<double, N_BL, 1> y;
     // Each positive element of x could be x-1, and each negative element
@@ -298,7 +298,10 @@ Eigen::Matrix<double, N_BL, 1> filter6(Eigen::Matrix<double, N_BL, N_BL> I6, Eig
 
 // The main fringe tracking function
 void fringe_tracker(){
-    timespec now, last_dl_offload, now_all, then_all;
+    timespec now, last_dl_offload;
+#ifdef DEBUG_ALL
+    timespec now_all, then_all;
+#endif
     last_dl_offload.tv_sec = 0;
     last_dl_offload.tv_nsec = 0;
     using namespace std::complex_literals;
@@ -334,6 +337,11 @@ void fringe_tracker(){
         if (K1ft->cnt > ft_cnt+2 || K2ft->cnt > ft_cnt+2){
             std::cout << "Missed FT frames! K1: " << K1ft->cnt << " K2: " 
                 << K2ft->cnt << " FT: " << ft_cnt << std::endl;
+            // Catch up!
+            while (sem_trywait(&K1ft->sem_new_frame)==0);
+            while (sem_trywait(&K2ft->sem_new_frame)==0);
+            if (K1ft->cnt > K2ft->cnt) ft_cnt = K2ft->cnt - 1;
+            else ft_cnt = K1ft->cnt - 1;
             nerrors++;
         }
         ft_cnt++;
@@ -411,7 +419,7 @@ void fringe_tracker(){
             // the SNR is too low, in which case we set it to zero.
             if (baselines.gd_snr(bl) > gd_threshold){
                 Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
-                var_gd(bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
+                var_gd(bl) = gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
             else {
                 Wgd(bl) = 0;
@@ -419,7 +427,7 @@ void fringe_tracker(){
             }
             if (baselines.pd_snr(bl) > pd_threshold){
                 Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
-                var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
+                var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI;
             }
             else{
                 Wpd(bl) = 0;
@@ -575,17 +583,14 @@ void fringe_tracker(){
             double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
             double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
 
-            // Find the second smallest eigenvalue
-            // Eigen::VectorXd evals = eig_solver.eigenvalues();
-            // std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
-            // std::sort(eval_vec.begin(), eval_vec.end());
-            // double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+            // Find the nth smallest eigenvalue, where n=2 if all
+            // telescopes are active, and n increases by 1 for each inactive telescope.
 
-            int num_zeros = 0;
+            unsigned int num_zeros = 0;
             for (int i = 0; i < N_TEL; ++i) {
                 if (control_u.beams_active[i] == 0) num_zeros++;
             }
-            int n = 2 + num_zeros;
+            unsigned int n = 2 + num_zeros;
 
             // Find the nth minimum eigenvalue (n is 1-based, so n=1 is the smallest)
             Eigen::VectorXd evals = eig_solver.eigenvalues();
@@ -607,6 +612,7 @@ void fringe_tracker(){
                 //}
                 //fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
             } else {
+                if (foreground_in_place) control_u.itime += offload_time_ms/1000.0;
                 control_u.fringe_found = false;
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.

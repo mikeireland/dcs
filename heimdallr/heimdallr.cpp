@@ -150,22 +150,22 @@ void set_offload_time(uint time) {
 }
 
 // Set the offload mode
-void set_offload_mode(std::string mode) {
+std::string set_offload_mode(std::string mode) {
     if (mode == "off") {
         offload_mode = OFFLOAD_OFF;
-    } else if (mode == "nested") {
+    } else if ((mode == "nested") || (mode == "nest")) {
         offload_mode = OFFLOAD_NESTED;
         // Reset the offload to zero.
         control_u.dl_offload.setZero();
     } else if (mode == "gd") {
         offload_mode = OFFLOAD_GD;
+    } else if ((mode == "man") || (mode =="manual")) {
+        offload_mode = OFFLOAD_MANUAL;
     } else {
-        std::cout << "Offload mode not recognised" << std::endl;
-        return;
+        return "ERROR: Offload mode not recognised";
     }
     control_u.search_Nsteps=0;
-    std::cout << "Offload mode updated to " << offload_mode << std::endl;
-    return;
+    return "OK";
 }
 
 // Set the delay line offsets (from the servo loop)
@@ -263,7 +263,8 @@ void set_delay_line_type(std::string type) {
 }
 
 // A wrapper for set_delay_lines that takes 4 doubles as input.
-void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3=0.0, double delay4=0.0) {
+std::string set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3=0.0, double delay4=0.0) {
+    if (offload_mode == OFFLOAD_OFF) return "ERROR: Offloads off. Set to manual to use the dls command.";
     Eigen::Vector4d delays = Eigen::Vector4d::Zero();
     delays(0) = delay1;
     delays(1) = delay2;
@@ -274,6 +275,7 @@ void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3
     beam_mutex.lock();
     control_u.search_Nsteps = 0;
     beam_mutex.unlock();
+    return "OK";
 }
 
 
@@ -321,6 +323,8 @@ Status get_status() {
         status.v2_K2[i] = std::round(baselines.v2_K2(i) * 10000.0)/10000.0;
         status.pd_av[i] = std::round(baselines.pd_av(i)* 1000.0)/1000.0; //Not needed anymore !!!
         status.pd_av_filtered[i] = std::round(baselines.pd_av_filtered(i)* 1000.0)/1000.0; //Not needed anymore !!!
+        status.gd_phasor_real[i] = std::round(std::real(baselines.gd_phasor(i))* 10.0)/10.0;
+        status.gd_phasor_imag[i] = std::round(std::imag(baselines.gd_phasor(i))* 10.0)/10.0;
     }
     for (int i = 0; i < N_TEL; i++) {
         status.gd_tel[i] = std::round(control_a.gd(i)* 1000.0)/1000.0;
@@ -397,9 +401,12 @@ bool foreground_in_place = false;
 void set_foreground(int state) {
     static const Eigen::Vector4d fg_offset(-600.0, -200.0, 200.0, 600.0);
     if (state == 1 && !foreground_in_place) {
+        if (offload_mode == OFFLOAD_OFF) offload_mode=OFFLOAD_MANUAL;
         add_to_delay_lines(fg_offset);
         foreground_in_place = true;
+        
     } else if (state == 0 && foreground_in_place) {
+    	if (offload_mode == OFFLOAD_MANUAL) offload_mode=OFFLOAD_OFF;
         add_to_delay_lines(-fg_offset);
         foreground_in_place = false;
     }

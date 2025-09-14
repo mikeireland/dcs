@@ -214,18 +214,12 @@ A good reply string is:
 	}
 }
 */
-int last_offload_mode=-1;
 void move_main_dl()
 {
     // Only execute if wag_rmn is initialized.
     // (!!! following the method of other functions, we could initialize 
     // here, but that risks repeated failed attempts)
     if (!wag_rmn_initialized) return;
-    bool offload_changed=false;
-    for (int i=0;i<N_TEL;i++)
-    	if (last_offload(i) != next_offload(i))
-    		offload_changed=true;
-    if ((!offload_changed) && (offload_mode == last_offload_mode)) return;
     //fmt::print("Here...\n");
     // Build the JSON message
     nlohmann::json j;
@@ -241,7 +235,7 @@ void move_main_dl()
     nlohmann::json params = nlohmann::json::array();
     params.push_back({{"name", "opd_offset"}, {"value", {-next_offload(0), -next_offload(1), -next_offload(2), -next_offload(3)}}});
     // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
-    if (offload_mode == OFFLOAD_OFF)
+    if ((offload_mode == OFFLOAD_OFF))
     	params.push_back({{"name", "offset_valid"}, {"value", {0, 0, 0, 0}}});
     else
     	params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
@@ -268,6 +262,7 @@ void move_main_dl()
 }
 
 // The main thread function
+int last_offload_mode=-1;
 void dl_offload(){
     // Initialize semaphore for offload timing
     sem_init(&sem_offload, 0, 0);
@@ -336,29 +331,36 @@ void dl_offload(){
                 }
             }
         } 
-        // Do the offload! It is up to the specific function to check if the offload
-        // is significant enough to do - only if so, it will move and 
-        // update last_offload.
-        if (delay_line_type == "piezo") {
-            // Move the piezo delay line to the next position
-            move_piezos();
-        } else if (delay_line_type == "hfo") {
-            // Move the delay line to the next position
-            move_hfo();
-        } else if (delay_line_type == "rmn") {
-            move_main_dl();
-        } else {
-            std::cout << "Delay line type not recognised" << std::endl;
-        }
-        // Log delay line type and values to file with timestamp
-        std::ofstream log_file("/data/dl_offload.log", std::ios::app);
-        auto lnow = std::chrono::system_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(lnow.time_since_epoch()).count();
-        double timestamp = ms / 1000.0;
-        log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
-            timestamp,
-            delay_line_type,
-            next_offload(0), next_offload(1), next_offload(2), next_offload(3));        
+        // Has the offload changed? If so, consider doing it and log to file.
+        bool offload_changed=false;
+        for (int i=0;i<N_TEL;i++)
+    	  if (last_offload(i) != next_offload(i) + search_offset(i))
+    		offload_changed=true;
+    	if ((offload_changed) || (offload_mode != last_offload_mode)){
+		    // Do the offload! It is up to the specific function to check if the offload
+		    // is significant enough to do - only if so, it will move and 
+		    // update last_offload.
+		    if (delay_line_type == "piezo") {
+		        // Move the piezo delay line to the next position
+		        move_piezos();
+		    } else if (delay_line_type == "hfo") {
+		        // Move the delay line to the next position
+		        move_hfo();
+		    } else if (delay_line_type == "rmn") {
+		        move_main_dl();
+		    } else {
+		        std::cout << "Delay line type not recognised" << std::endl;
+		    }
+		    // Log delay line type and values to file with timestamp
+		    std::ofstream log_file("/data/dl_offload.log", std::ios::app);
+		    auto lnow = std::chrono::system_clock::now();
+		    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(lnow.time_since_epoch()).count();
+		    double timestamp = ms / 1000.0;
+		    log_file << fmt::format("{:.3f} {} {:.6f} {:.6f} {:.6f} {:.6f}\n",
+		        timestamp,
+		        delay_line_type,
+		        next_offload(0), next_offload(1), next_offload(2), next_offload(3));  
+		 }      
     }
     close(controllinoSocket);
 }

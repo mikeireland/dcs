@@ -38,6 +38,7 @@
 #define OFFLOAD_NESTED 0
 #define OFFLOAD_GD 1
 #define OFFLOAD_OFF 2
+#define OFFLOAD_MANUAL 3
 
 // The maximum number of frames to average for group delay. Delay error in wavelength from group
 // delay can be 0.4/which scales to a phasor error of 0.04, while phase error can only be 0.2
@@ -152,7 +153,7 @@ struct Baselines{
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];
-    int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
+    unsigned int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
 };
 
 struct Bispectrum{
@@ -194,7 +195,9 @@ struct Status
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
-    int test_ix, test_n, cnt;
+    std::vector<double> gd_phasor_real, gd_phasor_imag;
+    int test_ix, test_n;
+    unsigned int cnt;
     bool locked{false};
     double itime;
 };
@@ -217,6 +220,7 @@ extern Bispectrum bispectra_K1[N_CP];
 extern Bispectrum bispectra_K2[N_CP];
 extern double gd_to_K1;
 extern long unsigned int ft_cnt;
+extern bool foreground_in_place;
 
 // Generally, we either work with beams or baselines, so have a separate lock for each.
 extern std::mutex baseline_mutex, beam_mutex;

@@ -227,7 +227,7 @@ void refresh_image_splitting_configuration() {
       ROI[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
       ROI[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
       ROI[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
-      ROI[ii].nrs = cJSON_GetObjectItem(item, "nrs")->valueint; // assumes 3
+      ROI[ii].nrs = 3; // cJSON_GetObjectItem(item, "nrs")->valueint; // assumes 3
       ROI[ii].npx = ROI[ii].xsz * ROI[ii].ysz;
       ROI[ii].nbs = 10000; // hardcoded here - should be fine
       ii++;
@@ -264,7 +264,7 @@ void optimize_cropping_parameters() {
 	camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
   }
   camconf->bal_min_row -= 2;
-  camconf->hei_max_row += 2;
+  camconf->hei_max_row += 16;
 
   printf("Cropping parameters are: %d and %d",
 	 camconf->hei_max_row, camconf->bal_min_row);
@@ -328,7 +328,6 @@ int init_cam_configuration() {
   camconf->fps = camera_query_float(ed, "fps raw");
   camconf->maxfps = camera_query_float(ed, "maxfps raw");
 
-  show_cam_conf();
   return 0;
 }
 
@@ -641,7 +640,7 @@ void* fetch_imgs(void *arg) {
   long nbpix_roi_tosave = ROI[0].npx * ROI[0].nbs / 2;
 
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
-  int tsig[3] = {2, -1, -1};  // to be dynamically allocated from the JSON
+  int tsig[3] = {2, -1, -1};  // to be dynamically allocated from the JSON. !!! If changing this, also change ROI[ii].nrs = 3; on line 230.
   int seq_indices[3] = {0};   // frame indices part of current time sequence
   // int prev_liveindex = 0;     // frame index of previous image
 
@@ -730,14 +729,12 @@ void* fetch_imgs(void *arg) {
       }
 
       // =============================
-      //     SHM house-keeping
+      //     SHM house-keeping for the main frame.
       // =============================      
       shm_img->md->write = 0;              // signaling done writing
-      ImageStreamIO_sempost(shm_img, -1);  // post semaphores
       shm_img->md->cnt0++;                 // increment internal counter
-
-      liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
-      shm_img->md->cnt1 = liveindex;       // idem
+      shm_img->md->cnt1 = shm_img->md->cnt0 % shm_img->md->size[2]; //Increment cyclical counter (for external SHM users)
+      ImageStreamIO_sempost(shm_img, -1);  // post semaphores
 
       // =============================
       //   split into multiple ROIs
@@ -783,6 +780,9 @@ void* fetch_imgs(void *arg) {
                   for (int kk = 0; kk < ROI[ri].nrs; kk++) {
                     seq_img_ptr = shm_img->array.UI16 + seq_indices[kk] * nbpix_frm;  // live pointer
                     liveroi_ptr[jj*roi_xsz+ii] += tsig[kk] * (int)seq_img_ptr[(jj+y0) * cam_xsz + ii+x0];
+                    // Mike's DEBUGing to see why liveindex was wrong !!! 
+                    //if ((ri==4) && (jj==16) && (ii==16))
+                    //	printf("liveindex %ld. kk %d seq_index %d pixel value %d\n", liveindex, kk, seq_indices[kk], (int)seq_img_ptr[(jj+y0) * cam_xsz + ii+x0]);
                   }
                 }
               }
@@ -809,7 +809,7 @@ void* fetch_imgs(void *arg) {
       // =============================
       //    save the data to disk
       // =============================
-      if (camconf->save_mode == 1) {
+      if ((camconf->save_mode == 1) && (splitmode==1)) {
 	// ------------ the NEW intended save mode of the ROIs only -----------
 	if (liveroi_index == ROI[0].nbs / 2) { // save the 1st half of the cubes
 	  for (ri = roi0; ri < nroi; ri++) {
@@ -838,6 +838,10 @@ void* fetch_imgs(void *arg) {
       
       if (keepgoing == 0)
 	break;
+
+      // Only update the liveindex at the very end	
+      liveindex = shm_img->md->cnt0 % shm_img->md->size[2];
+
     }
 
     // =================
@@ -1146,12 +1150,12 @@ void set_ndmr_mode(int _mode) {
     sleep(0.1);
     
     // camconf->nbreads = _mode;
-    sprintf(cmd_cli, "set nbreadworeset %d", _mode); // _mode + 1 ??
+    sprintf(cmd_cli, "set nbreadworeset %d", _mode + 1); // _mode + 1 ??
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
 
     sprintf(camconf->readmode, "NDMR");
-    camconf->nfr_reset = 3; // to be made more adaptive
+    camconf->nfr_reset = 3; // to be made more adaptive !!!
   }
 
   // back to prior business
@@ -1263,8 +1267,13 @@ int main(int argc, char **argv) {
   // initial camera server setup
   camconf = (CREDSTRUCT*) malloc(sizeof(CREDSTRUCT));
   camconf->save_dark = 0;
+
   init_cam_configuration();
   refresh_image_splitting_configuration();
+  set_crop_mode(1);  // now starting the CRED1 in crop mode
+  update_fps(500.0); // engineering startup configuration
+  update_gain(10);   // engineering startup configuration
+  show_cam_conf();
   shm_setup(1);  // setup everything, including the ROI SHMs
 
   // --------------------------

@@ -38,6 +38,8 @@ template <> struct adl_serializer<Status> {
         j["locked"] = p.locked;
         j["cnt"] = p.cnt;
         j["itime"] = p.itime;
+        j["gd_phasor_real"] = p.gd_phasor_real;
+        j["gd_phasor_imag"] = p.gd_phasor_imag;
     }
     static void from_json(const json& j, Status& p) {
         p = Status();
@@ -60,6 +62,8 @@ template <> struct adl_serializer<Status> {
         j.at("locked").get_to(p.locked);
         j.at("cnt").get_to(p.cnt);
         j.at("itime").get_to(p.itime);
+        j.at("gd_phasor_real").get_to(p.gd_phasor_real);
+        j.at("gd_phasor_imag").get_to(p.gd_phasor_imag);
     }
    };
 }
