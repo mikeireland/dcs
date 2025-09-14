@@ -44,9 +44,14 @@ class HeimdallrAA:
 
         self.stream = self._open_stream_connection()
 
+        self.imsize = self._get_frame().shape
+
         self._shutter_pause_time = (
             shutter_pause_time  # seconds to pause after shuttering
         )
+
+        self.frame_iters = 3
+        self.sleep_between_frames = 0.2  # seconds
 
         if savepth.lower() == "none":
             self.savepth = None
@@ -149,20 +154,47 @@ class HeimdallrAA:
         # full_frame[ full_frame > np.quantile(full_frame, 0.98) ] = np.median( full_frame )
         return full_frame
 
-    def _get_and_process_blob(self):
-        full_frame = self._get_frame() - 1000.0
-        blob_centre = self._find_blob_centre(full_frame)
-        return blob_centre
+    def _get_blob(self, radius=None, return_flux=False, inc_frame=False):
+        """
+        Find the final blob centre after frame averaging. Optionally measure flux in a circular region of given radius around the final blob centre.
+        Args:
+            radius (float or None): If not None and return_flux is True, measure flux in a circle of this radius around the final blob centre.
+            return_flux (bool): Whether to return the flux measurement for the final blob.
+            inc_frame (bool): If True and return_flux is True, also return the final frame used for flux measurement.
+        Returns:
+            If return_flux is False:
+                blob_centre_final
+            If return_flux is True and inc_frame is False:
+                blob_centre_final, blob_flux
+            If return_flux is True and inc_frame is True:
+                blob_centre_final, blob_flux, acc_frame
+        """
+        acc_frame = np.zeros_like(self._get_frame())
+        blob_centres = []
+        for _ in range(self.frame_iters):
+            full_frame = self._get_frame() - 1000.0
+            acc_frame += full_frame / self.frame_iters
+            blob_centre = self._find_blob_centre(full_frame)
+            blob_centres.append(blob_centre)
+        # check the scatter on the blob centres
+        blob_centres = np.array(blob_centres)
+        scat = np.std(blob_centres, axis=0)
+        if np.any(scat > 2.0):
+            print(
+                f"Warning: High scatter in blob centre positions: {scat}. Consider increasing frame_iters or checking the image."
+            )
+        blob_centre_final = self._find_blob_centre(acc_frame)
 
-    def _get_blob_with_flux(self, radius, inc_frame=False):
-        full_frame = self._get_frame() - 1000.0
-        blob_centre = self._find_blob_centre(full_frame)
-        mask = self.circle_mask(full_frame.shape, blob_centre, radius)
-        blob_flux = full_frame[mask].sum()
+        if not return_flux:
+            return blob_centre_final
+        if radius is None:
+            raise ValueError("radius must be provided if return_flux is True")
+        mask = self.circle_mask(acc_frame.shape, blob_centre_final, radius)
+        blob_flux = acc_frame[mask].sum()
         if inc_frame:
-            return blob_centre, blob_flux, full_frame
+            return blob_centre_final, blob_flux, acc_frame
         else:
-            return blob_centre, blob_flux
+            return blob_centre_final, blob_flux
 
     @staticmethod
     def circle_mask(shape, center, radius):
@@ -301,9 +333,7 @@ class HeimdallrAA:
                 self._send_and_get_response(msg)
                 time.sleep(self._shutter_pause_time)
 
-            blob_centre, flux, frame = self._get_blob_with_flux(
-                flux_radius, inc_frame=True
-            )
+            blob_centre, flux, frame = self._get_blob(radius=flux_radius, return_flux=True, inc_frame=True)
 
             frames.append(frame)
             # to try
@@ -387,14 +417,12 @@ class HeimdallrAA:
         time.sleep(self._shutter_pause_time)
 
         # 2. rough align beam 3
-        blob_centre = self._get_and_process_blob()
+        blob_centre = self._get_blob()
 
-        pix_offset = np.array(
-            [
-                self.target_pixels[1] - blob_centre[0],
-                self.target_pixels[0] - blob_centre[1],
-            ]
-        )
+        pix_offset = np.array([
+            self.target_pixels[1] - blob_centre[0],
+            self.target_pixels[0] - blob_centre[1],
+        ])
         uv_cmd = asgE.move_img_calc("c_red_one_focus", beam, pix_offset)
 
         axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
@@ -417,12 +445,10 @@ class HeimdallrAA:
         flux_beam_radius = 6  # pixels
 
         measurement_locs_x = np.linspace(-pup_offset, pup_offset, n_samp)
-        relative_measurement_locs = np.array(
-            [
-                measurement_locs_x[i] - measurement_locs_x[i - 1]
-                for i in range(1, n_samp)
-            ]
-        )
+        relative_measurement_locs = np.array([
+            measurement_locs_x[i] - measurement_locs_x[i - 1]
+            for i in range(1, n_samp)
+        ])
         relative_measurement_locs = np.concatenate(
             [[-pup_offset], relative_measurement_locs]
         )
@@ -433,7 +459,7 @@ class HeimdallrAA:
             self._send_and_get_response(cmd)
             print("sent", cmd)
             time.sleep(mv_time)
-            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
             fluxes_x.append(flux)
 
             # check if centre is close to the edge of the frame
@@ -473,13 +499,14 @@ class HeimdallrAA:
             self._send_and_get_response(cmd)
             print("sent", cmd)
             time.sleep(2.5)
-            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
             fluxes_y.append(flux)
 
-            if np.abs(centre[1] - bound) < 10:
-                print(
-                    f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
-                )
+            for bound in self.col_bnds:
+                if np.abs(centre[1] - bound) < 10:
+                    print(
+                        f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
+                    )
 
         fluxes_y = np.array(fluxes_y)
 
@@ -503,13 +530,14 @@ class HeimdallrAA:
             self._send_and_get_response(cmd)
             print("sent", cmd)
             time.sleep(mv_time)
-            centre, flux = self._get_blob_with_flux(flux_beam_radius)
+            centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
             fluxes_x2.append(flux)
 
-            if np.abs(centre[1] - bound) < 10:
-                print(
-                    f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
-                )
+            for bound in self.col_bnds:
+                if np.abs(centre[1] - bound) < 10:
+                    print(
+                        f"Warning: Beam {beam} centroid close to edge of frame ({centre[1]} pixels). Alignment may be unreliable."
+                    )
 
         fluxes_x2 = np.array(fluxes_x2)
 
