@@ -298,7 +298,8 @@ class MCSClient:
             logging.info("No msgs found, waiting...")
             return
         body = self.ESO_format(all_params)
-        logging.info(f"pushing: {str(body)[:20]}]...")
+        # logging.info(f"pushing: {str(body)[:20]}]...")
+        logging.info(f"pushing: {str(body)}...")
         try:
             ok, msg = self._send(body)
             if not ok:
