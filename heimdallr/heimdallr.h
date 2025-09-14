@@ -194,6 +194,7 @@ struct Status
     std::vector<double> v2_K1, v2_K2;
     std::vector<double> dl_offload, dm_piston;
     std::vector<double> pd_av, pd_av_filtered;
+    std::vector<double> gd_phasor_real, gd_phasor_imag;
     int test_ix, test_n;
     unsigned int cnt;
     bool locked{false};

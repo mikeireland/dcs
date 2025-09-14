@@ -323,6 +323,8 @@ Status get_status() {
         status.v2_K2[i] = std::round(baselines.v2_K2(i) * 10000.0)/10000.0;
         status.pd_av[i] = std::round(baselines.pd_av(i)* 1000.0)/1000.0; //Not needed anymore !!!
         status.pd_av_filtered[i] = std::round(baselines.pd_av_filtered(i)* 1000.0)/1000.0; //Not needed anymore !!!
+        status.gd_phasor_real[i] = std::round(std::real(baselines.gd_phasor(i))* 10.0)/10.0;
+        status.gd_phasor_imag[i] = std::round(std::imag(baselines.gd_phasor(i))* 10.0)/10.0;
     }
     for (int i = 0; i < N_TEL; i++) {
         status.gd_tel[i] = std::round(control_a.gd(i)* 1000.0)/1000.0;
