@@ -74,12 +74,12 @@ class HeimdallrAA:
             config = json.load(f)
 
         centre_pixels = {}
-        x_c = config["hei_k1"]["x0"] + config["hei_k1"]["xsz"] / 2
-        y_c = config["hei_k1"]["y0"] + config["hei_k1"]["ysz"] / 2
+        x_c = config["hei_k1"]["x0"] + config["hei_k1"]["xsz"] // 2
+        y_c = config["hei_k1"]["y0"] + config["hei_k1"]["ysz"] // 2
         centre_pixels["K1"] = (x_c, y_c)
 
-        x_c = config["hei_k2"]["x0"] + config["hei_k2"]["xsz"] / 2
-        y_c = config["hei_k2"]["y0"] + config["hei_k2"]["ysz"] / 2
+        x_c = config["hei_k2"]["x0"] + config["hei_k2"]["xsz"] // 2
+        y_c = config["hei_k2"]["y0"] + config["hei_k2"]["ysz"] // 2
         centre_pixels["K2"] = (x_c, y_c)
 
         return centre_pixels
