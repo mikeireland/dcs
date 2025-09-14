@@ -612,7 +612,7 @@ class BackEndServer:
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-                dit = 0
+                dit = value
             elif name == "DET.NWORESET":
                 try:
                     value = int(value)
