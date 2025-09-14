@@ -24,6 +24,7 @@ import threading
 
 import time
 import sys
+import zmq
 
 # =====================================================================
 #                   global variables and tools
@@ -49,7 +50,7 @@ im_offset = 1000
 chn = 1  # DM test channel
 dmids = np.array([1, 2, 4]) # controling everything relative to Beam 3
 ndm = 3
-a0 = 0.1
+a0 = 0.15
 
 dms, sems = [], []
 
@@ -161,6 +162,11 @@ class App(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.timer.start(200)
 
+        self.zmq_context = zmq.Context()
+        self.socket = self.zmq_context.socket(zmq.REQ)
+        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+        self.socket.connect("tcp://192.168.100.2:5555")
+
     # ------------------------------------------------------
     def refresh(self):
         self.main_widget.refresh_plot()
@@ -269,6 +275,24 @@ class MyMainWidget(QWidget):
         self.pB_abort.clicked.connect(self.abort)
 
         self.keepgoing = False
+
+    # =========================================================================
+    def tt_actuator_command(self, devname, step_size, n_steps):
+        cmd = f"tt_config_step {devname} {step_size}"
+        self.socket.send_string(cmd)
+        self.socket.recv_string() # acknowledgement
+
+        cmd = f"tt_step {devname} {n_steps}"
+        self.socket.send_string(cmd)
+        self.socket.recv_string() # acknowledgement
+
+
+    # =========================================================================
+    def move_htpi(self,):
+        pass
+
+    def move_htpi(self,):
+        pass
 
     # =========================================================================
     def fourier_signal(self, phase=True):

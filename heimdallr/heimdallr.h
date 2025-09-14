@@ -153,7 +153,7 @@ struct Baselines{
     Eigen::Matrix<dcomp, N_BL, 1> gd_phasor_boxcar[MAX_N_GD_BOXCAR];
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar_avg;
     Eigen::Matrix<dcomp, N_BL, 1> pd_phasor_boxcar[MAX_N_PD_BOXCAR];
-    int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
+    unsigned int n_gd_boxcar, ix_gd_boxcar, n_pd_boxcar, ix_pd_boxcar;
 };
 
 struct Bispectrum{
