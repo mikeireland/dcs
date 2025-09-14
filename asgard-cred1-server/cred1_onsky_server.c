@@ -809,7 +809,7 @@ void* fetch_imgs(void *arg) {
       // =============================
       //    save the data to disk
       // =============================
-      if (camconf->save_mode == 1) {
+      if ((camconf->save_mode == 1) && (splitmode==1)) {
 	// ------------ the NEW intended save mode of the ROIs only -----------
 	if (liveroi_index == ROI[0].nbs / 2) { // save the 1st half of the cubes
 	  for (ri = roi0; ri < nroi; ri++) {
