@@ -657,6 +657,7 @@ class BackEndServer:
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
 
         # If both NDIT and DIT are non-zero, we compute the total integration time.
+        logging.info(f"Recv: DIT={dit}, NDIT={ndit} (total itime={dit*ndit})")
         if (dit != 0) and (ndit != 0):
             self.itime = dit * ndit
 
