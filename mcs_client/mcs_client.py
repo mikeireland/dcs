@@ -172,10 +172,11 @@ class MCSClient:
         self.sleep_time = sleep_time
         self.script_only = script_only
 
-        self.time_since_last_server_check = 1e6
+        self.t_last_server_check = time.time()
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
+        print(rep)
         if not rep or "reply" not in rep:
             return False, "no-reply"
         content = rep["reply"].get("content", "ERROR")
@@ -228,15 +229,15 @@ class MCSClient:
         adapter = self.dcs_adapters.get("HDLR")
         if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
             logging.warning("Heimdallr adapter not available or not connected.")
-            if self.time_since_last_server_check > 10:
-                self.time_since_last_server_check = 0
+            if time.time() - self.t_last_server_check > 10:
+                self.t_last_server_check = time.time()
                 self.dcs_adapters["HDLR"] = HeimdallrAdapter(self.dcs_endpoints["HDLR"])
             return []
         sock = adapter.z.s
         if not self._is_zmq_socket_open(sock):
             logging.warning("Heimdallr ZMQ socket is not open or not connected.")
-            if self.time_since_last_server_check > 10:
-                self.time_since_last_server_check = 0
+            if time.time() - self.t_last_server_check > 10:
+                self.t_last_server_check = time.time()
                 self.dcs_adapters["HDLR"] = HeimdallrAdapter(self.dcs_endpoints["HDLR"])
             return []
         st = adapter.fetch()
@@ -245,14 +246,22 @@ class MCSClient:
         Hdlr_parameters = [f.name for f in fields(HeimdallrStatus)]
         param_list = []
         for param in Hdlr_parameters:
-            values = getattr(st, param)  # is already a list
-            param_list.append(
-                {
-                    "name": f"hdlr_{param}",
-                    "value": values,
-                    "range": f"(0:{len(values)-1})",
-                }
-            )
+            if param in ["locked"]:
+                param_list.append(
+                    {
+                        "name": f"hdlr_{param}",
+                        "value": getattr(st, param),
+                    }
+                )
+            else:
+                values = getattr(st, param)  # is already a list
+                param_list.append(
+                    {
+                        "name": f"hdlr_{param}",
+                        "value": values,
+                        "range": f"(0:{len(values)-1})",
+                    }
+                )
         return param_list
 
     def gather_script_parameters(self):
@@ -294,9 +303,9 @@ class MCSClient:
         all_params = []
 
         if not self.script_only:
-            baldr_params = self.gather_baldr_parameters()
-            if baldr_params:
-                all_params.extend(baldr_params)
+            # baldr_params = self.gather_baldr_parameters()
+            # if baldr_params:
+            #     all_params.extend(baldr_params)
             hdlr_params = self.gather_hdlr_parameters()
             if hdlr_params:
                 all_params.extend(hdlr_params)
@@ -615,7 +624,8 @@ class HeimdallrAdapter(CppServerAdapter):
             for name in field_names:
                 if name in st:
                     if name == "locked":
-                        kwargs[name] = int(st[name] == "true")
+                        print(name, st[name])
+                        kwargs[name] = int(st[name])
                     else:
                         kwargs[name] = st[name]
             return HeimdallrStatus(**kwargs)

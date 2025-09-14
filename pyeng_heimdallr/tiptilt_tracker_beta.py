@@ -53,9 +53,9 @@ a0 = 0.1
 
 dms, sems = [], []
 
-# for ii in range(ndm):
-#     dms.append(shm(f"/dev/shm/dm{dmids[ii]}disp{chn:02d}.im.shm"))
-#     sems.append(shm(f"/dev/shm/dm{ii+1}.im.shm", nosem=False))
+for ii in range(ndm):
+    dms.append(shm(f"/dev/shm/dm{dmids[ii]}disp{chn:02d}.im.shm"))
+    sems.append(shm(f"/dev/shm/dm{ii+1}.im.shm", nosem=False))
 
 # ------------ hole center coordinates --------------
 hc = np.loadtxt("N1_hole_coordinates.txt")
@@ -208,19 +208,15 @@ class MyMainWidget(QWidget):
         self.pB_abort = QtWidgets.QPushButton("ABORT", self)
 
         self.apply_layout()
-        
+
         # response matrices in tip-tilt
-        # self.rx = np.array([[0, -16.9, 0, 0, 22.94,  17.88],
-        #                     [41.76, 0.0, 0.0, 59.32, 0.0, 36.88],
-        #                     [ 36.00, 31.13, 42.60, 0.0, 0.0, 0.0]]
-
-        # self.ry = np.array([[0.0, -8.63, -2.06, 1.28, -24.63, 4.5 ],
-        #                    [4.27, 2.87, -0.69, 4.07, 1.68, 8.24],
-        #                    [3.94, 39.33,  31.4, 0.36, 1.49, -3.57]])
-
+        tmp = np.loadtxt("tt_calibration.txt")
+        self.rx = tmp[:3,:]
+        self.ry = tmp[:3,:]
+        
         # # control matrices
-        # self.cx = np.linalg.pinv(self.rx.T)
-        # self.cy = np.linalg.pinv(self.ry.T)
+        self.cx = np.linalg.pinv(self.rx.T)
+        self.cy = np.linalg.pinv(self.ry.T)
 
     # =========================================================================
     def close_program(self):
@@ -260,7 +256,7 @@ class MyMainWidget(QWidget):
         self.pB_calibrate.setGeometry(QRect(btx, 30, 100, 28))
         self.pB_calibrate.clicked.connect(self.trigger_calibration)
 
-        self.pB_reset.setGeometry(QRect(btx, 30, 100, 28))
+        self.pB_reset.setGeometry(QRect(btx, 60, 100, 28))
         self.pB_reset.clicked.connect(self.reset_correction)
 
         self.pB_iteration.setGeometry(QRect(btx, 90, 100, 28))
@@ -276,8 +272,8 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def fourier_signal(self, phase=True):
-        # frame = dstream.get_latest_data(semid).astype(float) - im_offset
-        frame = 1 + 0.5 * np.random.randn(isz, isz)
+        frame = dstream.get_latest_data(semid).astype(float) - im_offset
+        # frame = 1 + 0.5 * np.random.randn(isz, isz)
         cvis = hdlr.extract_cvis_from_img(frame) / 19
         cvis0 = hdlr0.extract_cvis_from_img(frame)
 
@@ -354,9 +350,14 @@ class MyMainWidget(QWidget):
         self.cx = np.linalg.pinv(self.rx.T)
         self.cy = np.linalg.pinv(self.ry.T)
 
+        np.savetxt(
+            "tt_calibration.txt", np.append(self.rx, self.ry, axis=0), fmt='%.3f',
+            header=f"Tip-tilt response matrix for a0 = {a0:.2f}")
+
     # =========================================================================
     def reset_correction(self, ii):
-        dms[ii].set_data(0 * tt_modes[0]) # reset DM to initial state
+        for ii in range(ndm):
+            dms[ii].set_data(0 * tt_modes[0]) # reset DM to initial state
         time.sleep(1)
 
     # =========================================================================
@@ -424,7 +425,7 @@ class MyMainWidget(QWidget):
     def cloop(self):
         while keepgoing:
             self.iteration()
-            time.sleep(0.1)
+            time.sleep(0.05)
 
     # =========================================================================
     def iteration(self):
@@ -434,11 +435,9 @@ class MyMainWidget(QWidget):
         corrx = self.cx.dot(btx)
         corry = self.cy.dot(bty)
 
-        print(corrx)
-        print(corry)
+        gain = 0.5
 
         for ii in range(ndm):
-            gain = 0.5
             correc = (corrx[ii] * tt_modes[0] + corry[ii] * tt_modes[1])
             dm0 = dms[ii].get_data()
             dms[ii].set_data(0.99 * (dm0 - gain * correc))

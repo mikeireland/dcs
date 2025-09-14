@@ -214,12 +214,18 @@ A good reply string is:
 	}
 }
 */
+int last_offload_mode=-1;
 void move_main_dl()
 {
     // Only execute if wag_rmn is initialized.
     // (!!! following the method of other functions, we could initialize 
     // here, but that risks repeated failed attempts)
     if (!wag_rmn_initialized) return;
+    bool offload_changed=false;
+    for (int i=0;i<N_TEL;i++)
+    	if (last_offload(i) != next_offload(i))
+    		offload_changed=true;
+    if ((!offload_changed) && (offload_mode == last_offload_mode)) return;
     //fmt::print("Here...\n");
     // Build the JSON message
     nlohmann::json j;
@@ -235,8 +241,14 @@ void move_main_dl()
     nlohmann::json params = nlohmann::json::array();
     params.push_back({{"name", "opd_offset"}, {"value", {-next_offload(0), -next_offload(1), -next_offload(2), -next_offload(3)}}});
     // Example: offset_valid and fringe_detect can be filled with dummy or real values as needed
-    params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
-    params.push_back({{"name", "fringe_det"}, {"value", {1, 1, 1, 1}}});
+    if (offload_mode == OFFLOAD_OFF)
+    	params.push_back({{"name", "offset_valid"}, {"value", {0, 0, 0, 0}}});
+    else
+    	params.push_back({{"name", "offset_valid"}, {"value", {1, 1, 1, 1}}});
+    if (control_u.fringe_found)
+      params.push_back({{"name", "fringe_det"}, {"value", {1, 1, 1, 1}}});
+    else
+      params.push_back({{"name", "fringe_det"}, {"value", {0, 0, 0, 0}}});
     j["command"]["parameter"] = params;
 
     std::string msg = j.dump(); // No newlines
