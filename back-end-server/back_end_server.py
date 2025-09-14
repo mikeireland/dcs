@@ -628,7 +628,7 @@ class BackEndServer:
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
-                dit = 0
+                dit = value
             elif name == "DET.NWORESET":
                 try:
                     value = int(value)
@@ -675,6 +675,7 @@ class BackEndServer:
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
 
         # If both NDIT and DIT are non-zero, we compute the total integration time.
+        logging.info(f"Recv: DIT={dit}, NDIT={ndit} (total itime={dit*ndit})")
         if (dit != 0) and (ndit != 0):
             self.itime = dit * ndit
 
