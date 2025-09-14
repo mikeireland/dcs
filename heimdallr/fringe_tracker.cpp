@@ -38,6 +38,10 @@ Eigen::Matrix4d I4 = Eigen::Matrix4d::Identity();
 // The search vector.
 Eigen::Vector4d search_vector_scale(-2.75,-1.75,1.25,3.25);
 
+template <typename T> int sgn(T val){
+	return (T(0) < val) - (val < T(0));
+}
+
 // Make the pseudo-inverse matrix needed to project onto delay line (telescope) space.
 // W is the diagonal of a 6x6 matrix of weights for each baseline.
 #define NUMERIC_LIMIT 2e-6
@@ -631,14 +635,14 @@ void fringe_tracker(){
 
             if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
             	// Add to the delay line offload.
-        	control_u.dl_offload = 0.5*control_u.dm_piston * OPD_PER_DM_UNIT;
+        	control_u.dl_offload = 0.3*control_u.dm_piston * OPD_PER_DM_UNIT;
             	if ((servo_mode == SERVO_LACOUR) && (cnt_since_init - last_gd_jump > baselines.n_gd_boxcar)){
             	  // Use the group delay to make full fringe jumps, only if there has been at least
             	  // baselines.n_gd_boxcar frames since initialisation or the last jump.
             	  for (int i=0; i<N_TEL; i++){
                     if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
-                        if (std::fabs(control_a.gd(i)) > 0.5){
-                            control_u.dl_offload(i) -=  config["wave"]["K1"].value_or(2.05);
+                        if (std::fabs(control_a.gd(i)) > 0.5){ 
+                            control_u.dl_offload(i) += sgn(control_a.gd(i))*config["wave"]["K1"].value_or(2.05);
                             last_gd_jump = cnt_since_init;
                         } 
                     }

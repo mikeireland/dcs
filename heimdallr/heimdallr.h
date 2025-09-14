@@ -196,6 +196,7 @@ struct Status
     std::vector<double> pd_av, pd_av_filtered;
     int test_ix, test_n, cnt;
     bool locked{false};
+    double itime;
 };
 //-------End of Commander structs------
 
