@@ -241,8 +241,13 @@ class BaldrAA:
 
         full_img = self.get_frame() # average of 200 frames
 
-        sub_img = full_img[rc[0]:rc[1], rc[2]:rc[3]] # crop it to the beams local subframe (same reference frame as ref_x, ref_y pixels)
+        # check if in cropped mode
+        if full_frame.shape == (256,320): # full CRED 1 frame 
+            sub_img = full_img[rc[0]:rc[1], rc[2]:rc[3]] # crop it to the beams local subframe (same reference frame as ref_x, ref_y pixels)
 
+        else: # CRED 1 must be in cropped mode. Crop mode only crops y (as of 13/9/25)
+            y_offset = int( 256 - full_img.shape[0] )
+            sub_img = full_img[rc[0]-y_offset : rc[1]-y_offset, rc[2] : rc[3]]
         # could detect and interpolate bad pixels - only if this becomes a problem 
     
         mea_x, mea_y, a, b, theta, pupil_mask = self.detect_pupil( sub_img ,
