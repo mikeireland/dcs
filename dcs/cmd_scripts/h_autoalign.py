@@ -51,7 +51,7 @@ class HeimdallrAA:
         )
 
         self.frame_iters = 3
-        self.sleep_between_frames = 0.2  # seconds
+        self.sleep_between_frames = 0.8 # seconds
 
         if savepth.lower() == "none":
             self.savepth = None
@@ -175,7 +175,10 @@ class HeimdallrAA:
             full_frame = self._get_frame() - 1000.0
             acc_frame += full_frame / self.frame_iters
             blob_centre = self._find_blob_centre(full_frame)
+            print("indiv blob centre", blob_centre)
             blob_centres.append(blob_centre)
+
+            time.sleep(self.sleep_between_frames)
         # check the scatter on the blob centres
         blob_centres = np.array(blob_centres)
         scat = np.std(blob_centres, axis=0)
