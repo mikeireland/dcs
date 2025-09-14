@@ -53,7 +53,7 @@ class HeimdallrAA:
         else:
             self.savepth = savepth
 
-        self.row_bnds = (1, 128)
+        self.row_bnds = (1, centres["K1"][1] + 32)
         # self.col_bnds is set above
 
         if output not in ["internal", "mcs", "none"]:
