@@ -333,6 +333,7 @@ class BackEndServer:
             "bld_open_ho": 'open_baldr_HO ""',
             "bld_close_lo": 'close_baldr_LO ""',
             "bld_close_ho": 'close_baldr_HO ""',
+            "bld_n0_update" : 'N0_update ""', 
         }
 
         name = (command.get("name") or "").lower()
