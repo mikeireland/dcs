@@ -235,6 +235,9 @@ class MCSClient:
         sock = adapter.z.s
         if not self._is_zmq_socket_open(sock):
             logging.warning("Heimdallr ZMQ socket is not open or not connected.")
+            if self.time_since_last_server_check > 10:
+                self.time_since_last_server_check = 0
+                self.dcs_adapters["HDLR"] = HeimdallrAdapter(self.dcs_endpoints["HDLR"])
             return []
         st = adapter.fetch()
         if st is None:
