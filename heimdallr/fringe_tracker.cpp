@@ -407,7 +407,7 @@ void fringe_tracker(){
             // the SNR is too low, in which case we set it to zero.
             if (baselines.gd_snr(bl) > gd_threshold){
                 Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
-                var_gd(bl) = 1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
+                var_gd(bl) = gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
             else {
                 Wgd(bl) = 0;
@@ -415,7 +415,7 @@ void fringe_tracker(){
             }
             if (baselines.pd_snr(bl) > pd_threshold){
                 Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
-                var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl);
+                var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI;
             }
             else{
                 Wpd(bl) = 0;
@@ -571,11 +571,8 @@ void fringe_tracker(){
             double worst_gd_var = eig_solver.eigenvalues().maxCoeff();
             double gd_var_threshold = gd_to_K1*gd_to_K1/gd_search_reset/gd_search_reset;
 
-            // Find the second smallest eigenvalue
-            // Eigen::VectorXd evals = eig_solver.eigenvalues();
-            // std::vector<double> eval_vec(evals.data(), evals.data() + evals.size());
-            // std::sort(eval_vec.begin(), eval_vec.end());
-            // double second_min_eval = eval_vec.size() > 1 ? eval_vec[1] : eval_vec[0];
+            // Find the nth smallest eigenvalue, where n=2 if all
+            // telescopes are active, and n increases by 1 for each inactive telescope.
 
             int num_zeros = 0;
             for (int i = 0; i < N_TEL; ++i) {
