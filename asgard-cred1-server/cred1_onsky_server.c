@@ -264,7 +264,7 @@ void optimize_cropping_parameters() {
 	camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
   }
   camconf->bal_min_row -= 2;
-  camconf->hei_max_row += 2;
+  camconf->hei_max_row += 16;
 
   printf("Cropping parameters are: %d and %d",
 	 camconf->hei_max_row, camconf->bal_min_row);
@@ -328,7 +328,6 @@ int init_cam_configuration() {
   camconf->fps = camera_query_float(ed, "fps raw");
   camconf->maxfps = camera_query_float(ed, "maxfps raw");
 
-  show_cam_conf();
   return 0;
 }
 
@@ -1263,8 +1262,13 @@ int main(int argc, char **argv) {
   // initial camera server setup
   camconf = (CREDSTRUCT*) malloc(sizeof(CREDSTRUCT));
   camconf->save_dark = 0;
+
   init_cam_configuration();
   refresh_image_splitting_configuration();
+  set_crop_mode(1);  // now starting the CRED1 in crop mode
+  update_fps(500.0); // engineering startup configuration
+  update_gain(10);   // engineering startup configuration
+  show_cam_conf();
   shm_setup(1);  // setup everything, including the ROI SHMs
 
   // --------------------------
