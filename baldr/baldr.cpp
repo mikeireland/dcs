@@ -4504,6 +4504,149 @@ nlohmann::json probe_interaction_data(nlohmann::json args)
 
 
 
+// copied from the one implemented in rtc.cpp (resets internal PRBS/LFSR, timers, etc.)
+// void reset_signal_injection_runtime() {
+//     g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
+//     //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
+// }
+extern void reset_signal_injection_runtime();
+/**
+ * Configure injection for Tip/Tilt (LO branch) with sensible ID defaults.
+ * 
+ * @param method    "chirp", "prbs" (accepts "probs" alias), or "sine"
+ * @param amplitude scalar amplitude applied to the scalar carrier (will be clamped)
+ * @param apply_to  "setpoint" (closed-loop ID) or "command" (open-loop/command-space)
+ * @return          true on success, false if method/apply_to are invalid
+ */
+bool configure_tt_injection(const std::string& method_in,
+                            double amplitude,
+                            const std::string& apply_to_in)
+{
+    // Lowercase copies for robust matching
+    auto to_lower = [](std::string s){
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return std::tolower(c); });
+        return s;
+    };
+    std::string method   = to_lower(method_in);
+    std::string apply_to = to_lower(apply_to_in);
+
+    // Normalize common typos/aliases
+    if (method == "probs") method = "prbs";
+
+    // Validate inputs (apply_to defaults to "setpoint" if unknown)
+    if (method != "chirp" && method != "prbs" && method != "sine") {
+        std::cerr << "[inj] invalid method: " << method_in << " (use chirp|prbs|sine)\n";
+        return false;
+    }
+    if (apply_to != "setpoint" && apply_to != "command") {
+        std::cerr << "[inj] invalid apply_to: " << apply_to_in << " (defaulting to setpoint)\n";
+        apply_to = "setpoint";
+    }
+
+    // Safety clamp — keep lots of margin below your ±0.4 hard stop
+    const double A = std::clamp(amplitude, 0.0, 0.30);
+
+    // Apply config under lock; we also reset the injection runtime state so changes take effect cleanly.
+    {
+        std::lock_guard<std::mutex> lk(rtc_mutex);
+        auto &inj = rtc_config.inj_signal;
+
+        // Always target Tip/Tilt branch
+        inj.enabled   = true;
+        inj.branch    = "LO";              // Tip/Tilt
+        inj.apply_to  = apply_to;          // "setpoint" (recommended first) or "command"
+        inj.amplitude = A;
+
+        // Preserve user's current basis/basis_index; they may point to a "tt" basis already.
+        // If you prefer to force actuator (zonal) basis, uncomment next two lines:
+        // inj.basis       = "zonal";
+        // inj.basis_index = 0; // <-- user can change via commander if desired
+
+        // Common defaults
+        inj.latency_frames = 0;            // do not add artificial delay for ID
+        inj.hold_frames    = 1;            // update every frame by default
+        inj.phase_deg      = 0.0;
+        inj.duty           = 0.5;          // for square if ever used
+        // IMPORTANT: we do NOT set t_start_s / t_stop_s here because rtc.cpp's now_s()
+        // timestamps are internal to the RTC; set those via existing field setters if needed.
+
+        if (method == "chirp") {
+            inj.waveform = "chirp";
+            inj.chirp_f0 = 0.5;            // Hz (start)
+            inj.chirp_f1 = 400.0;          // Hz (end) — leave guard to 500 Hz Nyquist at 1 kHz
+            inj.chirp_T  = 60.0;           // seconds sweep (good resolution ~1/60 Hz)
+            inj.hold_frames = 1;           // dense spectrum to Nyquist
+            // Leave t_start_s/t_stop_s unchanged (user can gate via commander)
+        }
+        else if (method == "prbs") {
+            inj.waveform  = "prbs";
+            inj.prbs_seed = inj.prbs_seed ? inj.prbs_seed : 0xBEEF; // keep user seed if set
+            // For TT focus (≤250 Hz) you can decimate the chip rate a bit:
+            inj.hold_frames = 2;           // chip rate = fs/hold = 500 Hz (good energy ≤ ~250 Hz)
+            // If you want flatter up to Nyquist, use hold_frames=1
+        }
+        else if (method == "sine") {
+            inj.waveform = "sine";
+            inj.freq_hz  = 10.0;           // a sensible default near typical TT crossover
+            inj.hold_frames = 1;
+            // phase_deg already 0.0
+        }
+    }
+
+    // Reset runtime so PRBS LFSR, chirp phase, sample-and-hold, etc. start cleanly.
+    reset_signal_injection_runtime();
+
+    std::cout << "[inj] TT configured: method=" << method
+              << ", A=" << A
+              << ", apply_to=" << apply_to
+              << " (branch=LO)\n";
+    return true;
+}
+
+
+
+// Commander wrapper: configure Tip/Tilt (LO) injection from a JSON payload.
+// Accepts either an array form: ["chirp|prbs|sine", amplitude, "setpoint|command"]
+// or an object form: {"method":"prbs","amplitude":0.02,"apply_to":"setpoint"}
+nlohmann::json tt_inj(nlohmann::json args) {
+    using json = nlohmann::json;
+
+    // Defaults (safe)
+    std::string method   = "chirp";
+    double      amplitude = 0.02;
+    std::string apply_to = "setpoint";
+
+    try {
+        if (args.is_array()) {
+            if (args.size() < 1 || args.size() > 3) {
+                return json{{"ok", false}, {"error",
+                    R"(usage: ["chirp|prbs|sine", amplitude?, "setpoint|command"?])"}};
+            }
+            method = args.at(0).get<std::string>();
+            if (args.size() >= 2) amplitude = args.at(1).get<double>();
+            if (args.size() >= 3) apply_to  = args.at(2).get<std::string>();
+        } else if (args.is_object()) {
+            if (args.contains("method"))    method    = args.at("method").get<std::string>();
+            if (args.contains("amplitude")) amplitude = args.at("amplitude").get<double>();
+            if (args.contains("apply_to"))  apply_to  = args.at("apply_to").get<std::string>();
+        } else {
+            return json{{"ok", false}, {"error", "args must be array or object"}};
+        }
+    } catch (const std::exception& e) {
+        return json{{"ok", false}, {"error", std::string("bad args: ") + e.what()}};
+    }
+
+    const bool ok = configure_tt_injection(method, amplitude, apply_to);
+    return json{
+        {"ok", ok},
+        {"method", method},
+        {"amplitude", amplitude},
+        {"apply_to", apply_to},
+        {"branch", "LO"}
+    };
+}
+
+
 
 // ---------- Probe method wrapper + FITS writer ----------
 
@@ -5461,6 +5604,17 @@ COMMANDER_REGISTER(m)
         probe_method {"method":"method_1","path":"/optional/dir/or/filename.fits"}
     Default path = telem_save_path with timestamped file, /usr/local/var/baldr/probes/probe_<method>_<YYYYMMDD_HHMMSS>.fits.)"
     );
+
+    m.def(
+        "tt_inj",
+        tt_inj,
+        R"(Configure Tip/Tilt (LO) injection for system ID.
+        Args (array): ["chirp|prbs|sine", amplitude?, "setpoint|command"?]
+        Args (object): {"method":"prbs","amplitude":0.02,"apply_to":"setpoint"}
+        Returns: {"ok":true, "method":..., "amplitude":..., "apply_to":"setpoint|command", "branch":"LO"})",
+            "args"_arg
+    );
+
 
  }
 

@@ -23,6 +23,10 @@
 
 #include "burst_window.h"
 
+#pragma once
+void reset_signal_injection_runtime(); // to allow baldr.cpp to have generic reset function.
+
+
 //#include <ImageStreamIO/ImageStreamIO.h>
 
 namespace dm {

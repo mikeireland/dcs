@@ -476,11 +476,14 @@ inline double now_s() {
 }
 
 
-// reset injection signal runtime
-void reset_signal_injection_runtime() {
-    g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
-    //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
-}
+/// MOVED OUT OF namespace g_inj 
+// // reset injection signal runtime
+// void reset_signal_injection_runtime() {
+//     g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
+//     //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
+// }
+
+
 
 /**
  * Sample the scalar carrier at relative time t (seconds) per the waveform.
@@ -599,7 +602,10 @@ inline void compute_c_inj(const bdr_rtc_config &rtc_config,
 } // namespace
 
 
-
+void reset_signal_injection_runtime() {
+    g_inj = SignalInjRuntime{};  // zero-initialize: inited=false, clears FIFO/PRBS/frame_idx/basis_vec
+    //key point is inited becomes false -> so compute_c_inj(...) does its one-time init next frame
+}
 
 // // The main RTC function
 void rtc(){
