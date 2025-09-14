@@ -303,6 +303,7 @@ Status get_status() {
     status.pd_av_filtered = std::vector<double>(N_BL);
     status.test_ix = control_u.test_ix;
     status.test_n = control_u.test_n;
+    status.itime = control_u.itime;
 
     // Now fill these in with the values from the control structures.
     for (int i = 0; i < N_BL; i++) {
@@ -446,8 +447,10 @@ void set_itime(double itime) {
         return;
     }
     beam_mutex.lock();
+    control_u.itime = 0;
     control_u.target_itime=itime;
     beam_mutex.unlock();   
+    fmt::print("New integration started for a total time of {}\n", itime);
 }
 
 std::string expstatus(void){

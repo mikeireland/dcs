@@ -282,6 +282,7 @@ class BackEndServer:
                         del self.scripts_running[pid]
 
             # Send the reply back to wag
+            logging.info(f"Sending: {response}")
             self.socket.send_json(response)
 
     def process_command(self, message):
@@ -467,6 +468,19 @@ class BackEndServer:
                 return self.create_response(f"ERROR: ZMQ error: {e}")
 
             return self.create_response("OK")
+        elif "hdlr_foreground":
+            # Implement expstatus logic here
+            self.servers["hdlr"].send_string(f'servo "off"')
+            res = self.servers["hdlr"].recv_string()
+            self.servers["hdlr"].send_string(f'offload "off"')
+            res = self.servers["hdlr"].recv_string()
+
+            self.servers["hdlr"].send_string(f"foreground")
+            res = self.servers["hdlr"].recv_string()
+            if res.upper().startswith("ERROR"):
+                return self.create_response(f"ERROR: hdlr response: {res}")
+
+            return self.create_response(res)
         elif cmd_name == "hdlr_fringe_search":
             # Execute a default fringe search, which is just 'offload "gd"'
             # plus other standard parameters.
@@ -542,14 +556,16 @@ class BackEndServer:
             if _param_value(command.get("parameters", []), "dark-time") is None:
                 return self.create_response("ERROR: dark_time parameter is required")
 
-            process = subprocess.Popen(
-                [
+            cmd = [
                     "h-shutter",
                     "--beam-time",
-                    _param_value(command.get("parameters", []), "beam-time"),
+                    str(_param_value(command.get("parameters", []), "beam-time")),
                     "--dark-time",
-                    _param_value(command.get("parameters", []), "dark-time"),
-                ],
+                    str(_param_value(command.get("parameters", []), "dark-time")),
+                ]
+            logging.info(cmd)
+            process = subprocess.Popen(
+                cmd,
             )
             logging.info("Started s_h-shutter script process.")
 
@@ -651,6 +667,8 @@ class BackEndServer:
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
             elif name == "DET.NDIT":
                 ndit = value
+            elif name == "DET.EXP.NAME":
+                pass
             else:
                 # Handle other parameters as needed
                 logging.warning(f"Unknown parameter: {name} = {value}")
@@ -668,6 +686,9 @@ class BackEndServer:
         if "s_h-shutter" in self.scripts_running:
             return self.create_response("ERROR: s_h-shutter script is running")
 
+        self.servers["cam_server"].send_string("save_mode 1")
+        res = self.servers["cam_server"].recv_string()
+
         self.servers["hdlr"].send_string(f"set_itime {self.itime}")
         res = self.servers["hdlr"].recv_string()
         if res.upper().startswith("ERROR"):
@@ -681,25 +702,14 @@ class BackEndServer:
         # Send "expstatus" query to heimdallr, and return if the exposure is complete !!!
         # response is "integrating" or "success" or "failure" !!!
         self.servers["hdlr"].send_string(f"expstatus")
-        res = self.servers["hdlr"].recv_string()
+        res = self.servers["hdlr"].recv_string().replace('"','')
+
         if res.upper().startswith("ERROR"):
             return self.create_response(f"ERROR: hdlr response: {res}")
 
         return self.create_response(res)
 
-    def foreground(self, command):
-        # Implement expstatus logic here
-        self.servers["hdlr"].send_string(f'servo "off"')
-        res = self.servers["hdlr"].recv_string()
-        self.servers["hdlr"].send_string(f'offload "off"')
-        res = self.servers["hdlr"].recv_string()
-
-        self.servers["hdlr"].send_string(f"foreground")
-        res = self.servers["hdlr"].recv_string()
-        if res.upper().startswith("ERROR"):
-            return self.create_response(f"ERROR: hdlr response: {res}")
-
-        return self.create_response(res)
+    # def foreground(self, command):
 
 
 if __name__ == "__main__":

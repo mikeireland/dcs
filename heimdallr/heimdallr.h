@@ -197,6 +197,7 @@ struct Status
     int test_ix, test_n;
     unsigned int cnt;
     bool locked{false};
+    double itime;
 };
 //-------End of Commander structs------
 
