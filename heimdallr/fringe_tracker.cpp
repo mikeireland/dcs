@@ -607,6 +607,7 @@ void fringe_tracker(){
                 //}
                 //fmt::print("GD var threshold: {:.6f}\n", gd_var_threshold);
             } else {
+                if (foreground_in_place) control_u.itime += offload_time_ms/1000.0;
                 control_u.fringe_found = false;
                 // Now do the delay line control. This is slower, so occurs after the servo.
                 // Compute the search sign.

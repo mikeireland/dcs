@@ -242,7 +242,7 @@ class BaldrAA:
         full_img = self.get_frame() # average of 200 frames
 
         # check if in cropped mode
-        if full_frame.shape == (256,320): # full CRED 1 frame 
+        if full_img.shape == (256,320): # full CRED 1 frame 
             sub_img = full_img[rc[0]:rc[1], rc[2]:rc[3]] # crop it to the beams local subframe (same reference frame as ref_x, ref_y pixels)
 
         else: # CRED 1 must be in cropped mode. Crop mode only crops y (as of 13/9/25)
@@ -318,7 +318,7 @@ class BaldrAA:
                 {"bld_complete": 1},
             ],
         }
-
+        #print(msg) ### Debug test here 
         self.send_and_recv_ack(msg)
 
         ########## OLD mcs format direct wag format  

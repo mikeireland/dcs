@@ -907,9 +907,13 @@ void rtc(){
             g_subframe_int = 1.0;
         }
 
-        // Normalize the image by subframe intensity sum
-        img /= g_subframe_int;
-        // --- End normalization patch ---
+        // we dont Normalize the image by subframe intensity sum
+	// we do this in the img_dm from which we calculate the signal
+	// this way we can extract flux sum from the image for later analysis 
+
+	// img /= g_subframe_int;
+
+	// --- End normalization patch ---
 
 
         // auto end1   = Clock::now();
@@ -946,7 +950,8 @@ void rtc(){
 
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
-        img_dm = (rtc_config.matrices.I2A *  img); //-  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
+	// HERE WE DO OUR NORMALIZATION 
+        img_dm = (rtc_config.matrices.I2A *  img) / g_subframe_int ; //-  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
 
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
