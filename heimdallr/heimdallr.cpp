@@ -309,6 +309,8 @@ Status get_status() {
     status.dm_piston = std::vector<double>(N_TEL);
     status.pd_av = std::vector<double>(N_BL);
     status.pd_av_filtered = std::vector<double>(N_BL);
+    status.gd_phasor_real = std::vector<double>(N_BL);
+    status.gd_phasor_imag = std::vector<double>(N_BL);
     status.test_ix = control_u.test_ix;
     status.test_n = control_u.test_n;
     status.itime = control_u.itime;

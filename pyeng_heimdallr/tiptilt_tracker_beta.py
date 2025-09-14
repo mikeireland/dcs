@@ -169,6 +169,7 @@ class App(QtWidgets.QMainWindow):
 
         self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
                             'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
+        self.ndev = len(self.dms_devlist)
 
     # ------------------------------------------------------
     def refresh(self):
@@ -280,22 +281,21 @@ class MyMainWidget(QWidget):
         self.keepgoing = False
 
     # =========================================================================
-    def tt_actuator_command(self, devname, step_size, n_steps):
+    def tt_dev_cmd(self, devname, n_steps):
+        ''' Send one move command for +/- # of steps to a device '''
+
+        if n_steps < 0:
+            step_size = -15
+        else:
+            step_size = 15
+
         cmd = f"tt_config_step {devname} {step_size}"
         self.socket.send_string(cmd)
         self.socket.recv_string() # acknowledgement
 
-        cmd = f"tt_step {devname} {n_steps}"
+        cmd = f"tt_step {devname} {np.abs(n_steps)}"
         self.socket.send_string(cmd)
         self.socket.recv_string() # acknowledgement
-
-
-    # =========================================================================
-    def move_htpi(self,):
-        pass
-
-    def move_htpi(self,):
-        pass
 
     # =========================================================================
     def fourier_signal(self, phase=True):
@@ -382,7 +382,7 @@ class MyMainWidget(QWidget):
             header=f"Tip-tilt response matrix for a0 = {a0:.2f}")
 
     # =========================================================================
-    def calibrate_response_mds(self, step_si=0.08):
+    def calibrate_response_mds(self, step_sz=1000):
         nav = 20
 
         phi_ref = []
@@ -392,34 +392,41 @@ class MyMainWidget(QWidget):
         phi_ref = np.mean(np.array(phi_ref), axis=0)
         btx0, bty0 = self.get_slopes(phi_ref)
 
-        rx, ry = np.zeros((ndm, nbuv)), np.zeros((ndm, nbuv))
+        rx, ry = np.zeros((self.ndevs/2, nbuv)), np.zeros((self.ndevs/2, nbuv))
 
         time.sleep(0.5)
 
-        for ii in range(ndm):
-            print(f"calibrating response of DM #{dmids[ii]}:")
+        for ii, axis in enumerate(self.dms_devlist[:4]):
+            print(f"calibrating response of {axis}:")
             phi = []
-            # send DM tip command
-            dms[ii].set_data(a0 * tt_modes[0])
+            self.tt_dev_cmd(axis, step_sz)  # send actuator command
             time.sleep(1)
+
+            # acquire the signal
             for kk in range(nav):
                 phi.append(self.fourier_signal())
-            phi = np.mean(np.array(phi), axis=0)
+            phi = np.median(np.array(phi), axis=0)
             btx, bty = self.get_slopes(phi)
 
-            rx[ii,:] = (btx - btx0) / a0
+            rx[ii,:] = (btx - btx0) / float(step_sz)
 
+            self.tt_dev_cmd(axis, -step_sz)  # reset actuator
+            
+        for ii, axis in enumerate(self.dms_devlist[4:]):
+            print(f"calibrating response of {axis}:")
             phi = []
-            # send DM tilt command
-            dms[ii].set_data(a0 * tt_modes[1])
+            self.tt_dev_cmd(axis, step_sz)  # send actuator command
             time.sleep(1)
+
+            # acquire the signal
             for kk in range(nav):
                 phi.append(self.fourier_signal())
-            phi = np.mean(np.array(phi), axis=0)
+            phi = np.median(np.array(phi), axis=0)
             btx, bty = self.get_slopes(phi)
-            ry[ii,:] = (bty - bty0) / a0
 
-            self.reset_correction(ii)
+            ry[ii,:] = (bty - bty0) / float(step_sz)
+
+            self.tt_dev_cmd(axis, -step_sz)  # reset actuator
 
         print(np.round(rx.T, 3))
         print(np.round(ry.T, 3))
@@ -429,8 +436,8 @@ class MyMainWidget(QWidget):
         self.cy = np.linalg.pinv(self.ry.T)
 
         np.savetxt(
-            "tt_calibration.txt", np.append(self.rx, self.ry, axis=0), fmt='%.3f',
-            header=f"Tip-tilt response matrix for a0 = {a0:.2f}")
+            "tt_mds_calibration.txt", np.append(self.rx, self.ry, axis=0), fmt='%.3f',
+            header=f"Tip-tilt resp. matrix for HTTI/P devices = {step_sz}")
 
     # =========================================================================
     def reset_correction(self, ii):
