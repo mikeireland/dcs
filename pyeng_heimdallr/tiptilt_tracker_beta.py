@@ -167,6 +167,9 @@ class App(QtWidgets.QMainWindow):
         self.socket.setsockopt(zmq.RCVTIMEO, 10000)
         self.socket.connect("tcp://192.168.100.2:5555")
 
+        self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
+                            'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
+
     # ------------------------------------------------------
     def refresh(self):
         self.main_widget.refresh_plot()
@@ -328,7 +331,58 @@ class MyMainWidget(QWidget):
         return phi
         
     # =========================================================================
-    def calibrate_response(self, a0=0.08):
+    def calibrate_response_dm(self, a0=0.08):
+        nav = 20
+
+        phi_ref = []
+        for kk in range(nav):
+            phi_ref.append(self.fourier_signal())
+
+        phi_ref = np.mean(np.array(phi_ref), axis=0)
+        btx0, bty0 = self.get_slopes(phi_ref)
+
+        rx, ry = np.zeros((ndm, nbuv)), np.zeros((ndm, nbuv))
+
+        time.sleep(0.5)
+
+        for ii in range(ndm):
+            print(f"calibrating response of DM #{dmids[ii]}:")
+            phi = []
+            # send DM tip command
+            dms[ii].set_data(a0 * tt_modes[0])
+            time.sleep(1)
+            for kk in range(nav):
+                phi.append(self.fourier_signal())
+            phi = np.mean(np.array(phi), axis=0)
+            btx, bty = self.get_slopes(phi)
+
+            rx[ii,:] = (btx - btx0) / a0
+
+            phi = []
+            # send DM tilt command
+            dms[ii].set_data(a0 * tt_modes[1])
+            time.sleep(1)
+            for kk in range(nav):
+                phi.append(self.fourier_signal())
+            phi = np.mean(np.array(phi), axis=0)
+            btx, bty = self.get_slopes(phi)
+            ry[ii,:] = (bty - bty0) / a0
+
+            self.reset_correction(ii)
+
+        print(np.round(rx.T, 3))
+        print(np.round(ry.T, 3))
+
+        self.rx, self.ry = rx, ry
+        self.cx = np.linalg.pinv(self.rx.T)
+        self.cy = np.linalg.pinv(self.ry.T)
+
+        np.savetxt(
+            "tt_calibration.txt", np.append(self.rx, self.ry, axis=0), fmt='%.3f',
+            header=f"Tip-tilt response matrix for a0 = {a0:.2f}")
+
+    # =========================================================================
+    def calibrate_response_mds(self, step_si=0.08):
         nav = 20
 
         phi_ref = []
@@ -426,7 +480,7 @@ class MyMainWidget(QWidget):
     def trigger_calibration(self):
         print("start calibration")
         self.calib_thread = GenericThread(
-            self.calibrate_response, a0=a0)
+            self.calibrate_response_mds, a0=a0)
         self.calib_thread.start()
 
     # =========================================================================
