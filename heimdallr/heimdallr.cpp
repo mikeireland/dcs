@@ -276,10 +276,16 @@ void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3
     beam_mutex.unlock();
 }
 
+
 // Add setter functions for thresholds
 void set_gd_threshold(double val) { gd_threshold = val; }
 void set_pd_threshold(double val) { pd_threshold = val; }
 void set_gd_search_reset(double val) { gd_search_reset = val; }
+
+// Getter for gd_threshold
+double get_gd_threshold() {
+    return gd_threshold;
+}
 
 Status get_status() {
     Status status;
@@ -489,6 +495,7 @@ COMMANDER_REGISTER(m)
     m.def("search", set_search_params, "Set the fringe tracker search parameter", 
         "delta"_arg=1.0, "turnaround"_arg=10);    
     m.def("set_gd_threshold", set_gd_threshold, "Set GD SNR threshold", "value"_arg=5.0);
+    m.def("get_gd_threshold", get_gd_threshold, "Get GD SNR threshold");
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
