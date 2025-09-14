@@ -71,6 +71,9 @@ class HShutterSeq:
         self._send_and_get_response("h_shut open 4")
 
         time.sleep(self.beam_time + self.settling_time)
+        
+        self.hdlr_server.s.send_string("foreground 0")
+        res = self.hdlr_server.s.recv_string()
 
         # optimized - send complete when still needing darks
         msg = {
@@ -84,18 +87,17 @@ class HShutterSeq:
 
         self._send_and_get_response("h_shut close 4")
 
+
         time.sleep(self.dark_time)
 
         self._send_and_get_response("h_shut open 1,2,3,4")
 
-        self.cam_server.send_string("save_mode 0")
-        res = self.cam_server.recv_string()
+        # self.cam_server.send_payload("save_mode 0")
+        self.cam_server.s.send_string("save_mode 0")
+        res = self.cam_server.s.recv_string()
 
-        self.hdlr_server.send_string("foreground 0")
-        res = self.hdlr_server.recv_string()
-
-        self.hdlr_server.send_string("dls 0,0,0,0")
-        res = self.hdlr_server.recv_string()
+        # self.hdlr_server.send_string("dls 0,0,0,0")
+        # res = self.hdlr_server.recv_string()
 
     def test_mcs(self):
         msg = {

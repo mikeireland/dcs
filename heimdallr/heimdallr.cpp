@@ -150,22 +150,22 @@ void set_offload_time(uint time) {
 }
 
 // Set the offload mode
-void set_offload_mode(std::string mode) {
+std::string set_offload_mode(std::string mode) {
     if (mode == "off") {
         offload_mode = OFFLOAD_OFF;
-    } else if (mode == "nested") {
+    } else if ((mode == "nested") || (mode == "nest")) {
         offload_mode = OFFLOAD_NESTED;
         // Reset the offload to zero.
         control_u.dl_offload.setZero();
     } else if (mode == "gd") {
         offload_mode = OFFLOAD_GD;
+    } else if ((mode == "man") || (mode =="manual")) {
+        offload_mode = OFFLOAD_MANUAL;
     } else {
-        std::cout << "Offload mode not recognised" << std::endl;
-        return;
+        return "ERROR: Offload mode not recognised";
     }
     control_u.search_Nsteps=0;
-    std::cout << "Offload mode updated to " << offload_mode << std::endl;
-    return;
+    return "OK";
 }
 
 // Set the delay line offsets (from the servo loop)
@@ -263,7 +263,8 @@ void set_delay_line_type(std::string type) {
 }
 
 // A wrapper for set_delay_lines that takes 4 doubles as input.
-void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3=0.0, double delay4=0.0) {
+std::string set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3=0.0, double delay4=0.0) {
+    if (offload_mode == OFFLOAD_OFF) return "ERROR: Offloads off. Set to manual to use the dls command.";
     Eigen::Vector4d delays = Eigen::Vector4d::Zero();
     delays(0) = delay1;
     delays(1) = delay2;
@@ -274,12 +275,19 @@ void set_delay_lines_wrapper(double delay1=0.0, double delay2=0.0, double delay3
     beam_mutex.lock();
     control_u.search_Nsteps = 0;
     beam_mutex.unlock();
+    return "OK";
 }
+
 
 // Add setter functions for thresholds
 void set_gd_threshold(double val) { gd_threshold = val; }
 void set_pd_threshold(double val) { pd_threshold = val; }
 void set_gd_search_reset(double val) { gd_search_reset = val; }
+
+// Getter for gd_threshold
+double get_gd_threshold() {
+    return gd_threshold;
+}
 
 Status get_status() {
     Status status;
@@ -391,9 +399,12 @@ bool foreground_in_place = false;
 void set_foreground(int state) {
     static const Eigen::Vector4d fg_offset(-600.0, -200.0, 200.0, 600.0);
     if (state == 1 && !foreground_in_place) {
+        if (offload_mode == OFFLOAD_OFF) offload_mode=OFFLOAD_MANUAL;
         add_to_delay_lines(fg_offset);
         foreground_in_place = true;
+        
     } else if (state == 0 && foreground_in_place) {
+    	if (offload_mode == OFFLOAD_MANUAL) offload_mode=OFFLOAD_OFF;
         add_to_delay_lines(-fg_offset);
         foreground_in_place = false;
     }
@@ -489,6 +500,7 @@ COMMANDER_REGISTER(m)
     m.def("search", set_search_params, "Set the fringe tracker search parameter", 
         "delta"_arg=1.0, "turnaround"_arg=10);    
     m.def("set_gd_threshold", set_gd_threshold, "Set GD SNR threshold", "value"_arg=5.0);
+    m.def("get_gd_threshold", get_gd_threshold, "Get GD SNR threshold");
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);

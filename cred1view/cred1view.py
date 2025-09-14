@@ -86,7 +86,7 @@ class App(QtWidgets.QMainWindow):
         super().__init__()
         self.title = "Asgard CRED1 viewer"
         self.left, self.top = 0, 0
-        self.width, self.height = 850, 550
+        self.width, self.height = 850, 360
 
         self.setWindowTitle(self.title)
         self.setGeometry(self.left, self.top, self.width, self.height)
@@ -216,7 +216,7 @@ class MyMainWidget(QtWidgets.QWidget):
         self.gView_live.addItem(self.imv_data)
 
         # stat display
-        self.lbl_stats.setGeometry(QRect(self.imw + 2 * pad, 40, 180, 10 * clh))
+        self.lbl_stats.setGeometry(QRect(self.imw + 2 * pad, 40, 180, 180))
         # cross-hair
         self.vline = pg.InfiniteLine(angle=90, movable=False)
         self.hline = pg.InfiniteLine(angle=0, movable=False)
@@ -245,14 +245,14 @@ class MyMainWidget(QtWidgets.QWidget):
             self.gView_live.addItem(obox)
 
         # ============= display controls =============
-        y0 = 370
+        y0 = 240
         self.chB_nonlinear.setGeometry(QRect(xcol1, y0, btw, clh))
         self.chB_nonlinear.stateChanged[int].connect(self.update_non_linear)
 
         self.chB_average.setGeometry(QRect(xcol2, y0, btw, clh))
         self.chB_average.stateChanged[int].connect(self.update_average_state)
 
-        y0 = 400
+        y0 = 270
         self.dspB_disp_min.setGeometry(QRect(xcol1, y0, btw, clh))
         self.dspB_disp_max.setGeometry(QRect(xcol1, y0 + 30, btw, clh))
         self.dspB_disp_min.valueChanged[float].connect(self.update_vmin)
@@ -263,8 +263,9 @@ class MyMainWidget(QtWidgets.QWidget):
         self.chB_min.stateChanged[int].connect(self.update_vmin_apply)
         self.chB_max.stateChanged[int].connect(self.update_vmax_apply)
 
+        x0, y0 = pad, 300
         # color scale
-        self.cmB_cbar.setGeometry(QRect(xcol1, self.imh + pad - clh, btw, clh))
+        self.cmB_cbar.setGeometry(QRect(x0, y0, btw, clh))
         self.cmB_cbar.activated[str].connect(self.update_cbar)
         self.cmB_cbar.setCurrentIndex(0)
         self.update_cbar()
@@ -352,7 +353,7 @@ class MyMainWidget(QtWidgets.QWidget):
     # =========================================================
     def refresh_stats(self, add_msg=None):
 
-        pt_levels = [0, 5, 10, 20, 50, 75, 90, 95, 99, 100]
+        pt_levels = [0, 5, 50, 90, 99, 100]
         pt_values = np.percentile(self.data_img, pt_levels)
 
         msg = "<pre>\n"
