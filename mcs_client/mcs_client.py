@@ -155,6 +155,8 @@ class MCSClient:
         self.script_z = ScriptAdapter(script_endpoint)
         logging.info(f"ScriptAdapter(REP) set up on {script_endpoint}")
 
+        self.dcs_endpoints = dcs_endpoints
+
         self.dcs_adapters = {}
         for dcs_name, endpoint in dcs_endpoints.items():
             if dcs_name.startswith("BLD"):
@@ -169,6 +171,8 @@ class MCSClient:
 
         self.sleep_time = sleep_time
         self.script_only = script_only
+
+        self.time_since_last_server_check = 1e6
 
     def _send(self, body: Dict[str, Any]) -> Tuple[bool, str]:
         rep = self.publish_z.send_payload(body)
@@ -224,6 +228,9 @@ class MCSClient:
         adapter = self.dcs_adapters.get("HDLR")
         if not adapter or not hasattr(adapter, "z") or not hasattr(adapter.z, "s"):
             logging.warning("Heimdallr adapter not available or not connected.")
+            if self.time_since_last_server_check > 10:
+                self.time_since_last_server_check = 0
+                self.dcs_adapters["HDLR"] = HeimdallrAdapter(self.dcs_endpoints["HDLR"])
             return []
         sock = adapter.z.s
         if not self._is_zmq_socket_open(sock):
