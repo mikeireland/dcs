@@ -1469,6 +1469,60 @@ static FieldHandle make_vector_rw(std::vector<T> bdr_rtc_config::* ptr, const ch
         }
     };
 }
+
+
+// ---- Read/Write factories for Eigen types ----
+template<typename EigenVec>
+static FieldHandle make_eigen_vector_field_rw(EigenVec bdr_rtc_config::* mem,
+                                              const char* tn = "vector<double>") {
+    return FieldHandle{
+        tn,
+        // Getter -> JSON
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_vector_to_json(rtc_config.*mem);
+        },
+        // Setter <- JSON
+        [mem](const nlohmann::json& j) -> bool {
+            try {
+                EigenVec tmp;
+                if (!json_to_eigen_vector(j, tmp)) return false;
+                std::lock_guard<std::mutex> lk(rtc_mutex);
+                (rtc_config.*mem) = std::move(tmp);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+    };
+}
+
+template<typename EigenMat>
+static FieldHandle make_eigen_matrix_field_rw(EigenMat bdr_rtc_config::* mem,
+                                              const char* tn = "matrix<double>") {
+    return FieldHandle{
+        tn,
+        // Getter -> JSON
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_matrix_to_json(rtc_config.*mem);
+        },
+        // Setter <- JSON
+        [mem](const nlohmann::json& j) -> bool {
+            try {
+                EigenMat tmp;
+                if (!json_to_eigen_matrix(j, tmp)) return false;
+                std::lock_guard<std::mutex> lk(rtc_mutex);
+                (rtc_config.*mem) = std::move(tmp);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+    };
+}
+
+
 template<typename Sub, typename EigenVec>
 static FieldHandle make_nested_eigen_vector_rw(Sub bdr_rtc_config::* sub, EigenVec Sub::* mem, const char* tn="vector<double>") {
     return FieldHandle{
@@ -1536,12 +1590,12 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"pixels.secondary_pixels",  make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::secondary_pixels, "vector<int32>")},
     {"pixels.exterior_pixels",   make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::exterior_pixels, "vector<int32>")},
 
-    // ===== reference_pupils (RO) =====
-    {"reference_pupils.I0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)},
-    {"reference_pupils.N0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::N0)},
-    {"reference_pupils.norm_pupil",   make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil)},
-    {"reference_pupils.norm_pupil_dm",make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil_dm)},
-    {"reference_pupils.I0_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm)},
+    // ===== reference_pupils (RW) =====
+    {"reference_pupils.I0",           make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)}, //make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)},
+    {"reference_pupils.N0",           make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::N0)},
+    {"reference_pupils.norm_pupil",   make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil)},
+    {"reference_pupils.norm_pupil_dm",make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil_dm)},
+    {"reference_pupils.I0_dm",        make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm)},
 
     // ===== matrices (RO) =====
     {"matrices.I2A",    make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2A)},
@@ -1632,7 +1686,7 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"I2M_LO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},
     {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
     {"N0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
-    {"I0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
+    {"I0_dm_runtime",        make_eigen_vector_field_rw(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
     //{"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
     {"sec_idx",              make_scalar_field_getter(&bdr_rtc_config::sec_idx, "int")},
     {"m_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::m_s_runtime, "double")},
@@ -2290,42 +2344,106 @@ void open_baldr_HO() {
 }
 
 
+//// original wrong norm
+// void I0_update() {
+//     // !!! only updates rtc_config.I0_dm_runtime !!! 
+//     // does not update rtc_config.reference_pupils members 
+//     // assumes we are in a correct state to obtain reference ZWFS pupil - we do not checks 
+//     if (rtc_config.telem.img_dm.empty()) {
+//         std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
+//         return;
+//     }
+
+//     // Initialize a sum vector with zeros, same size as first vector in img_dm
+//     Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
+
+//     size_t count = 0;
+//     // read from the telem ring buffer
+//     for (const auto& v : rtc_config.telem.img_dm) {
+//         if (v.size() != sum.size()) {
+//             std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
+//             continue; // Skip badly-sized vector
+//         }
+//         sum += v;
+//         ++count;
+//     }
+
+//     if (count == 0) {
+//         std::cerr << "[I0_update] Error: no valid vectors found for averaging." << std::endl;
+//         return;
+//     }
+
+//     // Compute average
+//     rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
+
+//     // Subtraction of dark and bias was previously done in img_dm calc held in rtc telem ring buffer !!! 
+//     // but since Paranal AIV darks are subtracted in camera server so this internal subtraction is no longer used 
+
+//     std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
+// }
+
+
+// Generic temporal mean over any iterable container of Eigen::VectorXd
+// (works with boost::circular_buffer, std::vector, etc.)
+template <typename Container>
+static bool temporal_mean(const Container& buf, Eigen::VectorXd& mean_out) {
+    if (buf.empty()) return false;
+
+    // Find a reference length from the first element
+    const auto L = buf.front().size();
+    if (L == 0) return false;
+
+    mean_out = Eigen::VectorXd::Zero(L);
+    size_t n = 0;
+
+    for (const auto& v : buf) {
+        if (v.size() != L) {
+            std::cerr << "[I0_update] Warning: buffer vector with inconsistent size ("
+                      << v.size() << " vs " << L << "), skipping.\n";
+            continue;
+        }
+        mean_out.noalias() += v;
+        ++n;
+    }
+
+    if (n == 0) return false;
+    mean_out.array() /= static_cast<double>(n);
+    return true;
+}
 
 void I0_update() {
-    // !!! only updates rtc_config.I0_dm_runtime !!! 
-    // does not update rtc_config.reference_pupils members 
-    // assumes we are in a correct state to obtain reference ZWFS pupil - we do not checks 
-    if (rtc_config.telem.img_dm.empty()) {
-        std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
+    // <img_dm> (projected/pupil space) and <img> (full frame)
+    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>
+    Eigen::VectorXd mean_full;  // <rtc_config.telem.img>
+
+    if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+        std::cerr << "[I0_update] Error: cannot form temporal mean of img_dm.\n";
+        return;
+    }
+    if (!temporal_mean(rtc_config.telem.img, mean_full)) {
+        std::cerr << "[I0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
         return;
     }
 
-    // Initialize a sum vector with zeros, same size as first vector in img_dm
-    Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
-
-    size_t count = 0;
-    // read from the telem ring buffer
-    for (const auto& v : rtc_config.telem.img_dm) {
-        if (v.size() != sum.size()) {
-            std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
-            continue; // Skip badly-sized vector
-        }
-        sum += v;
-        ++count;
-    }
-
-    if (count == 0) {
-        std::cerr << "[I0_update] Error: no valid vectors found for averaging." << std::endl;
+    // Scalar normalization S = sum(<img>)
+    const double S = mean_full.sum();
+    if (!std::isfinite(S) || S <= 0.0) {
+        std::cerr << "[I0_update] Error: invalid normalization scalar S=" << S
+                  << " (need finite and > 0). Aborting update.\n";
         return;
     }
 
-    // Compute average
-    rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
+    // Normalized references (no double-normalization)
+    const Eigen::VectorXd I0_dm_norm = mean_dm   / S;  // <img_dm> / sum(<img>)
+    const Eigen::VectorXd I0_norm    = mean_full / S;  // <img>    / sum(<img>)
 
-    // Subtraction of dark and bias was previously done in img_dm calc held in rtc telem ring buffer !!! 
-    // but since Paranal AIV darks are subtracted in camera server so this internal subtraction is no longer used 
+    // Commit:
+    rtc_config.I0_dm_runtime       = I0_dm_norm; // runtime projected reference
+    rtc_config.reference_pupils.I0 = I0_norm;    // full-frame reference
 
-    std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
+    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << I0_dm_norm.size()
+              << ") and reference_pupils.I0 (len=" << I0_norm.size()
+              << ") with S=sum(<img>)=" << S << ".\n";
 }
 
 
@@ -2333,6 +2451,10 @@ void N0_update() {
 
     // !!! only updates rtc_config.N0_dm_runtime !!! 
     // does not update rtc_config.reference_pupils members 
+
+    Eigen::VectorXd mean_full;  // <rtc_config.telem.img> used for sub frame normalization 
+
+
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
     if (rtc_config.telem.img_dm.empty()) {
@@ -2348,7 +2470,7 @@ void N0_update() {
         return;
     }
 
-    // Step 1: Average all img_dm frames
+    // spatial average all img_dm frames
     Eigen::VectorXd avg_dm = Eigen::VectorXd::Zero(P);
     size_t count = 0;
     for (const auto& frame : telemetry_frames) {
@@ -2387,8 +2509,23 @@ void N0_update() {
         }
     }
 
+    // normalize by the average subframe sum 
+        if (!temporal_mean(rtc_config.telem.img, mean_full)) {
+        std::cerr << "[N0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
+        return;
+    }
+
+    // Scalar normalization S = sum(<img>)
+    const double S = mean_full.sum();
+    if (!std::isfinite(S) || S <= 0.0) {
+        std::cerr << "[N0_update] Error: invalid normalization scalar S=" << S
+                  << " (need finite and > 0). Aborting update.\n";
+        return;
+    }
+
+
     // Save into runtime only
-    rtc_config.N0_dm_runtime = avg_dm;
+    rtc_config.N0_dm_runtime = avg_dm / S ;
 
     std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
 }
