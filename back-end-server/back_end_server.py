@@ -333,7 +333,7 @@ class BackEndServer:
             "bld_open_ho": 'open_baldr_HO ""',
             "bld_close_lo": 'close_baldr_LO ""',
             "bld_close_ho": 'close_baldr_HO ""',
-            "bld_n0_update" : 'N0_update ""', 
+            "bld_n0_update": 'N0_update ""',
         }
 
         name = (command.get("name") or "").lower()
@@ -545,12 +545,47 @@ class BackEndServer:
                 return params_obj.get(key, default)
             return default
 
+        def _log_subprocess_output(process, prefix=None):
+            """Read and log output from process in real time."""
+
+            def log_stream(stream, log_func, stream_name):
+                for line in iter(stream.readline, b""):
+                    try:
+                        decoded = line.decode(errors="replace").rstrip()
+                    except Exception:
+                        decoded = str(line).rstrip()
+                    if prefix:
+                        log_func(f"[{prefix} {stream_name}] {decoded}")
+                    else:
+                        log_func(f"[{stream_name}] {decoded}")
+                stream.close()
+
+            threads = []
+            if process.stdout:
+                t_out = threading.Thread(
+                    target=log_stream, args=(process.stdout, logging.info, "stdout")
+                )
+                t_out.daemon = True
+                t_out.start()
+                threads.append(t_out)
+            if process.stderr:
+                t_err = threading.Thread(
+                    target=log_stream, args=(process.stderr, logging.error, "stderr")
+                )
+                t_err.daemon = True
+                t_err.start()
+                threads.append(t_err)
+            return threads
+
         command_name = command.get("name", "").lower()
         # parameters = command.get("parameters", [])
         if command_name == "s_h-autoalign":
             process = subprocess.Popen(
-                ["h-autoalign", "-a", "ia", "-o", "mcs", "-b", "K1"]
+                ["h-autoalign", "-a", "ia", "-o", "mcs", "-b", "K1"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+            _log_subprocess_output(process, prefix=command_name)
             logging.info("Started s_h-autoalign script process.")
         elif command_name == "s_h-shutter":
             # command requires beam_time and dark_time parameters
@@ -560,16 +595,19 @@ class BackEndServer:
                 return self.create_response("ERROR: dark_time parameter is required")
 
             cmd = [
-                    "h-shutter",
-                    "--beam-time",
-                    str(_param_value(command.get("parameters", []), "beam-time")),
-                    "--dark-time",
-                    str(_param_value(command.get("parameters", []), "dark-time")),
-                ]
+                "h-shutter",
+                "--beam-time",
+                str(_param_value(command.get("parameters", []), "beam-time")),
+                "--dark-time",
+                str(_param_value(command.get("parameters", []), "dark-time")),
+            ]
             logging.info(cmd)
             process = subprocess.Popen(
                 cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
+            _log_subprocess_output(process, prefix=command_name)
             logging.info("Started s_h-shutter script process.")
 
         elif command_name == "s_b-autoalign":
@@ -590,7 +628,13 @@ class BackEndServer:
                     "--savepath",
                     "/home/asg/Pictures/baldr_pup_detect_onsky.png",
                 ]
-                process = subprocess.Popen(cmd, cwd=str(script.parent))
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(script.parent),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                _log_subprocess_output(process, prefix=f"{command_name}-beam{beam}")
                 logging.info(f"Started s_b-autoalign script for beam {beam}.")
                 time.sleep(0.8)
         else:
@@ -705,7 +749,7 @@ class BackEndServer:
         # Send "expstatus" query to heimdallr, and return if the exposure is complete !!!
         # response is "integrating" or "success" or "failure" !!!
         self.servers["hdlr"].send_string(f"expstatus")
-        res = self.servers["hdlr"].recv_string().replace('"','')
+        res = self.servers["hdlr"].recv_string().replace('"', "")
 
         if res.upper().startswith("ERROR"):
             return self.create_response(f"ERROR: hdlr response: {res}")
