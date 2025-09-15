@@ -109,6 +109,7 @@ void ForwardFt::loop() {
             if ((subarray->md->cnt0 > cnt+2)  && (mode == FT_RUNNING)) {
                 std::cout << "Missed cam frames: " << subarray->md->cnt0 << " " << cnt << std::endl;
                 catch_up_with_sem(subarray,2);
+                cnt = subarray->md->cnt0-1;
                 nerrors++;
             }
             mode = FT_RUNNING;

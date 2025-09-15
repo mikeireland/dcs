@@ -1,6 +1,3 @@
-Settings get_settings_cmd() {
-    return get_settings();
-}
 #define TOML_IMPLEMENTATION
 #include "heimdallr.h"
 #include <commander/commander.h>
@@ -243,7 +240,7 @@ void set_gain(double gain) {
 // servo loop types.
 void set_ggain(double gain) {
     pid_settings.mutex.lock();
-    pid_settings.gd_gain = gain / baselines.max_n_gd_boxcar;
+    pid_settings.gd_gain = gain / baselines.n_gd_boxcar;
     pid_settings.mutex.unlock();
 }
 
@@ -346,6 +343,19 @@ Status get_status() {
     // frames. 
     status.cnt = ft_cnt % 10000; 
     return status;
+}
+
+Settings get_settings() {
+    Settings s;
+    s.n_gd_boxcar = baselines.n_gd_boxcar;
+    s.gd_threshold = gd_threshold;
+    s.pd_threshold = pd_threshold;
+    s.gd_search_reset = gd_search_reset;
+    s.offload_time_ms = offload_time_ms;
+    s.offload_gd_gain = pid_settings.offload_gd_gain;
+    s.gd_gain = pid_settings.gd_gain * baselines.n_gd_boxcar;
+    s.kp = pid_settings.kp;
+    return s;
 }
 
 void test(uint beam, double value, int n) {
@@ -497,7 +507,7 @@ std::string set_gd_boxcar(int n){
     baseline_mutex.unlock();
     // Update the gd_gain to keep the same overall gain.
     pid_settings.mutex.lock();
-    pid_settings.gd_gain = pid_settings.gd_gain * (double)baselines.max_n_gd_boxcar / (double)n;
+    pid_settings.gd_gain = pid_settings.gd_gain * (double)baselines.n_gd_boxcar / (double)n;
     pid_settings.mutex.unlock();
     return "OK";
 }
@@ -523,7 +533,7 @@ COMMANDER_REGISTER(m)
     m.def("dls", set_delay_lines_wrapper, "Set a delay line value in microns", 
         "dl1"_arg, "dl2"_arg, "dl3"_arg, "dl4"_arg);
     m.def("status", get_status, "Get the status of the system");
-    m.def("settings", get_settings_cmd, "Get current system settings");
+    m.def("settings", get_settings, "Get current system settings");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
     m.def("offload_gd_gain", set_offload_gd_gain, "Set the gain when operating GD only in steps", "gain"_arg=0.0);

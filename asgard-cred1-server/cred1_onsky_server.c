@@ -640,8 +640,8 @@ void* fetch_imgs(void *arg) {
   long nbpix_roi_tosave = ROI[0].npx * ROI[0].nbs / 2;
 
   int ii, jj, ri;  // ii,jj pixel indices, ri: ROI index
-  int tsig[3] = {2, -1, -1};  // to be dynamically allocated from the JSON. !!! If changing this, also change ROI[ii].nrs = 3; on line 230.
-  int seq_indices[3] = {0};   // frame indices part of current time sequence
+  int tsig[9] = {4,3,2,1,0,-1,-2,-3,-4};  // {2,-1,-1} 1to be dynamically allocated from the JSON. !!! If changing this, also change ROI[ii].nrs = 3; on line 230.
+  int seq_indices[9] = {0};   // frame indices part of current time sequence
   // int prev_liveindex = 0;     // frame index of previous image
 
   int cam_xsz, roi_xsz, x0, y0;
@@ -659,23 +659,25 @@ void* fetch_imgs(void *arg) {
   while (keepgoing > 0) {
     timeoutrecovery = false;
 
-    while (!timeoutrecovery) {
-      // ===================================================
+	while (!timeoutrecovery) {
+	  // ===================================================
       // before re-writing the circular buffer: save dark ?
       // ===================================================
-      if (liveindex == 0 && camconf->save_dark == 1) {
-	// save the entire circular buffer as a "dark"
-	memcpy(svdark, (unsigned short *) shm_img->array.UI16,
-		 2 * nbpix_cub * sizeof(unsigned short));
-	pthread_create(&tid_save_dark, NULL, save_dark, NULL);
-	camconf->save_dark = 0;
-	if (camconf->ndmr_mode == 1) {
-	  dark_reset_index = shm_img->md->size[2] - reset_cntr;
-	  printf("Dark reset index = %d\n", dark_reset_index);
-	}
-	else {
-	  dark_reset_index = 0;
-	}
+      if (camconf->save_dark == 1) {
+      	// save the entire circular buffer as a "dark"
+	    memcpy(svdark, (unsigned short *) shm_img->array.UI16,
+		  2 * nbpix_cub * sizeof(unsigned short));
+	    pthread_create(&tid_save_dark, NULL, save_dark, NULL);
+	    camconf->save_dark = 0;
+	    if (camconf->ndmr_mode == 1) {
+	      dark_reset_index = shm_img->md->size[2] - reset_cntr;
+	      printf("Dark reset index = %d\n", dark_reset_index);
+		}
+		else {
+	  	  dark_reset_index = 0;
+	  	  printf("Filled the non-NDMR mode buffer.\n");
+	  	  fflush(stdout);
+		}
       }
 
 #ifdef DEBUG_TIMING
@@ -719,10 +721,11 @@ void* fetch_imgs(void *arg) {
 	if (camconf->ndmr_mode == 0)
 	  livedrk_ptr = shm_img_dark->array.UI16 + liveindex * nbpix_frm;
 	else {
-	  // adapt index here
+	  // adapt index here. reset_cntr is the number of frames since the last reset,
+	  // and dark_reset_index is the first index of the reset in the dark cube.
 	  matching_dark_index = liveindex - reset_cntr + dark_reset_index;
 	  matching_dark_index = matching_dark_index % shm_img->md->size[2];
-	  livedrk_ptr = shm_img_dark->array.UI16 + liveindex * nbpix_frm;
+	  livedrk_ptr = shm_img_dark->array.UI16 + matching_dark_index * nbpix_frm;
 	}
 	for (ii = 0; ii < nbpix_frm; ii++) // subtracting dark here
 	  liveimg_ptr[ii] -= livedrk_ptr[ii] - offset;
@@ -1014,13 +1017,20 @@ void skip_save_baldr_mode(int _mode) {
 
 /* -------------------------------------------------------------------------
  * Start or interrupt the FITS saving of data cubes acquired by the camera
+ * 
  * ------------------------------------------------------------------------- */
 void trigger_save_dark() {
-  // set_dark_sub_mode(0);
-  // sleep(0.2);
+  set_dark_sub_mode(0);
+  // This next sleep has to be enough to fill a complete buffer (200 frames at 
+  // time of writing).
+  double min_sleep_time = 2.0*camconf->nbr_hlf/camconf->fps; 
+  printf("Sleeping this thread for %6.3lf seconds...\n", min_sleep_time);
+  sleep(min_sleep_time + 0.2);
   camconf->save_dark = 1;
-  // sleep(0.2);
-  // set_dark_sub_mode(1);  
+  printf("Because Frantz and Mike aren't smart enough, sleeping again for %6.3lf seconds...\n", min_sleep_time);
+  sleep(min_sleep_time + 0.2);
+  fflush(stdout);
+  set_dark_sub_mode(1);  
 }
 
 /* -------------------------------------------------------------------------
@@ -1056,7 +1066,8 @@ void set_split_mode(int _mode) {
 
 /* -------------------------------------------------------------------------
  *     Switches the (speed optimized) cropped use mode of the CRED1 for
- * the Heimdallr/BALDR instrument setup.
+ * the Heimdallr/BALDR instrument setup. This will apply to the very next frame
+ * saved in the cube in memory.
  * ------------------------------------------------------------------------- */
 void set_dark_sub_mode(int _mode) {
   // update the RT dark subtract internal flag according to the command
@@ -1155,7 +1166,7 @@ void set_ndmr_mode(int _mode) {
     read_pdv_cli(ed, out_cli);
 
     sprintf(camconf->readmode, "NDMR");
-    camconf->nfr_reset = 3; // to be made more adaptive !!!
+    camconf->nfr_reset = 9; // to be made more adaptive !!!
   }
 
   // back to prior business

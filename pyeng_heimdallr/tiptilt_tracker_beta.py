@@ -160,21 +160,12 @@ class App(QtWidgets.QMainWindow):
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(200)
-
-        self.zmq_context = zmq.Context()
-        self.socket = self.zmq_context.socket(zmq.REQ)
-        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
-        self.socket.connect("tcp://192.168.100.2:5555")
-
-        self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
-                            'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
-        self.ndev = len(self.dms_devlist)
+        self.timer.start(2000)
 
     # ------------------------------------------------------
     def refresh(self):
         self.main_widget.refresh_plot()
-        # pass
+        pass
 
     # ------------------------------------------------------
     def closeEvent(self, event):
@@ -190,6 +181,15 @@ class MyMainWidget(QWidget):
         # ---------------------------------------------------------------------
         #                              top menu
         # ---------------------------------------------------------------------
+        self.zmq_context = zmq.Context()
+        self.socket = self.zmq_context.socket(zmq.REQ)
+        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+        self.socket.connect("tcp://192.168.100.2:5555")
+
+        self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
+                            'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
+        self.ndevs = len(self.dms_devlist)
+
         self.actionOpen = QtWidgets.QAction(
             QtGui.QIcon(":/images/open.png"), "&Open...", self)
 
@@ -285,15 +285,15 @@ class MyMainWidget(QWidget):
         ''' Send one move command for +/- # of steps to a device '''
 
         if n_steps < 0:
-            step_size = -15
+            step_size = -25
         else:
-            step_size = 15
+            step_size = 25
 
         cmd = f"tt_config_step {devname} {step_size}"
         self.socket.send_string(cmd)
         self.socket.recv_string() # acknowledgement
 
-        cmd = f"tt_step {devname} {np.abs(n_steps)}"
+        cmd = f"tt_step {devname} {n_steps}"
         self.socket.send_string(cmd)
         self.socket.recv_string() # acknowledgement
 
@@ -392,7 +392,7 @@ class MyMainWidget(QWidget):
         phi_ref = np.mean(np.array(phi_ref), axis=0)
         btx0, bty0 = self.get_slopes(phi_ref)
 
-        rx, ry = np.zeros((self.ndevs/2, nbuv)), np.zeros((self.ndevs/2, nbuv))
+        rx, ry = np.zeros((self.ndevs//2, nbuv)), np.zeros((self.ndevs//2, nbuv))
 
         time.sleep(0.5)
 
@@ -411,7 +411,8 @@ class MyMainWidget(QWidget):
             rx[ii,:] = (btx - btx0) / float(step_sz)
 
             self.tt_dev_cmd(axis, -step_sz)  # reset actuator
-            
+            time.sleep(0.5)
+
         for ii, axis in enumerate(self.dms_devlist[4:]):
             print(f"calibrating response of {axis}:")
             phi = []
@@ -427,6 +428,7 @@ class MyMainWidget(QWidget):
             ry[ii,:] = (bty - bty0) / float(step_sz)
 
             self.tt_dev_cmd(axis, -step_sz)  # reset actuator
+            time.sleep(0.5)
 
         print(np.round(rx.T, 3))
         print(np.round(ry.T, 3))
@@ -486,8 +488,10 @@ class MyMainWidget(QWidget):
     # =========================================================================
     def trigger_calibration(self):
         print("start calibration")
+        # self.calib_thread = GenericThread(
+        #     self.calibrate_response_dm, a0=a0)
         self.calib_thread = GenericThread(
-            self.calibrate_response_mds, a0=a0)
+            self.calibrate_response_mds, step_sz=10)
         self.calib_thread.start()
 
     # =========================================================================
@@ -504,16 +508,31 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def trigger_iteration(self):
-        self.iteration()
+        self.iteration_mds()
 
     # =========================================================================
     def cloop(self):
         while keepgoing:
-            self.iteration()
+            self.iteration_mds()
             time.sleep(0.05)
 
     # =========================================================================
-    def iteration(self):
+    def iteration_mds(self):
+        phi = self.fourier_signal()
+        btx, bty = self.get_slopes(phi)
+
+        corrx = -self.cx.dot(btx)
+        corry = -self.cy.dot(bty)
+
+        gain = 0.5
+
+        for ii, axis in enumerate(self.dms_devlist[:4]):
+            self.tt_dev_cmd(axis, (corrx[ii] * gain).astype(int))
+        for ii, axis in enumerate(self.dms_devlist[4:]):
+            self.tt_dev_cmd(axis, (corry[ii] * gain).astype(int))
+
+    # =========================================================================
+    def iteration_dm(self):
         phi = self.fourier_signal()
         btx, bty = self.get_slopes(phi)
 
