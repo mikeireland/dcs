@@ -2344,42 +2344,106 @@ void open_baldr_HO() {
 }
 
 
+//// original wrong norm
+// void I0_update() {
+//     // !!! only updates rtc_config.I0_dm_runtime !!! 
+//     // does not update rtc_config.reference_pupils members 
+//     // assumes we are in a correct state to obtain reference ZWFS pupil - we do not checks 
+//     if (rtc_config.telem.img_dm.empty()) {
+//         std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
+//         return;
+//     }
+
+//     // Initialize a sum vector with zeros, same size as first vector in img_dm
+//     Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
+
+//     size_t count = 0;
+//     // read from the telem ring buffer
+//     for (const auto& v : rtc_config.telem.img_dm) {
+//         if (v.size() != sum.size()) {
+//             std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
+//             continue; // Skip badly-sized vector
+//         }
+//         sum += v;
+//         ++count;
+//     }
+
+//     if (count == 0) {
+//         std::cerr << "[I0_update] Error: no valid vectors found for averaging." << std::endl;
+//         return;
+//     }
+
+//     // Compute average
+//     rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
+
+//     // Subtraction of dark and bias was previously done in img_dm calc held in rtc telem ring buffer !!! 
+//     // but since Paranal AIV darks are subtracted in camera server so this internal subtraction is no longer used 
+
+//     std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
+// }
+
+
+// Generic temporal mean over any iterable container of Eigen::VectorXd
+// (works with boost::circular_buffer, std::vector, etc.)
+template <typename Container>
+static bool temporal_mean(const Container& buf, Eigen::VectorXd& mean_out) {
+    if (buf.empty()) return false;
+
+    // Find a reference length from the first element
+    const auto L = buf.front().size();
+    if (L == 0) return false;
+
+    mean_out = Eigen::VectorXd::Zero(L);
+    size_t n = 0;
+
+    for (const auto& v : buf) {
+        if (v.size() != L) {
+            std::cerr << "[I0_update] Warning: buffer vector with inconsistent size ("
+                      << v.size() << " vs " << L << "), skipping.\n";
+            continue;
+        }
+        mean_out.noalias() += v;
+        ++n;
+    }
+
+    if (n == 0) return false;
+    mean_out.array() /= static_cast<double>(n);
+    return true;
+}
 
 void I0_update() {
-    // !!! only updates rtc_config.I0_dm_runtime !!! 
-    // does not update rtc_config.reference_pupils members 
-    // assumes we are in a correct state to obtain reference ZWFS pupil - we do not checks 
-    if (rtc_config.telem.img_dm.empty()) {
-        std::cerr << "[I0_update] Warning: telemetry buffer is empty, cannot update I0." << std::endl;
+    // <img_dm> (projected/pupil space) and <img> (full frame)
+    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>
+    Eigen::VectorXd mean_full;  // <rtc_config.telem.img>
+
+    if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+        std::cerr << "[I0_update] Error: cannot form temporal mean of img_dm.\n";
+        return;
+    }
+    if (!temporal_mean(rtc_config.telem.img, mean_full)) {
+        std::cerr << "[I0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
         return;
     }
 
-    // Initialize a sum vector with zeros, same size as first vector in img_dm
-    Eigen::VectorXd sum = Eigen::VectorXd::Zero(rtc_config.telem.img_dm.front().size());
-
-    size_t count = 0;
-    // read from the telem ring buffer
-    for (const auto& v : rtc_config.telem.img_dm) {
-        if (v.size() != sum.size()) {
-            std::cerr << "[I0_update] Warning: found img_dm vector with inconsistent size, skipping." << std::endl;
-            continue; // Skip badly-sized vector
-        }
-        sum += v;
-        ++count;
-    }
-
-    if (count == 0) {
-        std::cerr << "[I0_update] Error: no valid vectors found for averaging." << std::endl;
+    // Scalar normalization S = sum(<img>)
+    const double S = mean_full.sum();
+    if (!std::isfinite(S) || S <= 0.0) {
+        std::cerr << "[I0_update] Error: invalid normalization scalar S=" << S
+                  << " (need finite and > 0). Aborting update.\n";
         return;
     }
 
-    // Compute average
-    rtc_config.I0_dm_runtime = sum / static_cast<double>(count);
+    // Normalized references (no double-normalization)
+    const Eigen::VectorXd I0_dm_norm = mean_dm   / S;  // <img_dm> / sum(<img>)
+    const Eigen::VectorXd I0_norm    = mean_full / S;  // <img>    / sum(<img>)
 
-    // Subtraction of dark and bias was previously done in img_dm calc held in rtc telem ring buffer !!! 
-    // but since Paranal AIV darks are subtracted in camera server so this internal subtraction is no longer used 
+    // Commit:
+    rtc_config.I0_dm_runtime       = I0_dm_norm; // runtime projected reference
+    rtc_config.reference_pupils.I0 = I0_norm;    // full-frame reference
 
-    std::cout << "[I0_update] I0_dm_runtime updated from " << count << " samples." << std::endl;
+    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << I0_dm_norm.size()
+              << ") and reference_pupils.I0 (len=" << I0_norm.size()
+              << ") with S=sum(<img>)=" << S << ".\n";
 }
 
 
@@ -2387,6 +2451,10 @@ void N0_update() {
 
     // !!! only updates rtc_config.N0_dm_runtime !!! 
     // does not update rtc_config.reference_pupils members 
+
+    Eigen::VectorXd mean_full;  // <rtc_config.telem.img> used for sub frame normalization 
+
+
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
     if (rtc_config.telem.img_dm.empty()) {
@@ -2402,7 +2470,7 @@ void N0_update() {
         return;
     }
 
-    // Step 1: Average all img_dm frames
+    // spatial average all img_dm frames
     Eigen::VectorXd avg_dm = Eigen::VectorXd::Zero(P);
     size_t count = 0;
     for (const auto& frame : telemetry_frames) {
@@ -2441,8 +2509,23 @@ void N0_update() {
         }
     }
 
+    // normalize by the average subframe sum 
+        if (!temporal_mean(rtc_config.telem.img, mean_full)) {
+        std::cerr << "[N0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
+        return;
+    }
+
+    // Scalar normalization S = sum(<img>)
+    const double S = mean_full.sum();
+    if (!std::isfinite(S) || S <= 0.0) {
+        std::cerr << "[N0_update] Error: invalid normalization scalar S=" << S
+                  << " (need finite and > 0). Aborting update.\n";
+        return;
+    }
+
+
     // Save into runtime only
-    rtc_config.N0_dm_runtime = avg_dm;
+    rtc_config.N0_dm_runtime = avg_dm / S ;
 
     std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
 }
