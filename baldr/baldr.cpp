@@ -1469,6 +1469,60 @@ static FieldHandle make_vector_rw(std::vector<T> bdr_rtc_config::* ptr, const ch
         }
     };
 }
+
+
+// ---- Read/Write factories for Eigen types ----
+template<typename EigenVec>
+static FieldHandle make_eigen_vector_field_rw(EigenVec bdr_rtc_config::* mem,
+                                              const char* tn = "vector<double>") {
+    return FieldHandle{
+        tn,
+        // Getter -> JSON
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_vector_to_json(rtc_config.*mem);
+        },
+        // Setter <- JSON
+        [mem](const nlohmann::json& j) -> bool {
+            try {
+                EigenVec tmp;
+                if (!json_to_eigen_vector(j, tmp)) return false;
+                std::lock_guard<std::mutex> lk(rtc_mutex);
+                (rtc_config.*mem) = std::move(tmp);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+    };
+}
+
+template<typename EigenMat>
+static FieldHandle make_eigen_matrix_field_rw(EigenMat bdr_rtc_config::* mem,
+                                              const char* tn = "matrix<double>") {
+    return FieldHandle{
+        tn,
+        // Getter -> JSON
+        [mem]() -> nlohmann::json {
+            std::lock_guard<std::mutex> lk(rtc_mutex);
+            return eigen_matrix_to_json(rtc_config.*mem);
+        },
+        // Setter <- JSON
+        [mem](const nlohmann::json& j) -> bool {
+            try {
+                EigenMat tmp;
+                if (!json_to_eigen_matrix(j, tmp)) return false;
+                std::lock_guard<std::mutex> lk(rtc_mutex);
+                (rtc_config.*mem) = std::move(tmp);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+    };
+}
+
+
 template<typename Sub, typename EigenVec>
 static FieldHandle make_nested_eigen_vector_rw(Sub bdr_rtc_config::* sub, EigenVec Sub::* mem, const char* tn="vector<double>") {
     return FieldHandle{
@@ -1536,12 +1590,12 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"pixels.secondary_pixels",  make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::secondary_pixels, "vector<int32>")},
     {"pixels.exterior_pixels",   make_nested_eigen_vector_getter(&bdr_rtc_config::pixels, &bdr_pixels::exterior_pixels, "vector<int32>")},
 
-    // ===== reference_pupils (RO) =====
-    {"reference_pupils.I0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)},
-    {"reference_pupils.N0",           make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::N0)},
-    {"reference_pupils.norm_pupil",   make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil)},
-    {"reference_pupils.norm_pupil_dm",make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil_dm)},
-    {"reference_pupils.I0_dm",        make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm)},
+    // ===== reference_pupils (RW) =====
+    {"reference_pupils.I0",           make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)}, //make_nested_eigen_vector_getter(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0)},
+    {"reference_pupils.N0",           make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::N0)},
+    {"reference_pupils.norm_pupil",   make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil)},
+    {"reference_pupils.norm_pupil_dm",make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::norm_pupil_dm)},
+    {"reference_pupils.I0_dm",        make_nested_eigen_vector_rw(&bdr_rtc_config::reference_pupils, &bdr_refence_pupils::I0_dm)},
 
     // ===== matrices (RO) =====
     {"matrices.I2A",    make_nested_eigen_matrix_rw(&bdr_rtc_config::matrices, &bdr_matricies::I2A)},
@@ -1632,7 +1686,7 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"I2M_LO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},
     {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
     {"N0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
-    {"I0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
+    {"I0_dm_runtime",        make_eigen_vector_field_rw(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
     //{"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
     {"sec_idx",              make_scalar_field_getter(&bdr_rtc_config::sec_idx, "int")},
     {"m_s_runtime",          make_scalar_field_getter(&bdr_rtc_config::m_s_runtime, "double")},
