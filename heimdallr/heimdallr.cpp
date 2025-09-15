@@ -240,7 +240,7 @@ void set_gain(double gain) {
 // servo loop types.
 void set_ggain(double gain) {
     pid_settings.mutex.lock();
-    pid_settings.gd_gain = gain / MAX_N_GD_BOXCAR;
+    pid_settings.gd_gain = gain / baselines.max_n_gd_boxcar;
     pid_settings.mutex.unlock();
 }
 
@@ -367,7 +367,7 @@ void zero_gd_offsets(void){
     baseline_mutex.unlock();
 }
 
-// Return the phasor offsets to 3 decimal places
+// Return the phasor offsets for all baselines to 3 decimal places
 std::vector<double> get_gd_offsets(void){
     std::vector<double> gd_offsets(6);
     baseline_mutex.lock();
@@ -412,16 +412,30 @@ void set_foreground(int state) {
     }
 }
 
-void tweak_gd_offsets(double offset0, double offset1, double offset3) {
-    // Add offsets to beams 0, 1, and 3, then project onto baseline space
+void tweak_gd_offsets(double offset1, double offset2, double offset4) {
+    // Add offsets to beams 1,2 and 4, then project onto baseline space
     Eigen::Vector4d tel_offsets = Eigen::Vector4d::Zero();
-    tel_offsets(0) = offset0;
-    tel_offsets(1) = offset1;
-    tel_offsets(3) = offset3;
+    tel_offsets(0) = offset1;
+    tel_offsets(1) = offset2;
+    tel_offsets(3) = offset4;
     Eigen::Matrix<double, N_BL, 1> bl_offsets = M_lacour * tel_offsets;
     baseline_mutex.lock();
     for (int bl = 0; bl < N_BL; bl++) {
         baselines.gd_phasor_offset(bl) *= std::exp(-1.0i * bl_offsets(bl));
+    }
+    baseline_mutex.unlock();
+}
+
+void set_gd_offsets(double offset1, double offset2, double offset4) {
+    // Set offsets to beams 1, 2, and 4, then project onto baseline space
+    Eigen::Vector4d tel_offsets = Eigen::Vector4d::Zero();
+    tel_offsets(0) = offset1;
+    tel_offsets(1) = offset2;
+    tel_offsets(3) = offset4;
+    Eigen::Matrix<double, N_BL, 1> bl_offsets = M_lacour * tel_offsets;
+    baseline_mutex.lock();
+    for (int bl = 0; bl < N_BL; bl++) {
+        baselines.gd_phasor_offset(bl) = std::exp(-1.0i * bl_offsets(bl));
     }
     baseline_mutex.unlock();
 }
@@ -506,8 +520,10 @@ COMMANDER_REGISTER(m)
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
     m.def("set_gd_search_reset", set_gd_search_reset, "Set GD search reset threshold", "value"_arg=5.0);
     m.def("foreground", set_foreground, "Set (1) or unset (0) foreground delay line offsets", "state"_arg=1);
-    m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 0,1,3 and project to baseline space", 
-        "offset0"_arg=0.0, "offset1"_arg=0.0, "offset3"_arg=0.0);
+    m.def("tweak_gd_offsets", tweak_gd_offsets, "Add offsets to beams 1,2,4 and project to baseline space", 
+        "offset1"_arg=0.0, "offset2"_arg=0.0, "offset4"_arg=0.0);
+    m.def("set_gd_offsets", set_gd_offsets, "Set the GD offsets directly from a list of offsets for beams 1,2,4", 
+        "offset1"_arg=0.0, "offset2"_arg=0.0, "offset4"_arg=0.0);
     m.def("beams_active", beams_active, "Set which beams are active", "b1"_arg=1,"b2"_arg=1,"b3"_arg=1,"b4"_arg=1);
     m.def("set_itime", set_itime, "Set the target integration time", "itime"_arg=100);
     m.def("expstatus", expstatus, "Get the exposure time status (success if complete)");
@@ -564,7 +580,7 @@ int main(int argc, char* argv[]) {
     servo_mode = SERVO_STOP;
     fringe_thread.join();
 
-    // // Join the FFTW threads
+    // Join the FFTW threads. 
     //K1ft->stop();
     //K2ft->stop();
 }

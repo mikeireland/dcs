@@ -116,7 +116,7 @@ void initialise_baselines(){
     baselines.pd.setZero();
     baselines.gd_snr.setZero();
     baselines.pd_snr.setZero();
-    baselines.n_gd_boxcar=MAX_N_GD_BOXCAR;
+    baselines.n_gd_boxcar=32;
     baselines.n_pd_boxcar=MAX_N_PD_BOXCAR;
     baselines.ix_gd_boxcar=0;
     baselines.ix_pd_boxcar=0;
@@ -127,11 +127,11 @@ void initialise_baselines(){
     baselines.pd_av.setZero();
 
     // Reset the boxcar averages
-    for (int i=0; i<MAX_N_GD_BOXCAR; i++){
+    for (int i=0; i<baselines.n_gd_boxcar; i++){
         baselines.gd_phasor_boxcar[i].setZero();
     }
 
-    for (int i=0; i<MAX_N_PD_BOXCAR; i++){
+    for (int i=0; i<baselines.n_pd_boxcar; i++){
         baselines.pd_phasor_boxcar[i].setZero();
     }
 
@@ -218,7 +218,7 @@ void reset_search(){
     pid_settings.kd = 0.0;
     pid_settings.integral = 0.0;
     pid_settings.dl_feedback_gain = 0.0;
-    pid_settings.gd_gain = pid_settings.kp / MAX_N_GD_BOXCAR;
+    pid_settings.gd_gain = pid_settings.kp / baselines.n_gd_boxcar;
     pid_settings.offload_gd_gain = 1.0;
     pid_settings.mutex.unlock();
 }
