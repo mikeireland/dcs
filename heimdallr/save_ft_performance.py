@@ -13,37 +13,10 @@ import time
 import argparse
 from typing import Optional
 import os
+from dcs.ZMQutils import ZmqReq
 
-class ZmqReq:
-    """
-    An adapter for a ZMQ REQ socket (client).
-    """
+import threading
 
-    def __init__(self, endpoint: str, timeout_ms: int = 1500):
-        self.ctx = zmq.Context.instance()
-        self.s = self.ctx.socket(zmq.REQ)
-        self.s.RCVTIMEO = timeout_ms
-        self.s.SNDTIMEO = timeout_ms
-        self.s.connect(endpoint)
-
-    def send_payload(self, payload, is_str=False, decode_ascii=True) -> Optional[dict]:
-        if not is_str:
-            self.s.send_string(json.dumps(payload, sort_keys=True))
-        else:
-            self.s.send_string(payload)
-        try:
-            if decode_ascii:
-                res = self.s.recv().decode("ascii")[:-1]
-            else:
-                res = self.s.recv_string()
-            return json.loads(res)
-        except zmq.error.Again:
-            return None
-        except json.decoder.JSONDecodeError:
-            return None
-
-
-h_z = ZmqReq("tcp://192.168.100.2:6660")
 
 keys_of_interest = [
     "gd_snr",
@@ -54,8 +27,22 @@ keys_of_interest = [
     "dm_piston",
 ]
 
+# Settings keys and their order
+settings_keys = [
+    "n_gd_boxcar",
+    "gd_threshold",
+    "pd_threshold",
+    "gd_search_reset",
+    "offload_time_ms",
+    "offload_gd_gain",
+    "gd_gain",
+    "kp",
+]
+
 
 def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
+    # Each thread gets its own ZmqReq instance
+    h_z = ZmqReq("tcp://192.168.100.2:6660")
     # Write header only if file is empty
     write_header = True
     try:
@@ -103,6 +90,43 @@ def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
             time.sleep(max(0, (1.0 / rate_hz) - (time.time() - t0)))
 
 
+def log_ft_settings(log_path="ft_settings_log.txt", rate_hz=1):
+    """
+    Logs FT settings to a file at a slower rate (default 1 Hz).
+    """
+    h_z = ZmqReq("tcp://192.168.100.2:6660")
+    write_header = True
+    try:
+        with open(log_path, "r") as f_check:
+            if f_check.read(1):
+                write_header = False
+    except FileNotFoundError:
+        pass
+    with open(log_path, "a") as f:
+        if write_header:
+            f.write(
+                "# timestamp "
+                + " ".join(settings_keys)
+                + " (all values, 3 decimal places)\n"
+            )
+        while True:
+            t0 = time.time()
+            reply = h_z.send_payload("settings", is_str=True, decode_ascii=False)
+            if reply:
+                timestamp = "{:.3f}".format(t0)
+                values = []
+                for k in settings_keys:
+                    v = reply.get(k)
+                    try:
+                        values.append("{:.3f}".format(float(v)))
+                    except Exception:
+                        values.append(str(v))
+                line = f"{timestamp} {' '.join(values)}"
+                f.write(line + "\n")
+                f.flush()
+            time.sleep(max(0, (1.0 / rate_hz) - (time.time() - t0)))
+
+
 # Example usage:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FT performance data logging script")
@@ -115,4 +139,22 @@ if __name__ == "__main__":
     year_month_day = time.strftime("%Y%m%d", time.gmtime())
     pth = f"/data/{year_month_day}"
     full_pth = os.path.join(pth, fname)
-    log_ft_performance(log_path=full_pth, rate_hz=args.rate)
+    # Settings log file
+    settings_fname = f"ft_settings_{cur_datetime}.log"
+    settings_full_pth = os.path.join(pth, settings_fname)
+
+    # Start both logging functions in separate threads
+    t1 = threading.Thread(
+        target=log_ft_performance, args=(full_pth, args.rate), daemon=True
+    )
+    t2 = threading.Thread(
+        target=log_ft_settings, args=(settings_full_pth, 1), daemon=True
+    )
+    t1.start()
+    t2.start()
+    # Keep main thread alive
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Logging stopped.")
