@@ -11,6 +11,7 @@ license = {file = "LICENSE"}
 h-autoalign = "dcs.cmd_scripts.h_autoalign:main"
 text-clients = "utils.universal_client:main"
 h-shutter = "dcs.cmd_scripts.h_shutterseq:main"
+save-ft-performance = "dcs.heimdallr.save_ft_performance:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dcs"]

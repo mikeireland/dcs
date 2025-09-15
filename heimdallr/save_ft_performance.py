@@ -164,8 +164,7 @@ def log_ft_settings(log_path="ft_settings_log.txt", rate_hz=1):
             time.sleep(max(0, (1.0 / rate_hz) - (time.time() - t0)))
 
 
-# Example usage:
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="FT performance data logging script")
 
     parser.add_argument("--rate", type=int, default=1000, help="Sample rate in Hz")
@@ -195,3 +194,7 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         print("Logging stopped.")
+
+# Example usage:
+if __name__ == "__main__":
+    main()
