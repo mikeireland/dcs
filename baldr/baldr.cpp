@@ -2388,147 +2388,162 @@ void open_baldr_HO() {
 template <typename Container>
 static bool temporal_mean(const Container& buf, Eigen::VectorXd& mean_out) {
     if (buf.empty()) return false;
-
-    // Find a reference length from the first element
     const auto L = buf.front().size();
     if (L == 0) return false;
 
     mean_out = Eigen::VectorXd::Zero(L);
     size_t n = 0;
-
     for (const auto& v : buf) {
         if (v.size() != L) {
-            std::cerr << "[I0_update] Warning: buffer vector with inconsistent size ("
-                      << v.size() << " vs " << L << "), skipping.\n";
+            std::cerr << "[temporal_mean] Warning: vector size mismatch (" << v.size()
+                      << " vs " << L << "), skipping.\n";
             continue;
         }
         mean_out.noalias() += v;
         ++n;
     }
-
     if (n == 0) return false;
     mean_out.array() /= static_cast<double>(n);
     return true;
 }
-
 void I0_update() {
-    // <img_dm> (projected/pupil space) and <img> (full frame)
-    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>
-    Eigen::VectorXd mean_full;  // <rtc_config.telem.img>
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
 
+    Eigen::VectorXd mean_dm;   // <rtc_config.telem.img_dm>, already per-frame normalized in the loop
     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
         std::cerr << "[I0_update] Error: cannot form temporal mean of img_dm.\n";
         return;
     }
-    if (!temporal_mean(rtc_config.telem.img, mean_full)) {
-        std::cerr << "[I0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
-        return;
-    }
 
-    // Scalar normalization S = sum(<img>)
-    const double S = mean_full.sum();
-    if (!std::isfinite(S) || S <= 0.0) {
-        std::cerr << "[I0_update] Error: invalid normalization scalar S=" << S
-                  << " (need finite and > 0). Aborting update.\n";
-        return;
-    }
+    // Runtime projected reference in *same* normalization as img_dm
+    rtc_config.I0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
 
-    // Normalized references (no double-normalization)
-    const Eigen::VectorXd I0_dm_norm = mean_dm   / S;  // <img_dm> / sum(<img>)
-    const Eigen::VectorXd I0_norm    = mean_full / S;  // <img>    / sum(<img>)
-
-    // Commit:
-    rtc_config.I0_dm_runtime       = I0_dm_norm; // runtime projected reference
-    rtc_config.reference_pupils.I0 = I0_norm;    // full-frame reference
-
-    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << I0_dm_norm.size()
-              << ") and reference_pupils.I0 (len=" << I0_norm.size()
-              << ") with S=sum(<img>)=" << S << ".\n";
+    // Intentionally do NOT touch rtc_config.reference_pupils.I0 here to avoid mixing spaces.
+    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << mean_dm.size() << ").\n";
 }
-
 
 void N0_update() {
-
-    // !!! only updates rtc_config.N0_dm_runtime !!! 
-    // does not update rtc_config.reference_pupils members 
-
-    Eigen::VectorXd mean_full;  // <rtc_config.telem.img> used for sub frame normalization 
-
-
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-    if (rtc_config.telem.img_dm.empty()) {
-        std::cerr << "[N0_update] Error: telemetry img_dm buffer is empty." << std::endl;
+    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>, already per-frame normalized
+    if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+        std::cerr << "[N0_update] Error: cannot form temporal mean of img_dm.\n";
         return;
     }
 
-    const auto& telemetry_frames = rtc_config.telem.img_dm;
-    Eigen::Index P = telemetry_frames[0].size();  // size of each img_dm vector
-
+    const Eigen::Index P = mean_dm.size();
+    if (P == 0) {
+        std::cerr << "[N0_update] Error: img_dm mean has zero length.\n";
+        return;
+    }
     if (rtc_config.filters.inner_pupil_filt_dm.size() != P) {
-        std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch." << std::endl;
+        std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch ("
+                  << rtc_config.filters.inner_pupil_filt_dm.size() << " vs " << P << ").\n";
         return;
     }
 
-    // spatial average all img_dm frames
-    Eigen::VectorXd avg_dm = Eigen::VectorXd::Zero(P);
-    size_t count = 0;
-    for (const auto& frame : telemetry_frames) {
-        if (frame.size() != P) {
-            std::cerr << "[N0_update] Warning: img_dm frame size mismatch, skipping." << std::endl;
-            continue;
-        }
-        avg_dm += frame;
-        ++count;
-    }
-    if (count == 0) {
-        std::cerr << "[N0_update] Error: no valid img_dm frames found." << std::endl;
+    // Inner-pupil mean on the temporally averaged DM vector
+    constexpr double THRESH = 0.7;
+    const Eigen::ArrayXd mask = (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
+    const double n_inside = mask.sum();
+    if (n_inside <= 0.0) {
+        std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask.\n";
         return;
     }
-    avg_dm /= static_cast<double>(count);
+    const double inner_mean = (mean_dm.array() * mask).sum() / n_inside;
 
-    // Compute the mean inside the good pupil
-    double sum_inside = 0.0;
-    int count_inside = 0;
-    for (Eigen::Index i = 0; i < P; ++i) {
-        if (rtc_config.filters.inner_pupil_filt_dm(i) > 0.7) {
-            sum_inside += avg_dm(i);
-            ++count_inside;
-        }
-    }
-    if (count_inside == 0) {
-        std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask." << std::endl;
-        return;
-    }
-    double inner_mean = sum_inside / static_cast<double>(count_inside);
+    // Replace exterior pixels with inner_mean
+    mean_dm = (mask * mean_dm.array() + (1.0 - mask) * inner_mean).matrix();
 
-    // Replace exterior pixels to the mean of the interior - this is to avoid bad edge and division by zero issues
-    for (Eigen::Index i = 0; i < P; ++i) {
-        if (rtc_config.filters.inner_pupil_filt_dm(i) <= 0.7) {
-            avg_dm(i) = inner_mean;
-        }
-    }
+    // Runtime projected clear-pupil reference (same normalization space)
+    rtc_config.N0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
 
-    // normalize by the average subframe sum 
-        if (!temporal_mean(rtc_config.telem.img, mean_full)) {
-        std::cerr << "[N0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
-        return;
-    }
-
-    // Scalar normalization S = sum(<img>)
-    const double S = mean_full.sum();
-    if (!std::isfinite(S) || S <= 0.0) {
-        std::cerr << "[N0_update] Error: invalid normalization scalar S=" << S
-                  << " (need finite and > 0). Aborting update.\n";
-        return;
-    }
-
-
-    // Save into runtime only
-    rtc_config.N0_dm_runtime = avg_dm / S ;
-
-    std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
+    std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
 }
+
+// void N0_update() {
+
+//     // !!! only updates rtc_config.N0_dm_runtime !!! 
+//     // does not update rtc_config.reference_pupils members 
+
+//     // added 
+//     //Eigen::VectorXd mean_full;  // <rtc_config.telem.img> used for sub frame normalization 
+
+
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     if (rtc_config.telem.img_dm.empty()) {
+//         std::cerr << "[N0_update] Error: telemetry img_dm buffer is empty." << std::endl;
+//         return;
+//     }
+
+//     const auto& telemetry_frames = rtc_config.telem.img_dm;
+//     Eigen::Index P = telemetry_frames[0].size();  // size of each img_dm vector
+
+//     if (rtc_config.filters.inner_pupil_filt_dm.size() != P) {
+//         std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch." << std::endl;
+//         return;
+//     }
+
+//     // spatial average all img_dm frames
+//     Eigen::VectorXd avg_dm = Eigen::VectorXd::Zero(P);
+//     size_t count = 0;
+//     for (const auto& frame : telemetry_frames) {
+//         if (frame.size() != P) {
+//             std::cerr << "[N0_update] Warning: img_dm frame size mismatch, skipping." << std::endl;
+//             continue;
+//         }
+//         avg_dm += frame;
+//         ++count;
+//     }
+//     if (count == 0) {
+//         std::cerr << "[N0_update] Error: no valid img_dm frames found." << std::endl;
+//         return;
+//     }
+//     avg_dm /= static_cast<double>(count);
+
+//     // Compute the mean inside the good pupil
+//     double sum_inside = 0.0;
+//     int count_inside = 0;
+//     for (Eigen::Index i = 0; i < P; ++i) {
+//         if (rtc_config.filters.inner_pupil_filt_dm(i) > 0.7) {
+//             sum_inside += avg_dm(i);
+//             ++count_inside;
+//         }
+//     }
+//     if (count_inside == 0) {
+//         std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask." << std::endl;
+//         return;
+//     }
+//     double inner_mean = sum_inside / static_cast<double>(count_inside);
+
+//     // Replace exterior pixels to the mean of the interior - this is to avoid bad edge and division by zero issues
+//     for (Eigen::Index i = 0; i < P; ++i) {
+//         if (rtc_config.filters.inner_pupil_filt_dm(i) <= 0.7) {
+//             avg_dm(i) = inner_mean;
+//         }
+//     }
+
+//     // // normalize by the average subframe sum 
+//     //     if (!temporal_mean(rtc_config.telem.img, mean_full)) {
+//     //     std::cerr << "[N0_update] Error: cannot form temporal mean of img (needed for normalization).\n";
+//     //     return;
+//     // }
+
+//     // // Scalar normalization S = sum(<img>)
+//     // const double S = mean_full.sum();
+//     // if (!std::isfinite(S) || S <= 0.0) {
+//     //     std::cerr << "[N0_update] Error: invalid normalization scalar S=" << S
+//     //               << " (need finite and > 0). Aborting update.\n";
+//     //     return;
+//     // }
+
+
+//     // Save into runtime only
+//     rtc_config.N0_dm_runtime = avg_dm // / S ;
+
+//     std::cout << "[N0_update] Successfully updated N0_dm_runtime based on img_dm telemetry." << std::endl;
+// }
 
 
 // Function to update the capacity of the telemetry image ring buffer.
