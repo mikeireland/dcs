@@ -26,7 +26,7 @@ import json
 
 
 class HeimdallrAA:
-    def __init__(self, shutter_pause_time, band, flux_threshold, savepth, output):
+    def __init__(self, shutter_pause_time, band, flux_threshold, savepth, output, ncubes, t_pause):
         # Set target_pixels and col_bnds based on band
         centres = self.load_centre_positions()
         if band.upper() == "K1":
@@ -50,8 +50,8 @@ class HeimdallrAA:
             shutter_pause_time  # seconds to pause after shuttering
         )
 
-        self.frame_iters = 3
-        self.sleep_between_frames = 0.8 # seconds
+        self.ncubes = ncubes
+        self.sleep_between_frames = t_pause  # seconds
 
         if savepth.lower() == "none":
             self.savepth = None
@@ -171,9 +171,9 @@ class HeimdallrAA:
         """
         acc_frame = np.zeros_like(self._get_frame())
         blob_centres = []
-        for _ in range(self.frame_iters):
+        for _ in range(self.ncubes):
             full_frame = self._get_frame() - 1000.0
-            acc_frame += full_frame / self.frame_iters
+            acc_frame += full_frame / self.ncubes
             blob_centre = self._find_blob_centre(full_frame)
             print("indiv blob centre", blob_centre)
             blob_centres.append(blob_centre)
@@ -184,7 +184,7 @@ class HeimdallrAA:
         scat = np.std(blob_centres, axis=0)
         if np.any(scat > 2.0):
             print(
-                f"Warning: High scatter in blob centre positions: {scat}. Consider increasing frame_iters or checking the image."
+                f"Warning: High scatter in blob centre positions: {scat}. Consider increasing ncubes or checking the image."
             )
         blob_centre_final = self._find_blob_centre(acc_frame)
 
@@ -410,18 +410,7 @@ class HeimdallrAA:
 
         return (params[1] + params[2]) / 2
 
-    def autoalign_pupil(self, beam):
-        mv_time = 2.5
-
-        unused_beams = [b for b in range(1, 5) if b != beam]
-
-        msg = f"h_shut close {','.join(map(str, unused_beams))}"
-        self._send_and_get_response(msg)
-        msg = f"h_shut open {beam}"
-        self._send_and_get_response(msg)
-        time.sleep(self._shutter_pause_time)
-
-        # 2. rough align beam 3
+    def imalign_single(self, beam_n):
         blob_centre = self._get_blob()
 
         pix_offset = np.array(
@@ -430,10 +419,10 @@ class HeimdallrAA:
                 self.target_pixels[0] - blob_centre[1],
             ]
         )
-        uv_cmd = asgE.move_img_calc("c_red_one_focus", beam, pix_offset)
+        uv_cmd = asgE.move_img_calc("c_red_one_focus", beam_n, pix_offset)
 
         axis_list = ["HTPP", "HTTP", "HTPI", "HTTI"]
-        axes = [axis + str(beam) for axis in axis_list]
+        axes = [axis + str(beam_n) for axis in axis_list]
 
         cmd = f"moverel {axes[0]} {uv_cmd[0]}"
         self._send_and_get_response(cmd)
@@ -445,6 +434,22 @@ class HeimdallrAA:
         cmd = f"moverel {axes[3]} {uv_cmd[3]}"
         self._send_and_get_response(cmd)
         time.sleep(0.5)
+
+    def autoalign_pupil(self, beam):
+
+        mv_time = 2.5
+
+        unused_beams = [b for b in range(1, 5) if b != beam]
+
+        msg = f"h_shut close {','.join(map(str, unused_beams))}"
+        self._send_and_get_response(msg)
+        msg = f"h_shut open {beam}"
+        self._send_and_get_response(msg)
+        time.sleep(self._shutter_pause_time)
+
+        # 2. rough align beam
+        self.imalign_single(beam)
+        time.sleep(2)
 
         # 3. move pupil to optimize flux
         pup_offset = 0.2  # mm
@@ -469,6 +474,16 @@ class HeimdallrAA:
             print("sent", cmd)
             time.sleep(mv_time)
             centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
+
+            # if we are far from centre pixel, imalign the beam again
+            if np.linalg.norm(centre - np.array(self.target_pixels)[::-1]) > 10:
+                print(
+                    f"Beam {beam} centroid {centre} far from target {self.target_pixels[::-1]}. Re-aligning image."
+                )
+                self.imalign_single(beam)
+                time.sleep(2)
+                centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
+
             fluxes_x.append(flux)
 
             # check if centre is close to the edge of the frame
@@ -509,6 +524,15 @@ class HeimdallrAA:
             print("sent", cmd)
             time.sleep(2.5)
             centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
+
+            if np.linalg.norm(centre - np.array(self.target_pixels)[::-1]) > 10:
+                print(
+                    f"Beam {beam} centroid {centre} far from target {self.target_pixels[::-1]}. Re-aligning image."
+                )
+                self.imalign_single(beam)
+                time.sleep(2)
+                centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
+
             fluxes_y.append(flux)
 
             for bound in self.col_bnds:
@@ -540,6 +564,17 @@ class HeimdallrAA:
             print("sent", cmd)
             time.sleep(mv_time)
             centre, flux = self._get_blob(radius=flux_beam_radius, return_flux=True)
+
+            if np.linalg.norm(centre - np.array(self.target_pixels)[::-1]) > 10:
+                print(
+                    f"Beam {beam} centroid {centre} far from target {self.target_pixels[::-1]}. Re-aligning image."
+                )
+                self.imalign_single(beam)
+                time.sleep(2)
+                centre, flux = self._get_blob(
+                    radius=flux_beam_radius, return_flux=True
+                )
+
             fluxes_x2.append(flux)
 
             for bound in self.col_bnds:
@@ -753,6 +788,23 @@ def main():
         choices=["internal", "mcs", "none"],
         help="If the actuation should be done internally, or offset commands sent to MCS (default: internal)",
     )
+
+    parser.add_argument(
+        "-n",
+        "--ncubes",
+        type=int,
+        default=3,
+        help="Number of cubes to use, each of 200 frames (default: 3)",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--t-pause"
+        type=float,
+        default=0.8,
+        help="Seconds to pause between cubes when averaging (default: 0.8)",
+    )
+
     args = parser.parse_args()
 
     heimdallr_aa = HeimdallrAA(
@@ -761,6 +813,8 @@ def main():
         flux_threshold=200.0,
         savepth=args.save_path,
         output=args.output,
+        ncubes=args.ncubes,
+        t_pause=args.t_pause,
     )
 
     if args.output == "internal":
