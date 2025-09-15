@@ -41,8 +41,18 @@ settings_keys = [
 
 
 def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
-    # Each thread gets its own ZmqReq instance
-    h_z = ZmqReq("tcp://192.168.100.2:6660")
+    # Each thread gets its own ZmqReq instance, with reconnection logic
+    def get_zmq():
+        while True:
+            try:
+                return ZmqReq("tcp://192.168.100.2:6660")
+            except Exception as e:
+                print(
+                    f"[FT Performance] Could not connect to server: {e}. Retrying in 2s..."
+                )
+                time.sleep(2)
+
+    h_z = get_zmq()
     # Write header only if file is empty
     write_header = True
     try:
@@ -59,7 +69,15 @@ def log_ft_performance(log_path="ft_performance_log.txt", rate_hz=1000):
         last_cnt = 0
         while True:
             t0 = time.time()
-            reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
+            try:
+                reply = h_z.send_payload("status", is_str=True, decode_ascii=False)
+            except Exception as e:
+                print(
+                    f"[FT Performance] Lost connection to server: {e}. Reconnecting in 2s..."
+                )
+                time.sleep(2)
+                h_z = get_zmq()
+                continue
             if reply:
                 if "cnt" in reply:
                     cnt = reply["cnt"]
@@ -94,7 +112,18 @@ def log_ft_settings(log_path="ft_settings_log.txt", rate_hz=1):
     """
     Logs FT settings to a file at a slower rate (default 1 Hz).
     """
-    h_z = ZmqReq("tcp://192.168.100.2:6660")
+
+    def get_zmq():
+        while True:
+            try:
+                return ZmqReq("tcp://192.168.100.2:6660")
+            except Exception as e:
+                print(
+                    f"[FT Settings] Could not connect to server: {e}. Retrying in 2s..."
+                )
+                time.sleep(2)
+
+    h_z = get_zmq()
     write_header = True
     try:
         with open(log_path, "r") as f_check:
@@ -111,7 +140,15 @@ def log_ft_settings(log_path="ft_settings_log.txt", rate_hz=1):
             )
         while True:
             t0 = time.time()
-            reply = h_z.send_payload("settings", is_str=True, decode_ascii=False)
+            try:
+                reply = h_z.send_payload("settings", is_str=True, decode_ascii=False)
+            except Exception as e:
+                print(
+                    f"[FT Settings] Lost connection to server: {e}. Reconnecting in 2s..."
+                )
+                time.sleep(2)
+                h_z = get_zmq()
+                continue
             if reply:
                 timestamp = "{:.3f}".format(t0)
                 values = []
