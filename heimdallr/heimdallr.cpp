@@ -1,3 +1,6 @@
+Settings get_settings_cmd() {
+    return get_settings();
+}
 #define TOML_IMPLEMENTATION
 #include "heimdallr.h"
 #include <commander/commander.h>
@@ -487,6 +490,18 @@ std::string expstatus(void){
     return "success";
 }
 
+std::string set_gd_boxcar(int n){
+    if (n<1 || n>1000) return "ERROR: Boxcar out of range (1 to 1000)";
+    baseline_mutex.lock();
+    baselines.set_gd_boxcar(n);
+    baseline_mutex.unlock();
+    // Update the gd_gain to keep the same overall gain.
+    pid_settings.mutex.lock();
+    pid_settings.gd_gain = pid_settings.gd_gain * (double)baselines.max_n_gd_boxcar / (double)n;
+    pid_settings.mutex.unlock();
+    return "OK";
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -508,6 +523,7 @@ COMMANDER_REGISTER(m)
     m.def("dls", set_delay_lines_wrapper, "Set a delay line value in microns", 
         "dl1"_arg, "dl2"_arg, "dl3"_arg, "dl4"_arg);
     m.def("status", get_status, "Get the status of the system");
+    m.def("settings", get_settings_cmd, "Get current system settings");
     m.def("gain", set_gain, "Set the gain for the servo loop", "gain"_arg=0.0);
     m.def("ggain", set_ggain, "Set the gain for the GD servo loop", "gain"_arg=0.0);
     m.def("offload_gd_gain", set_offload_gd_gain, "Set the gain when operating GD only in steps", "gain"_arg=0.0);
@@ -529,6 +545,7 @@ COMMANDER_REGISTER(m)
     m.def("beams_active", beams_active, "Set which beams are active", "b1"_arg=1,"b2"_arg=1,"b3"_arg=1,"b4"_arg=1);
     m.def("set_itime", set_itime, "Set the target integration time", "itime"_arg=100);
     m.def("expstatus", expstatus, "Get the exposure time status (success if complete)");
+    m.def("set_gd_boxcar", set_gd_boxcar, "Set the number of frames for the GD boxcar average", "n"_arg=32);
 }
 
 int main(int argc, char* argv[]) {

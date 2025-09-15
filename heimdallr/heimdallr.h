@@ -1,3 +1,27 @@
+// Settings struct for commander
+struct Settings {
+    unsigned int n_gd_boxcar;
+    double gd_threshold;
+    double pd_threshold;
+    double gd_search_reset;
+    unsigned int offload_time_ms;
+    double offload_gd_gain;
+    double gd_gain;
+    double kp;
+};
+
+inline Settings get_settings() {
+    Settings s;
+    s.n_gd_boxcar = baselines.n_gd_boxcar;
+    s.gd_threshold = gd_threshold;
+    s.pd_threshold = pd_threshold;
+    s.gd_search_reset = gd_search_reset;
+    s.offload_time_ms = offload_time_ms;
+    s.offload_gd_gain = pid_settings.offload_gd_gain;
+    s.gd_gain = pid_settings.gd_gain;
+    s.kp = pid_settings.kp;
+    return s;
+}
 #include <complex> 
 #include <fftw3.h>
 #include <ImageStreamIO.h>
