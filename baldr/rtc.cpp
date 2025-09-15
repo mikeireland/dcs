@@ -908,10 +908,28 @@ void rtc(){
         // Compute subframe flux (sum of intensities) and store it globally.
         g_subframe_int = img.sum();
 
-        // Guard against pathological cases (negative/zero/NaN/Inf)
-        if (!std::isfinite(g_subframe_int) || g_subframe_int <= 0.0) {
-            g_subframe_int = 1.0;
+        // ===== New: skip this RTC iteration if flux is invalid =====
+        bool bad_flux_frame = (!std::isfinite(g_subframe_int) || g_subframe_int <= 0.0);
+        if (bad_flux_frame) {
+            static uint64_t bad_flux_skip_count = 0;
+            ++bad_flux_skip_count;
+
+            // Log first few and then every 100th to avoid spam
+            if (bad_flux_skip_count <= 5 || (bad_flux_skip_count % 100 == 0)) {
+                std::cerr << "[RTC] Skipping frame due to invalid subframe sum: "
+                        << g_subframe_int << "  (skip_count=" << bad_flux_skip_count << ")\n";
+            }
+
+            // Nothing else this iteration: do NOT normalize, do NOT project, do NOT update telem/ctrl
+            // (If you need to record a 'dropped' mark in telemetry, do it here.)
+            continue;  // <-- EARLY EXIT from this RTC loop iteration
         }
+
+        // // Guard against pathological cases (negative/zero/NaN/Inf)
+        // if (!std::isfinite(g_subframe_int) || g_subframe_int <= 0.0) {
+        //     g_subframe_int = 1.0;
+        //     // need to set a flag so the rtc skips this frame
+        // }
 
         // we dont Normalize the image by subframe intensity sum
 	// we do this in the img_dm from which we calculate the signal
