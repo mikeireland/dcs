@@ -799,7 +799,7 @@ def main():
 
     parser.add_argument(
         "-t",
-        "--t-pause"
+        "--t-pause",
         type=float,
         default=0.8,
         help="Seconds to pause between cubes when averaging (default: 0.8)",

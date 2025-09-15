@@ -538,7 +538,7 @@ struct bdr_telem {
         "snr"
     };
     // Constructor that sets a fixed capacity for each ring buffer.
-    bdr_telem(size_t capacity = 100) // 100 capacity is about 3 MB in the buffer
+    bdr_telem(size_t capacity = 5000) // 10000 capacity is about 150 MB in the buffer
       : counter(0),
         timestamp(capacity),
         LO_servo_mode(capacity),

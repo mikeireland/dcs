@@ -1683,9 +1683,9 @@ static const std::unordered_map<std::string, FieldHandle> RTC_FIELDS = {
     {"fps",                  make_scalar_field_rw(&bdr_rtc_config::fps,   "double")},  // RW
     {"gain",                 make_scalar_field_rw(&bdr_rtc_config::gain,  "double")},  // RW
     {"scale",                make_scalar_field_rw(&bdr_rtc_config::scale, "double")},  // RW
-    {"I2M_LO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},
-    {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
-    {"N0_dm_runtime",        make_eigen_vector_field_getter(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
+    {"I2M_LO_runtime",       make_eigen_matrix_field_rw(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},//make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_LO_runtime, "matrix<double>")},
+    {"I2M_HO_runtime",       make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},//make_eigen_matrix_field_getter(&bdr_rtc_config::I2M_HO_runtime, "matrix<double>")},
+    {"N0_dm_runtime",        make_eigen_vector_field_rw(&bdr_rtc_config::N0_dm_runtime, "vector<double>")},
     {"I0_dm_runtime",        make_eigen_vector_field_rw(&bdr_rtc_config::I0_dm_runtime, "vector<double>")},
     //{"dark_dm_runtime",      make_eigen_vector_field_getter(&bdr_rtc_config::dark_dm_runtime, "vector<double>")},
     {"sec_idx",              make_scalar_field_getter(&bdr_rtc_config::sec_idx, "int")},

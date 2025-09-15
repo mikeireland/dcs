@@ -227,7 +227,7 @@ void refresh_image_splitting_configuration() {
       ROI[ii].y0  = cJSON_GetObjectItem(item, "y0")->valueint;
       ROI[ii].xsz = cJSON_GetObjectItem(item, "xsz")->valueint;
       ROI[ii].ysz = cJSON_GetObjectItem(item, "ysz")->valueint;
-      ROI[ii].nrs = 3; // cJSON_GetObjectItem(item, "nrs")->valueint; // assumes 3
+      ROI[ii].nrs = 9; // 3; // cJSON_GetObjectItem(item, "nrs")->valueint; // assumes 3
       ROI[ii].npx = ROI[ii].xsz * ROI[ii].ysz;
       ROI[ii].nbs = 10000; // hardcoded here - should be fine
       ii++;
@@ -266,7 +266,7 @@ void optimize_cropping_parameters() {
   camconf->bal_min_row -= 2;
   camconf->hei_max_row += 16;
 
-  printf("Cropping parameters are: %d and %d",
+  printf("Cropping parameters are: %d and %d\n",
 	 camconf->hei_max_row, camconf->bal_min_row);
 }
 
@@ -540,7 +540,12 @@ void* save_dark(void *arg) {
   char CROP[5] = "FULL";  // or "CROP"
   if (camconf->cropmode == 1)
     sprintf(CROP, "%s", "CROP");
-
+ 
+  char NBFR[5];
+  sprintf(NBFR, "%03d", camconf->bf_size);
+  if (camconf->ndmr_mode == 1)
+    sprintf(NBFR, "%03d", camconf->nbreads);
+  
   // get the time - to give the file a unique name
   clock_gettime(CLOCK_REALTIME, &tnow);  // elapsed time since epoch
   caltime = localtime(&tnow.tv_sec);         // translate into calendar time
@@ -552,11 +557,14 @@ void* save_dark(void *arg) {
     mkdir(savedir, 0700);
 
   // create file name
-  sprintf(fname, "!%sdark_cred1_%s_%s_%3d_fps_%04.0f_gain_%03d.fits",
-	  savedir, CROP, camconf->readmode, camconf->bf_size,
+  sprintf(fname, "!%sdark_cred1_%s_%s_%s_fps_%04.0f_gain_%03d.fits",
+	  savedir, CROP, camconf->readmode, NBFR,
 	  camconf->fps, camconf->gain);
 
   save_cube_to_fits(svdark, naxes, fname, USHORT_IMG, 0);
+  printf("%s was saved!\n", fname);
+  camconf->valid_dark = 1;
+  set_dark_sub_mode(1);
   return NULL;
 }
 
@@ -573,10 +581,15 @@ void update_dark() {
   struct timespec tnow;  // time since epoch
   struct tm *caltime;     // calendar time
 
-  char ROI[5] = "FULL"; // or "CROP"
+  char CROP[5] = "FULL"; // or "CROP"
   if (camconf->cropmode == 1)
-    sprintf(ROI, "%s", "CROP");
+    sprintf(CROP, "%s", "CROP");
  
+  char NBFR[5];
+  sprintf(NBFR, "%03d", camconf->bf_size);
+  if (camconf->ndmr_mode == 1)
+    sprintf(NBFR, "%03d", camconf->nbreads);
+
   // get the time - to give the file a unique name
   clock_gettime(CLOCK_REALTIME, &tnow);  // elapsed time since epoch
   caltime = localtime(&tnow.tv_sec);     // translate into calendar time
@@ -587,13 +600,14 @@ void update_dark() {
   sprintf(savedir, "/data/darks/%04d%02d%02d/",
 	  1900 + caltime->tm_year, 1 + caltime->tm_mon, caltime->tm_mday); 
 
-  sprintf(fname, "%sdark_cred1_%s_%s_%3d_fps_%04.0f_gain_%03d.fits",
-	  savedir, ROI, camconf->readmode, camconf->bf_size,
+  sprintf(fname, "%sdark_cred1_%s_%s_%s_fps_%04.0f_gain_%03d.fits",
+	  savedir, CROP, camconf->readmode, NBFR,
 	  camconf->fps, camconf->gain);
 
   if (stat(fname, &st) == -1) {
     printf("%s does not exist\n", fname);
     camconf->valid_dark = 0;
+    set_dark_sub_mode(0);
   }
   else {
     fits_open_file(&fptr, fname, READONLY, &status);
@@ -606,6 +620,8 @@ void update_dark() {
 
     // read the dark and copy its content to shared memory
     fits_close_file(fptr, &status);
+    printf("%s was loaded\n", fname);
+    fflush(stdout);
     camconf->valid_dark = 1;
   }
   free(new_dark);
@@ -928,6 +944,7 @@ void update_fps(float fps) {
   read_pdv_cli(ed, out_cli);
 
   camconf->fps = fps;
+  update_dark();
   if (wasrunning == 1)
     fetch();
 }
@@ -950,6 +967,7 @@ void update_gain(int gain) {
   read_pdv_cli(ed, out_cli);
 
   camconf->gain = gain;
+  update_dark();
   if (wasrunning == 1)
     fetch();
 }
@@ -1082,6 +1100,7 @@ void set_dark_sub_mode(int _mode) {
       printf("Dark is live subtracted\n");
     }
     else {
+      camconf->rt_dark_sub = 0;
       printf("No live dark subtraction\n");
     }
   }
@@ -1110,6 +1129,7 @@ void set_crop_mode(int _mode) {
   init_cam_configuration();         // configure the readout
   shm_setup(1);                     // reallocate main SHM memory
 
+  update_dark();
   // back to prior business
   if (wasrunning == 1) {
     sleep(1);
@@ -1160,8 +1180,8 @@ void set_ndmr_mode(int _mode) {
     read_pdv_cli(ed, out_cli);
     sleep(0.1);
     
-    // camconf->nbreads = _mode;
-    sprintf(cmd_cli, "set nbreadworeset %d", _mode + 1); // _mode + 1 ??
+    camconf->nbreads = _mode;
+    sprintf(cmd_cli, "set nbreadworeset %d", _mode); // _mode + 1 ??
     camera_command(ed, cmd_cli);
     read_pdv_cli(ed, out_cli);
 
@@ -1169,6 +1189,7 @@ void set_ndmr_mode(int _mode) {
     camconf->nfr_reset = 9; // to be made more adaptive !!!
   }
 
+  update_dark();
   // back to prior business
   if (wasrunning == 1) {
     sleep(0.2);
