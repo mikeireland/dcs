@@ -400,7 +400,7 @@ void fringe_tracker(){
             // can reverse this. It is difficult with 4 telescopes!
             // The phase delay is in units of the K1 central wavelength. 
             // For now... also have this feature with the Lacour algorithm.
-            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_LACOUR) || (servo_mode == SERVO_SIMPLE)){
+            if ((servo_mode == SERVO_FIGHT) || (servo_mode == SERVO_SIMPLE)){
                 // In fight mode, we just use the instantaneous phase, not the filtered phase.
                 // This is useful for debugging, but not for real operation.
                 // The 1.5 is a John Monnier hack, due to fmod's treatment of negative numbers.
@@ -657,7 +657,7 @@ void fringe_tracker(){
                     // baselines.n_gd_boxcar frames since initialisation or the last jump.
             	    for (int i=0; i<N_TEL; i++){
                         if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
-                            if (std::fabs(control_a.gd(i)) > 0.5){ 
+                            if (std::fabs(control_a.gd(i)) > 0.75){ 
                                 control_u.dl_offload(i) += sgn(control_a.gd(i))*config["wave"]["K1"].value_or(2.05);
                                 last_gd_jump = cnt_since_init;
                             } 
