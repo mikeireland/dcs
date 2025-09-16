@@ -38,6 +38,9 @@ Eigen::Matrix4d I4 = Eigen::Matrix4d::Identity();
 // The search vector.
 Eigen::Vector4d search_vector_scale(-2.75,-1.75,1.25,3.25);
 
+// Beams active as an Eigen vector (i.e. doubles rather than booleans)
+Eigen::Vector4d beams_active = Eigen::Vector4d::Ones();
+
 template <typename T> int sgn(T val){
 	return (T(0) < val) - (val < T(0));
 }
@@ -93,9 +96,14 @@ void set_dm_piston(Eigen::Vector4d dm_piston){
 #ifdef SIMULATE
     return;
 #endif
+    // Make sure that we only move the DM for for the active beams.
+    control_u.dm_piston = beams_active.asDiagonal() * control_u.dm_piston;       	
     // This function sets the DM piston to the given value.
     for(int i = 0; i < N_TEL; i++) {
-            for (int j=0; j<144; j++){
+        if (control_u.search(i) != 0.0) {
+            continue; // Do not set if in search mode
+        }
+        for (int j=0; j<144; j++){
             DMs[i].array.D[j] = dm_piston(i);
         }
         ImageStreamIO_sempost(&master_DMs[i], 1);
@@ -441,7 +449,7 @@ void fringe_tracker(){
         baselines.ix_pd_boxcar = (pd_ix + 1) % baselines.n_pd_boxcar;
 
         // Make the beams_active a vector.
-        Eigen::Vector4d beams_active(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
+        beams_active(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
 
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
