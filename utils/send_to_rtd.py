@@ -22,9 +22,9 @@ k1p = Z.get_im('get_im "K1"')
 k2p = Z.get_im('get_im "K2"')
 ps = np.zeros((32,64), dtype=np.float32)
 ps[:,16:32] = np.roll(k1p[:,16],16,axis=0)/k1p[0,0]*16
-ps[:,0:17] = np.roll(k1p[:,::-1],16,axis=0)/k1p[0,0]*16
+ps[:,0:17] = np.roll(k1p[:,::-1],17,axis=0)/k1p[0,0]*16
 ps[:,48:64] = np.roll(k2p[:,16],16,axis=0)/k2p[0,0]*16
-ps[:,32:49] = np.roll(k2p[:,::-1],16,axis=0)/k2p[0,0]*16
+ps[:,32:49] = np.roll(k2p[:,::-1],17,axis=0)/k2p[0,0]*16
 """
 
 import numpy as np
