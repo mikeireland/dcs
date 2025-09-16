@@ -125,10 +125,7 @@ void initialise_baselines(){
     baselines.pd.setZero();
     baselines.gd_snr.setZero();
     baselines.pd_snr.setZero();
-    baselines.set_gd_boxcar(32);
-    //baselines.n_gd_boxcar=32;
-    //baselines.ix_gd_boxcar=0;
-    //baselines.gd_phasor.setZero();
+    baselines.set_gd_boxcar(64);
     baselines.n_pd_boxcar=MAX_N_PD_BOXCAR;
     baselines.ix_pd_boxcar=0;
     baselines.pd_phasor.setZero();
@@ -212,7 +209,7 @@ void reset_search(){
     control_u.search_delta = 1.0; 
     control_u.steps_to_turnaround = 10;
     control_u.search_Nsteps = 0;
-    control_u.dit = 0.002;
+    control_u.dit = 0.001; // Default to 1ms
     control_u.test_beam=0;
     control_u.test_n=0;
     control_u.test_ix=0;

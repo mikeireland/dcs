@@ -1147,6 +1147,14 @@ void set_ndmr_mode(int _mode) {
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
 
+  // If the mode was 0 and was set to <=2, don't do anything.
+  if ((camconf->ndmr_mode == 0) && (_mode <= 2))
+    return;
+  // If the mode was 1 and is set to the same number >2
+  // as camconf->nbreads, don't do anything.
+  if ((camconf->ndmr_mode == 1) && (_mode > 2) && (camconf->nbreads == _mode))
+    return;
+
   int wasrunning = 0;
   
   // if the acquisition is running, interrupt it and remember it was running

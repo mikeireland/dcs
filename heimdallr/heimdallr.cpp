@@ -16,7 +16,7 @@ toml::table config;
 // Servo parameters. These are the parameters that will be adjusted by the commander
 int servo_mode=SERVO_OFF;
 int offload_mode=OFFLOAD_OFF;
-uint offload_time_ms=1000;
+uint offload_time_ms=10;
 PIDSettings pid_settings;
 ControlU control_u;
 ControlA control_a;
@@ -259,7 +259,7 @@ void set_delay_line_type(std::string type) {
         std::cout << "Delay line type updated to " << delay_line_type << std::endl;
     } else {
         std::cout << "Delay line type not recognised: " << type << std::endl;
-    }
+    } 
 }
 
 // A wrapper for set_delay_lines that takes 4 doubles as input.
@@ -355,6 +355,10 @@ Settings get_settings() {
     s.offload_gd_gain = pid_settings.offload_gd_gain;
     s.gd_gain = pid_settings.gd_gain * baselines.n_gd_boxcar;
     s.kp = pid_settings.kp;
+    s.servo_mode = servo_mode;
+    s.offload_mode = offload_mode;
+    s.delay_line_type = delay_line_type;
+    s.search_delta = control_u.search_delta;
     return s;
 }
 
@@ -518,6 +522,23 @@ std::string set_gd_boxcar(int n){
     return "OK";
 }
 
+std::string default_gains(void){
+    // Lets movea maxmum of 70% of the way to the target in offload_time_ms. 
+    double temp_gain = 0.0007 * offload_time_ms / (baselines.n_gd_boxcar * control_u.dit);
+    if (temp_gain > 0.7) temp_gain = 0.7;
+    baseline_mutex.lock();
+    pid_settings.offload_gd_gain = temp_gain;     
+    baseline_mutex.unlock();
+    return "OK";
+}
+
+std::string set_dit(double dit){
+    if (dit > 0.05) return "ERROR: DIT out of range (<0.05 seconds)";
+    // Set the dit in the control structure
+    control_u.dit = dit;
+    return "OK";
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -548,7 +569,7 @@ COMMANDER_REGISTER(m)
     m.def("zero_gd_offsets", zero_gd_offsets, "Zero the group delay offsets i.e. track on this position");
     m.def("get_gd_offsets", get_gd_offsets, "Return the GD offsets in a format to be added to the toml file");
     m.def("search", set_search_params, "Set the fringe tracker search parameter", 
-        "delta"_arg=1.0, "turnaround"_arg=10);    
+        "delta"_arg=0.5, "turnaround"_arg=10);    
     m.def("set_gd_threshold", set_gd_threshold, "Set GD SNR threshold", "value"_arg=5.0);
     m.def("get_gd_threshold", get_gd_threshold, "Get GD SNR threshold");
     m.def("set_pd_threshold", set_pd_threshold, "Set PD SNR threshold", "value"_arg=4.5);
@@ -564,6 +585,8 @@ COMMANDER_REGISTER(m)
     m.def("set_gd_boxcar", set_gd_boxcar, "Set the number of frames for the GD boxcar average", "n"_arg=32);
     m.def("dlr", delay_line_relative_move, "Move the delay lines by a relative amount", 
         "dl_move1"_arg=0.0, "dl_move2"_arg=0.0, "dl_move3"_arg=0.0, "dl_move4"_arg=0.0);
+    m.def("default_gains", default_gains, "Set the gains to default values");
+    m.def("set_dit", set_dit, "Set the DIT in seconds", "dit"_arg=0.001);
 }
 
 int main(int argc, char* argv[]) {
