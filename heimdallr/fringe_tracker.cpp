@@ -543,12 +543,13 @@ void fringe_tracker(){
             // Compute the piezo control signal from the phase delay.
             if ((cnt_since_init == last_gd_jump+1) || (cnt_since_init > last_gd_jump + 3)){
 	        control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
-            
+            // Make sure that we only move the DM for for the active beams.
+            control_u.dm_piston = control_u.beams_active.asDiagonal() * control_u.dm_piston;
            	// Center the DM piston.
-            	control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
-            	// Limit it to no more than +/- MAX_DM_PISTON.
-            	control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
-            	control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
+            control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
+            // Limit it to no more than +/- MAX_DM_PISTON.
+            control_u.dm_piston = control_u.dm_piston.cwiseMin(MAX_DM_PISTON);
+            control_u.dm_piston = control_u.dm_piston.cwiseMax(-MAX_DM_PISTON);
             }
         }
         // Make the test pattern.
@@ -655,10 +656,10 @@ void fringe_tracker(){
                         }
                     }
                 }
-                fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
-                   control_u.dl_offload(2), control_u.dl_offload(3));
-                fmt::print("Search: {} {} {} {}\n", control_u.search(0), control_u.search(1),
-                   control_u.search(2), control_u.search(3));
+                //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
+                //   control_u.dl_offload(2), control_u.dl_offload(3));
+                //fmt::print("Search: {} {} {} {}\n", control_u.search(0), control_u.search(1),
+                //   control_u.search(2), control_u.search(3));
                 
                 add_to_delay_lines(control_u.search - control_u.dl_offload);
                 //control_u.dl_offload.setZero();
