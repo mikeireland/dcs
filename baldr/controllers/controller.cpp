@@ -26,6 +26,25 @@
 
 // ------------------------------ Utilities -----------------------------------
 namespace {
+
+// Add this small normalizer at the top of the file (or inside an anonymous namespace).
+static std::string leaky_norm_key(std::string name) {
+    std::string low = name;
+    for (auto &c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    if (low == "k" || low == "ki")            return "K";          // gain vector
+    if (low == "alpha" || low == "rho" ||
+        low == "leak" || low == "lambda")     return "alpha";      // leak factor
+    if (low == "setpoint")                    return "set_point";
+    if (low == "integral")                    return "integral";
+    if (low == "output")                      return "output";
+    if (low == "prev_error" || low == "preverror" || low == "prev")
+                                              return "prev_error";
+    // Keep exact name for canonical keys like "K"
+    return name;
+}
+
+
 inline void ensure_size(Eigen::VectorXd& v, std::ptrdiff_t n, double fill = 0.0) {
     if (v.size() != n) v = Eigen::VectorXd::Constant(n, fill);
 }
@@ -231,14 +250,17 @@ void LeakyIntegratorController::set_all_gains_to_zero() {
 }
 
 void LeakyIntegratorController::set_parameter(const std::string& name, const Param& value) {
+    const std::string key = leaky_norm_key(name);
+
     if (std::holds_alternative<Vec>(value)) {
         const auto& v = std::get<Vec>(value);
-        if (name == "K")              K = v;
-        else if (name == "alpha")     alpha = v;
-        else if (name == "set_point") set_point = v;
-        else if (name == "integral")  integral = v;
-        else if (name == "output")    output = v;
-        else if (name == "prev_error") prev_error = v;
+
+        if (key == "K")              K = v;
+        else if (key == "alpha")     alpha = v;
+        else if (key == "set_point") set_point = v;
+        else if (key == "integral")  integral = v;
+        else if (key == "output")    output = v;
+        else if (key == "prev_error") prev_error = v;
         else throw std::invalid_argument("LEAKY::set_parameter unknown vector: " + name);
 
         const std::ptrdiff_t n = std::max(K.size(), alpha.size());
@@ -248,6 +270,7 @@ void LeakyIntegratorController::set_parameter(const std::string& name, const Par
         ensure_size(prev_error,n, 0.0);
         return;
     }
+
     if (std::holds_alternative<Mat>(value)) {
         throw std::invalid_argument("LEAKY::set_parameter does not accept matrices for key: " + name);
     }
@@ -255,14 +278,51 @@ void LeakyIntegratorController::set_parameter(const std::string& name, const Par
 }
 
 Controller::Param LeakyIntegratorController::get_parameter(const std::string& name) const {
-    if (name == "K")           return K;
-    if (name == "alpha")       return alpha;
-    if (name == "set_point")   return set_point;
-    if (name == "integral")    return integral;
-    if (name == "output")      return output;
-    if (name == "prev_error")  return prev_error;
+    const std::string key = leaky_norm_key(name);
+
+    if (key == "K")          return K;
+    if (key == "alpha")      return alpha;
+    if (key == "set_point")  return set_point;
+    if (key == "integral")   return integral;
+    if (key == "output")     return output;
+    if (key == "prev_error") return prev_error;
+
     throw std::invalid_argument("LEAKY::get_parameter unknown key: " + name);
 }
+
+// void LeakyIntegratorController::set_parameter(const std::string& name, const Param& value) {
+//     if (std::holds_alternative<Vec>(value)) {
+//         const auto& v = std::get<Vec>(value);
+//         if (name == "K")              K = v;
+//         else if (name == "alpha")     alpha = v;
+//         else if (name == "set_point") set_point = v;
+//         else if (name == "integral")  integral = v;
+//         else if (name == "output")    output = v;
+//         else if (name == "prev_error") prev_error = v;
+//         else throw std::invalid_argument("LEAKY::set_parameter unknown vector: " + name);
+
+//         const std::ptrdiff_t n = std::max(K.size(), alpha.size());
+//         ensure_size(set_point, n, 0.0);
+//         ensure_size(integral,  n, 0.0);
+//         ensure_size(output,    n, 0.0);
+//         ensure_size(prev_error,n, 0.0);
+//         return;
+//     }
+//     if (std::holds_alternative<Mat>(value)) {
+//         throw std::invalid_argument("LEAKY::set_parameter does not accept matrices for key: " + name);
+//     }
+//     throw std::invalid_argument("LEAKY::set_parameter unsupported variant");
+// }
+
+// Controller::Param LeakyIntegratorController::get_parameter(const std::string& name) const {
+//     if (name == "K")           return K;
+//     if (name == "alpha")       return alpha;
+//     if (name == "set_point")   return set_point;
+//     if (name == "integral")    return integral;
+//     if (name == "output")      return output;
+//     if (name == "prev_error")  return prev_error;
+//     throw std::invalid_argument("LEAKY::get_parameter unknown key: " + name);
+// }
 
 std::vector<std::pair<std::string,std::string>>
 LeakyIntegratorController::list_parameters() const {
