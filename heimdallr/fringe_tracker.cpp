@@ -642,21 +642,23 @@ void fringe_tracker(){
 
             if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
             	// Add to the delay line offload.
-        	control_u.dl_offload = 0.3*control_u.dm_piston * OPD_PER_DM_UNIT;
+        	    control_u.dl_offload = 0.3*control_u.dm_piston * OPD_PER_DM_UNIT;
             	if ((servo_mode == SERVO_LACOUR) && (cnt_since_init - last_gd_jump > baselines.n_gd_boxcar)){
-            	  // Use the group delay to make full fringe jumps, only if there has been at least
-            	  // baselines.n_gd_boxcar frames since initialisation or the last jump.
-            	  for (int i=0; i<N_TEL; i++){
-                    if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
-                        if (std::fabs(control_a.gd(i)) > 0.5){ 
-                            control_u.dl_offload(i) += sgn(control_a.gd(i))*config["wave"]["K1"].value_or(2.05);
-                            last_gd_jump = cnt_since_init;
-                        } 
+                    // Use the group delay to make full fringe jumps, only if there has been at least
+                    // baselines.n_gd_boxcar frames since initialisation or the last jump.
+            	    for (int i=0; i<N_TEL; i++){
+                        if (cov_gd_tel(i,i) < GD_MAX_VAR_FOR_JUMP) {
+                            if (std::fabs(control_a.gd(i)) > 0.5){ 
+                                control_u.dl_offload(i) += sgn(control_a.gd(i))*config["wave"]["K1"].value_or(2.05);
+                                last_gd_jump = cnt_since_init;
+                            } 
+                        }
                     }
-                  }
                 }
-                //fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
-                //    control_u.dl_offload(2), control_u.dl_offload(3));
+                fmt::print("Offload: {} {} {} {}\n", control_u.dl_offload(0), control_u.dl_offload(1),
+                   control_u.dl_offload(2), control_u.dl_offload(3));
+                fmt::print("Search: {} {} {} {}\n", control_u.search(0), control_u.search(1),
+                   control_u.search(2), control_u.search(3));
                 
                 add_to_delay_lines(control_u.search - control_u.dl_offload);
                 //control_u.dl_offload.setZero();
