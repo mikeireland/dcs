@@ -449,7 +449,7 @@ void fringe_tracker(){
         baselines.ix_pd_boxcar = (pd_ix + 1) % baselines.n_pd_boxcar;
 
         // Make the beams_active a vector.
-        beams_active(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
+        beams_active = Eigen::Vector4d(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
 
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
