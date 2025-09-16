@@ -11,6 +11,10 @@ template <> struct adl_serializer<Settings> {
         j["offload_gd_gain"] = s.offload_gd_gain;
         j["gd_gain"] = s.gd_gain;
         j["kp"] = s.kp;
+        j["delay_line_type"] = s.delay_line_type;
+        j["servo_mode"] = s.servo_mode;
+        j["offload_mode"] = s.offload_mode;
+        j["search_delta"] = s.search_delta;
     }
     static void from_json(const json& j, Settings& s) {
         s = Settings();
@@ -22,6 +26,10 @@ template <> struct adl_serializer<Settings> {
         j.at("offload_gd_gain").get_to(s.offload_gd_gain);
         j.at("gd_gain").get_to(s.gd_gain);
         j.at("kp").get_to(s.kp);
+        j.at("delay_line_type").get_to(s.delay_line_type);
+        j.at("servo_mode").get_to(s.servo_mode);
+        j.at("offload_mode").get_to(s.offload_mode);
+        j.at("search_delta").get_to(s.search_delta);
     }
 };
 }

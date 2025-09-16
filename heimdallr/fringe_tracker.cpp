@@ -125,10 +125,7 @@ void initialise_baselines(){
     baselines.pd.setZero();
     baselines.gd_snr.setZero();
     baselines.pd_snr.setZero();
-    baselines.set_gd_boxcar(32);
-    //baselines.n_gd_boxcar=32;
-    //baselines.ix_gd_boxcar=0;
-    //baselines.gd_phasor.setZero();
+    baselines.set_gd_boxcar(64);
     baselines.n_pd_boxcar=MAX_N_PD_BOXCAR;
     baselines.ix_pd_boxcar=0;
     baselines.pd_phasor.setZero();
@@ -212,7 +209,7 @@ void reset_search(){
     control_u.search_delta = 1.0; 
     control_u.steps_to_turnaround = 10;
     control_u.search_Nsteps = 0;
-    control_u.dit = 0.002;
+    control_u.dit = 0.001; // Default to 1ms
     control_u.test_beam=0;
     control_u.test_n=0;
     control_u.test_ix=0;
@@ -427,7 +424,8 @@ void fringe_tracker(){
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
-            if (baselines.gd_snr(bl) > gd_threshold){
+            if ((baselines.gd_snr(bl) > gd_threshold) && 
+                (control_u.beams_active[baseline2beam[bl][0]]) && (control_u.beams_active[baseline2beam[bl][1]])){
                 Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
                 var_gd(bl) = gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
@@ -435,7 +433,8 @@ void fringe_tracker(){
                 Wgd(bl) = 0;
                 var_gd(bl) = 1e6; 
             }
-            if (baselines.pd_snr(bl) > pd_threshold){
+            if ((baselines.pd_snr(bl) > pd_threshold) &&
+                (control_u.beams_active[baseline2beam[bl][0]]) && (control_u.beams_active[baseline2beam[bl][1]])){
                 Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
                 var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI;
             }
