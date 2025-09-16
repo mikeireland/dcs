@@ -101,6 +101,7 @@ void set_dm_piston(Eigen::Vector4d dm_piston){
     // This function sets the DM piston to the given value.
     for(int i = 0; i < N_TEL; i++) {
         if (control_u.search(i) != 0.0) {
+            control_u.dm_piston(i) = 0.0; // Reset DM piston if in search mode
             continue; // Do not set if in search mode
         }
         for (int j=0; j<144; j++){
