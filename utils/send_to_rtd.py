@@ -33,6 +33,7 @@ import time
 import signal
 from xaosim.shmlib import shm
 import sys
+from dcs.ZMQutils import ZmqReq
 
 # The first argument is the name of the camera, the second is the shared memory name.
 # we use argv to get the name of the camera and the shared memory name.
@@ -57,6 +58,11 @@ if simulate_image:
     size_x = 100
     size_y = 100
     pixel_data_type = 16 # 16 bits per pixel, signed integer
+elif shm_name == "ps":
+    # Power spectrum case.
+    size_x = 64
+    size_y = 32
+    pixel_data_type = -32 # 32 bit float
 else:
     # We should get the size from the shared memory object.
     SHM = shm(shm_name)
@@ -129,6 +135,16 @@ while not exiting:
         #Create random data, with a square in the middle.
         data = np.random.randint(-100, 100, size=(size_y, size_x), dtype=np.int16)
         data[40:60, 40:60] += 1000
+    elif shm_name == "ps":
+        # Create the power spectrum from heimdallr.
+        h_z = ZmqReq("tcp://mimir:6660")
+        k1p = h_z.send_payload('get_im "K1"', is_str=True, decode_ascii=False, image=True)
+        k2p = h_z.send_payload('get_im "K2"', is_str=True, decode_ascii=False, image=True)
+        data = np.zeros((32,64), dtype=np.float32)
+        data[:,16:32] = np.roll(k1p[:,16],16,axis=0)/k1p[0,0]*16
+        data[:,0:17] = np.roll(k1p[:,::-1],17,axis=0)/k1p[0,0]*16
+        data[:,48:64] = np.roll(k2p[:,16],16,axis=0)/k2p[0,0]*16
+        data[:,32:49] = np.roll(k2p[:,::-1],17,axis=0)/k2p[0,0]*16    
     else:
         # Get the data from the shared memory object
         if len(imsize)==3:
