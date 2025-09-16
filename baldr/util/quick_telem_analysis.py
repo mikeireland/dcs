@@ -739,8 +739,8 @@ import argparse
 from astropy.io import fits
 
 parser = argparse.ArgumentParser(description="Compare two TOML files and summarize base items.")
-parser.add_argument("file1", type=Path, help="First TOML file")
-parser.add_argument("file1", type=Path, help="Second TOML file")
+parser.add_argument("file1", type=Path, help="First fits telemetry file from baldr (closed)")
+parser.add_argument("file2", type=Path, help="fits telemetry file frome baldr (open)" )
 
 args = parser.parse_args()
 
@@ -748,14 +748,14 @@ file1 = args.file1
 file2 = args.file2
 
 data_dict = {
-    "file1" : {"data": f"{file1}", "beam": 1, "mask": "H3"},
-    "file2" : {"data": f"{file2}", "beam": 2, "mask": "H3"},
+    "open" : {"data": f"{file1}", "beam": 1, "mask": "H3"},
+    "close" : {"data": f"{file2}", "beam": 2, "mask": "H3"},
 }
 
 
 
 res_batch = {}
-for k in [data_dict["file1"]["data"], data_dict["file2"]["data"]]: #["OL_b2_020212"] : #"CL_TTki0p05_b2_020636"]:
+for k in ['close','open']: #["OL_b2_020212"] : #"CL_TTki0p05_b2_020636"]:
     d = get_data(data_key = k, return_rtc_config=False)
             
     t_list = []
@@ -770,14 +770,14 @@ for k in [data_dict["file1"]["data"], data_dict["file2"]["data"]]: #["OL_b2_0202
 
     f_list, psd_list = util.psd_welch_batch(t_list, y_list, average="median",fix_nonuniform='resample_linear' )
 
-    # check a single fit 
-    _  = util.fit_psd_powerlaw(f_list[65],
-                                psd_list[65], 
-                                fmin=20, 
-                                fmax=500, 
-                                plot=True, 
-                                color="C3",
-                                max_fraction_den=20, show_B=True)
+    # # check a single fit 
+    # _  = util.fit_psd_powerlaw(f_list[65],
+    #                             psd_list[65], 
+    #                             fmin=20, 
+    #                             fmax=500, 
+    #                             plot=True, 
+    #                             color="C3",
+    #                             max_fraction_den=20, show_B=True)
 
 
     res_batch[k] = util.fit_psd_powerlaw_batch(
@@ -840,7 +840,8 @@ strehl_pixel_cluster = 2
 dark_pixel_cluster = 4
 active_pupil_cluster = 0
 strehl_signal = {} # to hold the final estimate for comparison
-for k in res_batch:
+fig,ax = plt.subplots(2,sharex=False)
+for ii, k in enumerate(res_batch):
     exterior_mask = (res_batch[k][1]["labels_ordered"]== strehl_pixel_cluster).reshape(32,32)
 
     
@@ -867,12 +868,20 @@ for k in res_batch:
     for i in range(imgs.shape[0]):
         ext_signal.append( np.mean( imgs[i].reshape(32,32)[exterior_mask] )   ) # normalize by mean pupil intensity to get relative signal
 
+    e_TT_m = np.mean( d[1].data["e_LO"],axis=1 )
 
-    plt.hist(ext_signal, bins=50, alpha=0.5, label=k)
+    ax[0].hist(ext_signal, bins=50, alpha=0.5, label=f"{k}, std={np.std(ext_signal):.4f},avg={np.mean(ext_signal):.4f}")
+    ax[1].hist( e_TT_m, bins=np.linspace(np.min(e_TT_m),np.max(e_TT_m),50), alpha=0.5, label=f"{k}, std={np.std(e_TT_m):.4f},avg={np.mean(e_TT_m):.4f}")
 
-plt.xlabel("mean exterior signal [adu]")
-plt.ylabel("counts")
-plt.legend()
+
+    ax[0].set_xlabel("mean exterior signal [adu]")
+    ax[1].set_xlabel("e_TT [unitless]")
+    ax[0].set_ylabel("counts")
+
+for axx in ax.reshape(-1):
+    axx.set_ylabel("counts")
+    axx.legend()
+
 plt.show()
 
     # lucky_cutoff = np.quantile( ext_signal , 0.98) #10k samples => 99th perc. keeps 100 samples 
