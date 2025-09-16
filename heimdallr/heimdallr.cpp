@@ -427,6 +427,12 @@ void set_foreground(int state) {
     }
 }
 
+void delay_line_relative_move(double dl_move1, double dl_move2, double dl_move3, double dl_move4) {
+    // Move the delay lines by a relative amount
+    Eigen::Vector4d dl_move(dl_move1, dl_move2, dl_move3, dl_move4);
+    add_to_delay_lines(dl_move);
+}
+
 void tweak_gd_offsets(double offset1, double offset2, double offset4) {
     // Add offsets to beams 1,2 and 4, then project onto baseline space
     Eigen::Vector4d tel_offsets = Eigen::Vector4d::Zero();
@@ -556,6 +562,8 @@ COMMANDER_REGISTER(m)
     m.def("set_itime", set_itime, "Set the target integration time", "itime"_arg=100);
     m.def("expstatus", expstatus, "Get the exposure time status (success if complete)");
     m.def("set_gd_boxcar", set_gd_boxcar, "Set the number of frames for the GD boxcar average", "n"_arg=32);
+    m.def("dlr", delay_line_relative_move, "Move the delay lines by a relative amount", 
+        "dl_move1"_arg=0.0, "dl_move2"_arg=0.0, "dl_move3"_arg=0.0, "dl_move4"_arg=0.0);
 }
 
 int main(int argc, char* argv[]) {
