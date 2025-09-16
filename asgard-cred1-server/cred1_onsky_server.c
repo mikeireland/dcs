@@ -123,7 +123,7 @@ void trigger_save_dark();
 void set_split_mode(int _mode);
 void set_dark_sub_mode(int _mode);
 void set_crop_mode(int _mode);
-void set_ndmr_mode(int _mode);
+void set_ndmr_mode(unsigned int _mode);
 void show_cam_conf();
 
 /* =========================================================================
@@ -1143,7 +1143,7 @@ void set_crop_mode(int _mode) {
  * not fully functional yet and available for preliminary debugging.
  * implementation of time signatures for the different channels is missing
  * ------------------------------------------------------------------------- */
-void set_ndmr_mode(int _mode) {
+void set_ndmr_mode(unsigned int _mode) {
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
 
