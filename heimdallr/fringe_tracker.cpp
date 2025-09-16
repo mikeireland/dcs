@@ -101,6 +101,7 @@ void set_dm_piston(Eigen::Vector4d dm_piston){
     // This function sets the DM piston to the given value.
     for(int i = 0; i < N_TEL; i++) {
         if (control_u.search(i) != 0.0) {
+            control_u.dm_piston(i) = 0.0; // Reset DM piston if in search mode
             continue; // Do not set if in search mode
         }
         for (int j=0; j<144; j++){
@@ -449,7 +450,7 @@ void fringe_tracker(){
         baselines.ix_pd_boxcar = (pd_ix + 1) % baselines.n_pd_boxcar;
 
         // Make the beams_active a vector.
-        beams_active(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
+        beams_active = Eigen::Vector4d(control_u.beams_active[0],control_u.beams_active[1],control_u.beams_active[2],control_u.beams_active[3]);
 
         // Now we have the group delays and phase delays, we can regularise by using by the  
         // I6gd matrix and the I6pd matrix. No short-cuts!
