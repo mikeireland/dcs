@@ -424,7 +424,8 @@ void fringe_tracker(){
                 
             // Set the weight matriix (bl,bl) to the square of the SNR, unless 
             // the SNR is too low, in which case we set it to zero.
-            if (baselines.gd_snr(bl) > gd_threshold){
+            if ((baselines.gd_snr(bl) > gd_threshold) && 
+                (control_u.beams_active[baseline2beam[bl][0]]) && (control_u.beams_active[baseline2beam[bl][1]])){
                 Wgd(bl) = baselines.gd_snr(bl)*baselines.gd_snr(bl);
                 var_gd(bl) = gd_to_K1*gd_to_K1/baselines.gd_snr(bl)/baselines.gd_snr(bl);
             }
@@ -432,7 +433,8 @@ void fringe_tracker(){
                 Wgd(bl) = 0;
                 var_gd(bl) = 1e6; 
             }
-            if (baselines.pd_snr(bl) > pd_threshold){
+            if ((baselines.pd_snr(bl) > pd_threshold) &&
+                (control_u.beams_active[baseline2beam[bl][0]]) && (control_u.beams_active[baseline2beam[bl][1]])){
                 Wpd(bl) = baselines.pd_snr(bl)*baselines.pd_snr(bl);
                 var_pd(bl) = 1/baselines.pd_snr(bl)/baselines.pd_snr(bl)/4/M_PI/M_PI;
             }
