@@ -300,11 +300,12 @@ struct bdr_pixels {
 //-----------------------------------------------------
 // bdr_refence_pupils: Reference intensities.
 struct bdr_refence_pupils {
-    Eigen::VectorXd I0;         // Reduced reference intensity (ADU/s/gain) [flattened]
-    Eigen::VectorXd N0;         // Reduced reference intensity (ADU/s/gain)
-    Eigen::VectorXd norm_pupil; // Filtered reference intensity (ADU/s/gain)
-    Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels (ADU/s/gain)
-    Eigen::VectorXd I0_dm;      // Interpolated to DM pixels (ADU/s/gain)
+    Eigen::VectorXd I0;         // Reduced reference intensity unitless //(ADU/s/gain) [flattened]
+    Eigen::VectorXd N0;         // Reduced reference intensity unitless //(ADU/s/gain)
+    Eigen::VectorXd norm_pupil; // Filtered reference intensity unitless //(ADU/s/gain)
+    Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels unitless //(ADU/s/gain)
+    Eigen::VectorXd I0_dm;      // Interpolated to DM pixels unitless //(ADU/s/gain)
+    double intern_flx_I0; // internal source flux in ADU - used for Strehl estimation
     
     // update all dm reference pupils
     void project_to_dm( Eigen::MatrixXd I2A ){

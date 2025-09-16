@@ -48,7 +48,7 @@ std::string encode(const char* input, unsigned int size)
 {
 	/* set up a destination buffer large enough to hold the encoded data */
     // print the size of the input
-    std::cout << "Size of input: " << size << std::endl;
+    //std::cout << "Size of input: " << size << std::endl;
 	//char* output = (char*)malloc(size*4/3 + 4); /* large enough */
 	char* output = (char*)malloc(size*2); /* large enough */
 	/* keep track of our encoded position */
