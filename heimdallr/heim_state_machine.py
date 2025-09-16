@@ -4,8 +4,10 @@ import time
 # Ensure python-statemachine is installed: pip install python-statemachine
 from statemachine import StateMachine, State
 
-
 import numpy as np
+import heapq
+
+N_BASELINES = 6
 
 
 class HeimdallrStateMachine(StateMachine):
@@ -14,13 +16,24 @@ class HeimdallrStateMachine(StateMachine):
     offload_gd = State("Offload GD")
     servo_on = State("Servo On")
 
-    to_offload_gd_from_searching = searching.to(offload_gd)
+    # linear state machine, states are in order:
+    # searching, sidelobe, offload_gd, servo
+    # can only move forward one step at a time
+    # but can move back any number of steps:
+    # forward steps:
+    to_sidelobe_from_searching = searching.to(sidelobe)
     to_offload_gd_from_sidelobe = sidelobe.to(offload_gd)
-    to_offload_gd_from_servo_on = servo_on.to(offload_gd)
+    to_servo_from_offload_gd = offload_gd.to(servo_on)
 
-    to_searching = offload_gd.to(searching)
-    to_sidelobe = offload_gd.to(sidelobe)
-    to_servo_on = offload_gd.to(servo_on)
+    # backward steps:
+    to_searching_from_sidelobe = sidelobe.to(searching)
+    to_searching_from_offload_gd = offload_gd.to(searching)
+    to_searching_from_servo = servo_on.to(searching)
+
+    to_sidelobe_from_offload_gd = offload_gd.to(sidelobe)
+    to_sidelobe_from_servo = servo_on.to(sidelobe)
+
+    to_offload_gd_from_servo = servo_on.to(offload_gd)
 
     def __init__(
         self,
@@ -67,15 +80,25 @@ class HeimdallrStateMachine(StateMachine):
 
         self.update_rate = update_rate  # seconds
 
+        self.n_best_to_keep = 5
+        self.best_gd_SNR = [
+            [(0, 0) for __ in range(self.n_best_to_keep)] for _ in range(N_BASELINES)
+        ]
+
     def set_threshold(self, value):
         self.server.send_payload(f"set_gd_threshold {value}")
         print(f"Set threshold to {value}")
 
-    def on_enter_searching(self):
-        # Operations to perform when entering 'searching'
-        self.server.send_payload('servo "off"')
-        self.server.send_payload('offload "gd"')
+    def on_enter_searching(self, event):
+        from_state = event.transition.source
         self.set_threshold(self.threshold_lower)
+        self.server.send_payload('offload "gd"')
+        if from_state == self.offload_gd:
+            pass
+        elif from_state == self.sidelobe:
+            pass
+        elif from_state == self.servo_on:
+            self.server.send_payload('servo "off"')
 
         # reset button for history...
 
@@ -101,6 +124,25 @@ class HeimdallrStateMachine(StateMachine):
         self.server.send_payload(f"set_gain {self.servo_start_gain}")
         self.server.send_payload('servo "on"')
 
+    def reset_best_gd_SNR(self):
+        self.best_gd_SNR = [
+            [(0, 0) for __ in range(self.n_best_to_keep)] for _ in range(N_BASELINES)
+        ]
+        print("best_gd_SNR has been reset.")
+
+    @property
+    def M(self):
+        return np.array(
+            [
+                [-1, 1, 0, 0],
+                [-1, 0, 1, 0],
+                [-1, 0, 0, 1],
+                [0, -1, 1, 0],
+                [0, -1, 0, 1],
+                [0, 0, -1, 1],
+            ]
+        )
+
     def poll_transitions(self):
         """
         Poll transition conditions and trigger transitions as needed.
@@ -118,6 +160,18 @@ class HeimdallrStateMachine(StateMachine):
                 else:
                     buf[self._status_idx] = arr
             self._status_idx = (self._status_idx + 1) % self.n_lookback
+
+            # load most recent gd_snr and gd_offload
+            gd_snr = self.status_buffers.get("gd_snr")
+            gd_offload = self.status_buffers.get("gd_offload")
+            opds = self.M @ gd_offload[-1]
+
+            for baseline_idx in range(N_BASELINES):
+                cur_gdSNR = gd_snr[-1, baseline_idx]
+                heapq.heappushpop(
+                    self.best_gd_SNR[baseline_idx],
+                    (cur_gdSNR, opds[baseline_idx]),
+                )
 
         print("Current State:", self.current_state.name)
 

@@ -222,6 +222,8 @@ class BackEndServer:
         self.servers = {}
         for server_name, port in self.server_ports.items():
             server = self.context.socket(zmq.REQ)
+            server.RCVTIMEO = 5000  # timeout in ms
+            server.SNDTIMEO = 5000  # timeout in ms
             try:
                 server.connect(f"tcp://mimir:{port}")
                 self.servers[server_name] = server
