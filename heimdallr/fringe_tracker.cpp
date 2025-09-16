@@ -547,7 +547,7 @@ void fringe_tracker(){
             if ((cnt_since_init == last_gd_jump+1) || (cnt_since_init > last_gd_jump + 3)){
 	        control_u.dm_piston += pid_settings.kp * control_a.pd * config["wave"]["K1"].value_or(2.05)/OPD_PER_DM_UNIT;
             // Make sure that we only move the DM for for the active beams.
-            control_u.dm_piston = control_u.beams_active.asDiagonal() * control_u.dm_piston;
+            control_u.dm_piston = beams_active.asDiagonal() * control_u.dm_piston;
            	// Center the DM piston.
             control_u.dm_piston = control_u.dm_piston - control_u.dm_piston.mean()*Eigen::Vector4d::Ones();
             // Limit it to no more than +/- MAX_DM_PISTON.
