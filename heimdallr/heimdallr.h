@@ -161,6 +161,7 @@ struct Baselines{
         for (unsigned int i = 0; i < MAX_N_GD_BOXCAR; i++) {
             gd_phasor_boxcar[i].setZero();
         }
+        baselines.gd_phasor.setZero();
     }
 };
 

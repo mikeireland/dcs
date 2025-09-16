@@ -306,7 +306,7 @@ int init_cam_configuration() {
   camconf->bf_size = 200;
   camconf->nbreads = 200;
   camconf->nbr_hlf = 100;
-  camconf->nfr_reset = 3;
+  camconf->nfr_reset = 9; //UNUSED: to be made more adaptive !!!
   camconf->width = (uint32_t) pdv_get_width(pdv_p);
   camconf->height = (uint32_t) pdv_get_cam_height(pdv_p) - camconf->nrows_cropped;
   pdv_set_height(pdv_p, camconf->height);

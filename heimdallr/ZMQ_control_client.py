@@ -1,4 +1,6 @@
-''' In ipython, import this then use the python command line. '''
+''' In ipython, import this then use the python command line. 
+
+'''
 import numpy as np
 import matplotlib.pyplot as plt
 import zmq

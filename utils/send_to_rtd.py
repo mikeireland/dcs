@@ -13,6 +13,18 @@ Y = size in pixels (2 bytes ; short in C).
 Pixel data type (1 byte ; char in C).
 Filler (25 bytes ; to have a 64-byte header).
 
+There should also be an option here for the two power spectra from Heimdallr.
+These can be assembled using ZMQ_control_client.py functions.
+From the heimdallr directory...
+
+import ZMQ_control_client as Z
+k1p = Z.get_im('get_im "K1"')
+k2p = Z.get_im('get_im "K2"')
+ps = np.zeros((32,64), dtype=np.float32)
+ps[:,16:32] = np.roll(k1p[:,16],16,axis=0)/k1p[0,0]*16
+ps[:,0:17] = np.roll(k1p[:,::-1],17,axis=0)/k1p[0,0]*16
+ps[:,48:64] = np.roll(k2p[:,16],16,axis=0)/k2p[0,0]*16
+ps[:,32:49] = np.roll(k2p[:,::-1],17,axis=0)/k2p[0,0]*16
 """
 
 import numpy as np
