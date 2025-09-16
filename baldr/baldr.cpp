@@ -2758,7 +2758,7 @@ nlohmann::json update_ctrl_param(nlohmann::json args) {
 
         // allow only vector params
         static const std::unordered_set<std::string> allowed = {
-            "kp","ki","kd","set_point","lower_limits","upper_limits",
+            "kp","ki","kd","set_point","lower_limits","upper_limits","alpha",
             // uncomment if you want to allow state edits via commander:
             // "integrals","prev_errors","output"
         };

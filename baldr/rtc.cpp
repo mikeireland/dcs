@@ -791,6 +791,7 @@ void rtc(){
         std::cout << "expectePixels" << expectedPixels << std::endl; 
         throw std::runtime_error("RTC: shared‑memory geometry mismatch");
     }
+    std::cout << "RTC CTRL TYPE" << rtc_config.state.controller_type << std::endl;
 
 
 

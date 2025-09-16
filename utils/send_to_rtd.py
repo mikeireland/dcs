@@ -61,8 +61,12 @@ else:
     # We should get the size from the shared memory object.
     SHM = shm(shm_name)
     imsize = SHM.get_data().shape
-    size_x = imsize[1]
-    size_y = imsize[0]
+    if (len(imsize)==3):
+      size_x = imsize[2]
+      size_y = imsize[1]
+    else:
+      size_x = imsize[1]
+      size_y = imsize[2]
     # Based on the data type, we set the pixel_data_type variable.
     # The documentation says:
     #The possible values for the pixel data type are:
@@ -142,7 +146,7 @@ while not exiting:
         print("Failed to send message, socket might be closed.")
     
     # Sleep for a bit to avoid flooding the server
-    time.sleep(.1)
+    time.sleep(.3)
 
 # Note: This code is a simplified example and does not include error handling or cleanup.
 # In a real application, you should handle exceptions and ensure that the socket and context are properly closed.
