@@ -733,15 +733,23 @@ def order_labels_by_radius(labels2d):
 # put file1 and file2 as argparser arguments inputs 
 # example usage: python script.py --file1 --file2
 
+# Idea is we compare some statistics between two datasets
+
 import argparse
 from astropy.io import fits
 
+parser = argparse.ArgumentParser(description="Compare two TOML files and summarize base items.")
+parser.add_argument("file1", type=Path, help="First TOML file")
+parser.add_argument("file1", type=Path, help="Second TOML file")
 
-file1, file2 
+args = parser.parse_args()
+
+file1 = args.file1
+file2 = args.file2
 
 data_dict = {
-    "file1" : {"data": "file1.fits", "beam": 1, "mask": "H3"},
-    "file2" : {"data": "file2.fits", "beam": 2, "mask": "H3"},
+    "file1" : {"data": f"{file1}", "beam": 1, "mask": "H3"},
+    "file2" : {"data": f"{file2}", "beam": 2, "mask": "H3"},
 }
 
 
