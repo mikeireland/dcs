@@ -159,6 +159,7 @@ std::string set_offload_mode(std::string mode) {
         control_u.dl_offload.setZero();
     } else if (mode == "gd") {
         offload_mode = OFFLOAD_GD;
+        servo_mode = SERVO_OFF;
     } else if ((mode == "man") || (mode =="manual")) {
         offload_mode = OFFLOAD_MANUAL;
     } else {
