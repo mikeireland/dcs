@@ -642,7 +642,7 @@ void fringe_tracker(){
 
             if ((offload_mode == OFFLOAD_NESTED) && (servo_mode!=SERVO_OFF)){
             	// Add to the delay line offload.
-        	control_u.dl_offload = 0.3*control_u.dm_piston * OPD_PER_DM_UNIT;
+        	    control_u.dl_offload = 0.3*control_u.dm_piston * OPD_PER_DM_UNIT;
             	if ((servo_mode == SERVO_LACOUR) && (cnt_since_init - last_gd_jump > baselines.n_gd_boxcar)){
             	  // Use the group delay to make full fringe jumps, only if there has been at least
             	  // baselines.n_gd_boxcar frames since initialisation or the last jump.
