@@ -498,11 +498,13 @@ class BackEndServer:
                 server.send_string("foreground 0")
                 server.recv_string()
                 time.sleep(0.1)
-                # server.send_string("dls 0,0,0,0")
-                # server.recv_string()
-                # time.sleep(0.1)
-                # slower
-                server.send_string("offload_time 20")
+                server.send_string("offload_time 10")
+                server.recv_string()
+                time.sleep(0.1)
+                server.send_string("set_gd_boxcar 64")
+                server.recv_string()
+                time.sleep(0.1)
+                server.send_string(f"default_gains")
                 server.recv_string()
                 time.sleep(0.1)
                 server.send_string('offload "gd"')
@@ -675,6 +677,11 @@ class BackEndServer:
                 fps = 1 / value
                 self.servers["cam_server"].send_string(f"set_fps {fps:.1f}")
                 logging.info(self.servers["cam_server"].recv().decode("ascii"))
+                # Also send this to heimdallr the integration time.
+                self.servers["hdlr"].send_string(f"set_dit {value}")
+                res = self.servers["hdlr"].recv_string()
+                if res.upper().startswith("ERROR"):
+                    return self.create_response(f"ERROR: hdlr response: {res}")
                 dit = value
             elif name == "DET.NWORESET":
                 try:
