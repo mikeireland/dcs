@@ -222,7 +222,8 @@ struct Settings {
     double gd_gain;
     double kp;
     double search_delta;
-    std::string servo_mode, offload_mode, delay_line_type;
+    std::string delay_line_type;
+    int offload_mode, servo_mode;
 };
 
 

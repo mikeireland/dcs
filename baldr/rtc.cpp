@@ -995,7 +995,7 @@ void rtc(){
         size_t M = rtc_config.telem.signal.size();
 
         // added correct scaling to scale the reference relative to the current subframe flux
-        double flux_scaling = g_subframe_int / rtc_config.reference_pupils.intern_flx_I0 ; // we want to keep the signal in flux units (adu/s) so we multiply by subframe sum here
+        double flux_scaling = g_subframe_int / rtc_config.reference_pupils.intrn_flx_I0 ; // we want to keep the signal in flux units (adu/s) so we multiply by subframe sum here
         sig = (img_dm - flux_scaling * rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
         // add to telemetry! 

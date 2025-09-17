@@ -138,13 +138,15 @@ while not exiting:
     elif shm_name == "ps":
         # Create the power spectrum from heimdallr.
         h_z = ZmqReq("tcp://mimir:6660")
-        k1p = h_z.send_payload('get_im "K1"', is_str=True, decode_ascii=False, image=True)
-        k2p = h_z.send_payload('get_im "K2"', is_str=True, decode_ascii=False, image=True)
+        k1p = h_z.send_payload('get_ps "K1"', is_str=True, decode_ascii=False, image=True)
+        k2p = h_z.send_payload('get_ps "K2"', is_str=True, decode_ascii=False, image=True)
+        k1p = k1p["image_data"]
+        k2p = k2p["image_data"]
         data = np.zeros((32,64), dtype=np.float32)
-        data[:,16:32] = np.roll(k1p[:,16],16,axis=0)/k1p[0,0]*16
-        data[:,0:17] = np.roll(k1p[:,::-1],17,axis=0)/k1p[0,0]*16
-        data[:,48:64] = np.roll(k2p[:,16],16,axis=0)/k2p[0,0]*16
-        data[:,32:49] = np.roll(k2p[:,::-1],17,axis=0)/k2p[0,0]*16    
+        data[:,16:32] = np.roll(k1p[:,:16],16,axis=0)/k1p[0,0]*16
+        data[:,0:17] = np.roll(k1p[::-1,::-1],17,axis=0)/k1p[0,0]*16
+        data[:,48:64] = np.roll(k2p[:,:16],16,axis=0)/k2p[0,0]*16
+        data[:,32:49] = np.roll(k2p[::-1,::-1],17,axis=0)/k2p[0,0]*16    
     else:
         # Get the data from the shared memory object
         if len(imsize)==3:

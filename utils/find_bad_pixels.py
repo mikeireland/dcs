@@ -2,10 +2,11 @@
 # to the Heimdallr server or added to the SHM header. Here we print them out.
 # We also average the 
 import sys
+import os
 from astropy.io import fits
 import numpy as np
 
-fn = sys.argv[0]
+fn = sys.argv[1]
 dloc = fn.rfind('.')
 out_fn = fn[:dloc] + '_orig.fits'
 #fn = '20250916/dark_cred1_CROP_GCDS_200_fps_1000_gain_020.fits'

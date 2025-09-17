@@ -233,7 +233,8 @@ Eigen::VectorXd LeakyIntegratorController::process(const Eigen::VectorXd& measur
 
     const Eigen::VectorXd error = measured - set_point; //set_point - measured;
     // Leaky update: integral = alpha ∘ integral + K ∘ error
-    integral = alpha.cwiseProduct(integral) + K.cwiseProduct(error);
+    integral = alpha.cwiseProduct( (integral) + K.cwiseProduct(error)) ;
+    // new_command = (previous_state + correction) * 0.99
     output = integral;
     prev_error = error;
     return output;
