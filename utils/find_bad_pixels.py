@@ -66,7 +66,7 @@ print(k2xpx)
 print(k2ypx)
     
 os.rename(fn, out_fn)
-dd[:]=ddad99
+dd[:]=ddmed
 fits.writeto(fn, dd)
 
 

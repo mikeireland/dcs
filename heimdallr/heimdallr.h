@@ -306,6 +306,8 @@ public:
 
     // Clean-up and join the FFT thread.
     void stop();
+    
+    void set_bad_pixels(std::vector<int> kx, std::vector<int> ky);
 private:
     // The window function to apply to the image before FFT.
     double *window;

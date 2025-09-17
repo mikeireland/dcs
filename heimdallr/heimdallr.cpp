@@ -540,8 +540,8 @@ std::string set_dit(double dit){
     return "OK";
 }
 
-std::string set_bad_pixels(std::vector<std::vector<int>> k1x, std::vector<std::vector<int>> k1y,
-                          std::vector<std::vector<int>> k2x, std::vector<std::vector<int>> k2y) {
+std::string set_bad_pixels(std::vector<int> k1x, std::vector<int> k1y,
+                          std::vector<int> k2x, std::vector<int> k2y) {
     // Set the bad pixels in the Fourier transform structures
     // Check that the input vectors are valid
     if (k1x.size() != k1y.size() || k2x.size() != k2y.size()) {
@@ -549,17 +549,13 @@ std::string set_bad_pixels(std::vector<std::vector<int>> k1x, std::vector<std::v
     }
     // Check that the pixel coordinates are valid. They have to be smaller than subim_sz
     for (size_t i = 0; i < k1x.size(); i++) {
-        for (size_t j = 0; j < k1x[i].size(); j++) {
-            if (k1x[i][j] < 0 || k1x[i][j] >= K1ft->subim_sz || k1y[i][j] < 0 || k1y[i][j] >= K1ft->subim_sz) {
+        if (k1x[i] < 0 || k1x[i] >= K1ft->subim_sz || k1y[i] < 0 || k1y[i] >= K1ft->subim_sz) {
                 return "ERROR: Bad pixel coordinates out of range for K1";
-            }
         }
     }
     for (size_t i = 0; i < k2x.size(); i++) {
-        for (size_t j = 0; j < k2x[i].size(); j++) {
-            if (k2x[i][j] < 0 || k2x[i][j] >= K2ft->subim_sz || k2y[i][j] < 0 || k2y[i][j] >= K2ft->subim_sz) {
+        if (k2x[i] < 0 || k2x[i] >= K2ft->subim_sz || k2y[i] < 0 || k2y[i] >= K2ft->subim_sz) {
                 return "ERROR: Bad pixel coordinates out of range for K2";
-            }
         }
     }
     // Set the bad pixels
