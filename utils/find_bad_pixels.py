@@ -1,10 +1,13 @@
 # For a given camera readout mode, we will have dark pixels that can be sent directly
 # to the Heimdallr server or added to the SHM header. Here we print them out.
+# We also average the 
 import sys
 from astropy.io import fits
 import numpy as np
 
 fn = sys.argv[0]
+dloc = fn.rfind('.')
+out_fn = fn[:dloc] + '_orig.fits'
 #fn = '20250916/dark_cred1_CROP_GCDS_200_fps_1000_gain_020.fits'
 
 hei_boxes = {"hei_k1": {
@@ -61,5 +64,8 @@ print(k1ypx)
 print(k2xpx)
 print(k2ypx)
     
+os.rename(fn, out_fn)
+dd[:]=ddad99
+fits.writeto(fn, dd)
 
 
