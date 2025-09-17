@@ -539,6 +539,34 @@ std::string set_dit(double dit){
     return "OK";
 }
 
+std::string set_bad_pixels(std::vector<std::vector<int>> k1x, std::vector<std::vector<int>> k1y,
+                          std::vector<std::vector<int>> k2x, std::vector<std::vector<int>> k2y) {
+    // Set the bad pixels in the Fourier transform structures
+    // Check that the input vectors are valid
+    if (k1x.size() != k1y.size() || k2x.size() != k2y.size()) {
+        return "ERROR: Bad pixel input vectors must have the same size";
+    }
+    // Check that the pixel coordinates are valid. They have to be smaller than subim_sz
+    for (size_t i = 0; i < k1x.size(); i++) {
+        for (size_t j = 0; j < k1x[i].size(); j++) {
+            if (k1x[i][j] < 0 || k1x[i][j] >= K1ft->subim_sz || k1y[i][j] < 0 || k1y[i][j] >= K1ft->subim_sz) {
+                return "ERROR: Bad pixel coordinates out of range for K1";
+            }
+        }
+    }
+    for (size_t i = 0; i < k2x.size(); i++) {
+        for (size_t j = 0; j < k2x[i].size(); j++) {
+            if (k2x[i][j] < 0 || k2x[i][j] >= K2ft->subim_sz || k2y[i][j] < 0 || k2y[i][j] >= K2ft->subim_sz) {
+                return "ERROR: Bad pixel coordinates out of range for K2";
+            }
+        }
+    }
+    // Set the bad pixels
+    K1ft->set_bad_pixels(k1x, k1y);
+    K2ft->set_bad_pixels(k2x, k2y);
+    return "OK";
+}
+
 COMMANDER_REGISTER(m)
 {
     using namespace commander::literals;
@@ -587,6 +615,8 @@ COMMANDER_REGISTER(m)
         "dl_move1"_arg=0.0, "dl_move2"_arg=0.0, "dl_move3"_arg=0.0, "dl_move4"_arg=0.0);
     m.def("default_gains", default_gains, "Set the gains to default values");
     m.def("set_dit", set_dit, "Set the DIT in seconds", "dit"_arg=0.001);
+    m.def("set_bad_pixels", set_bad_pixels, "Set the bad pixel map from 4 vectors", 
+        "k1x"_arg=std::vector<int>(), "k1y"_arg=std::vector<int>(), "k2x"_arg=std::vector<int>(), "k2y"_arg=std::vector<int>());
 }
 
 int main(int argc, char* argv[]) {

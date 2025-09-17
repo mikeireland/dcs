@@ -259,6 +259,8 @@ extern Eigen::Vector4d last_offload;
 // ForwardFt class
 class ForwardFt {   
 public:
+    // We need a mutex in case we want to change parameters while the thread is running
+    std::mutex mutex;
     // POSIX semaphore for new frame notification
     sem_t sem_new_frame;
 
@@ -275,6 +277,10 @@ public:
     fftw_complex *ft;
 
     bool bad_frame=false;
+
+    // A vector of bad pixel x indices
+    std::vector<int> bad_pixel_x;
+    std::vector<int> bad_pixel_y;
 
     /// The power spectrum of the image, and the array to boxcar average.
     double *power_spectra[MAX_N_PS_BOXCAR];
