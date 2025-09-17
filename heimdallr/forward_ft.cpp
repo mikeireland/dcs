@@ -84,7 +84,14 @@ ForwardFt::ForwardFt(IMAGE * subarray_in) {
     // Initialise POSIX semaphore for new frame notification
     sem_init(&sem_new_frame, 0, 0);
 }
-    
+
+void ForwardFt::set_bad_pixels(std::vector<std::vector<int>> kx, std::vector<std::vector<int>> ky) {
+    std::lock_guard<std::mutex> lock(mutex);
+    // Just copy the vectors
+    bad_pixel_x = kx;
+    bad_pixel_y = ky;
+}
+
 void ForwardFt::start() {
     thread = std::thread(&ForwardFt::loop, this);
 }
@@ -118,6 +125,28 @@ void ForwardFt::loop() {
 #ifdef PRINT_TIMING
             clock_gettime(CLOCK_REALTIME, &then);
 #endif
+            // Set bad pixels to the median of their neighbours
+            for (unsigned int bp=0; bp<bad_pixel_x.size(); bp++){
+                for (unsigned int bpi=0; bpi<bad_pixel_x[bp].size(); bpi++){
+                    int x = bad_pixel_x[bp][bpi];
+                    int y = bad_pixel_y[bp][bpi];
+                    int count=0;
+                    double sum=0.0;
+                    for (int dx=-1; dx<=1; dx++){
+                        for (int dy=-1; dy<=1; dy++){
+                            if (dx==0 && dy==0) continue;
+                            if (x+dx<0 || x+dx>=(int)subim_sz) continue;
+                            if (y+dy<0 || y+dy>=(int)subim_sz) continue;
+                            sum += (double)(subarray->array.SI32[(x+dx)*subim_sz + (y+dy)]);
+                            count++;
+                        }
+                    }
+                    if (count>0)
+                        subarray->array.SI32[x*subim_sz + y] = (int)(sum/(double)count);
+                }
+            }
+            // Now copy the image to the subimage array, applying the window function
+            // NB the dark is subtracted elsewhere.
             for (unsigned int ii=0; ii<subim_sz; ii++) {
                 for (unsigned int jj=0; jj<subim_sz; jj++) {
                     ii_shift = (ii + subim_sz/2) % subim_sz;
