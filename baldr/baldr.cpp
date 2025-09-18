@@ -2463,6 +2463,53 @@ void N0_update() {
     std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
 }
 
+void dark_update() {
+    pauseRTC();  // stop the loop while we replace the dark
+
+    Eigen::VectorXd mean_img;  // average of RAW frames (ADU)
+    bool ok = false;
+
+    {
+        // Limit the mutex lifetime to this scope block
+        std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+        // Compute temporal mean of the RAW telemetry buffer
+        if (!temporal_mean(rtc_config.telem.img, mean_img)) {
+            std::cerr << "[dark_update] Error: telemetry img buffer is empty or inconsistent.\n";
+        } else if (mean_img.size() <= 0) {
+            std::cerr << "[dark_update] Error: mean_img has zero length.\n";
+        } else {
+            // Optional sanity: check against the current image_length if you track it
+            // if (mean_img.size() != rtc_config.image_length) { ...warn... }
+
+            rtc_config.reduction.dark = mean_img;  // store per-pixel dark in ADU
+            ok = true;
+        }
+    } // mutex released here
+
+    if (ok) {
+        std::cerr << "[dark_update] reduction.dark updated from telem.img (P="
+                  << mean_img.size() << ")\n";
+    }
+
+    resumeRTC();  // always resume, even if it failed
+}
+// void dark_update() {
+//    
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     Eigen::VectorXd mean_img;  // average of RAW frames (ADU)
+//     if (!temporal_mean(rtc_config.telem.img, mean_img)) {
+//         std::cerr << "[dark_update] Error: telemetry img buffer is empty or inconsistent.\n";
+//         return;
+//     }
+
+//     rtc_config.reduction.dark = mean_img;  // store per-pixel dark in ADU
+//     std::cerr << "[dark_update] reduction.dark updated from telem.img (P=" 
+//               << mean_img.size() << ")\n";
+//     
+// }
+
 // void N0_update() {
 
 //     // !!! only updates rtc_config.N0_dm_runtime !!! 
@@ -5594,6 +5641,9 @@ COMMANDER_REGISTER(m)
     m.def("N0_update", N0_update,
             "Update N0 reference: averages img telemetry, corrects exterior pixels, and projects to DM space");
             
+    m.def("dark_update", dark_update,
+      "Average the telemetry RAW img buffer and store to reduction.dark (ADU).");
+
     m.def("set_telem_save_format", set_telem_save_format,
           "Update the telemetry output format. Acceptable values: \"json\", \"fits\".\n"
           "Usage: set_telem_format [\"json\"] or set_telem_format [\"fits\"]",
