@@ -932,7 +932,7 @@ void rtc(){
 
             // Nothing else this iteration: do NOT normalize, do NOT project, do NOT update telem/ctrl
             // (If you need to record a 'dropped' mark in telemetry, do it here.)
-            continue;  // <-- EARLY EXIT from this RTC loop iteration
+            //continue;  // <-- EARLY EXIT from this RTC loop iteration
         }
 
         // // Guard against pathological cases (negative/zero/NaN/Inf)
