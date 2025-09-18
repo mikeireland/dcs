@@ -710,13 +710,8 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.reference_pupils.I0 = convertTomlArrayToEigenMatrix(*ctrl_tbl["I0"].as_array(),rtc.reference_pupils.I0,"I0");
                 rtc.reference_pupils.N0 = convertTomlArrayToEigenMatrix(*ctrl_tbl["N0"].as_array(),rtc.reference_pupils.N0,"NO");
                 rtc.reference_pupils.norm_pupil = convertTomlArrayToEigenMatrix(*ctrl_tbl["norm_pupil"].as_array(),rtc.reference_pupils.norm_pupil,"norm_pupil");
-<<<<<<< HEAD
                 rtc.reference_pupils.intrn_flx_I0 = ctrl_tbl["intrn_flx_I0"].value_or(1.0);
                 std::cout << "rtc.reference_pupils.intrn_flx_I0 " << rtc.reference_pupils.intrn_flx_I0 << std::endl;
-=======
-                rtc.reference_pupils.intern_flx_I0 = ctrl_tbl["intrn_flx_I0"].value_or(1.0);
-                std::cout << "rtc.reference_pupils.intern_flx_I0 " << rtc.reference_pupils.intern_flx_I0 << std::endl;
->>>>>>> eb209413918aa55b2bca67a7d6bbea6941c07284
             }catch(const std::exception& ex) {
                 std::cerr << "Error processing rtc.reference_pupils " << ex.what() << std::endl;
                 std::exit(1);
