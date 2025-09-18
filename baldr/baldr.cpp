@@ -2408,6 +2408,7 @@ static bool temporal_mean(const Container& buf, Eigen::VectorXd& mean_out) {
     mean_out.array() /= static_cast<double>(n);
     return true;
 }
+
 void I0_update() {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
@@ -2422,6 +2423,79 @@ void I0_update() {
 
     // Intentionally do NOT touch rtc_config.reference_pupils.I0 here to avoid mixing spaces.
     std::cout << "[I0_update] Updated I0_dm_runtime (len=" << mean_dm.size() << ").\n";
+}
+
+// Lucky I0 update: use only the top-Nth percentile frames by dm_rms_est_1
+// percentile: e.g. 90.0 means "use frames >= 90th percentile of dm_rms_est_1"
+// min_samples: require at least this many frames in the telemetry buffers to proceed
+void I0_update_lucky(double percentile = 90.0, int min_samples = 10) {
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+    // Shorthand refs
+    const auto& buf_dm  = rtc_config.telem.img_dm;        // container of Eigen::VectorXd
+    const auto& buf_snr = rtc_config.telem.dm_rms_est_1;  // container of double (or 1D Eigen)
+
+    const size_t K_dm  = buf_dm.size();
+    const size_t K_snr = buf_snr.size();
+    const size_t K     = std::min(K_dm, K_snr);
+
+    if (K < static_cast<size_t>(min_samples)) {
+        std::cerr << "[I0_update_lucky] Not enough telemetry: have " << K
+                  << " frames, need >= " << min_samples << ".\n";
+        return;
+    }
+
+    // Copy metrics to a plain vector<double> so we can nth_element
+    std::vector<double> metrics;
+    metrics.reserve(K);
+    for (size_t i = 0; i < K; ++i) {
+        // If buf_snr is Eigen::VectorXd per-frame (1 element), adapt here; otherwise assume double.
+        metrics.push_back(static_cast<double>(buf_snr[i]));
+    }
+
+    // Clamp percentile to a reasonable range (avoid empty selections)
+    double p = std::max(50.0, std::min(99.9, percentile));  // default 90.0 is fine
+    const size_t nth_idx = static_cast<size_t>(std::ceil((p / 100.0) * (K - 1)));
+
+    // Find threshold at the p-th percentile
+    std::vector<double> work = metrics;  // nth_element works in-place
+    std::nth_element(work.begin(), work.begin() + nth_idx, work.end());
+    const double thresh = work[nth_idx];
+
+    // Accumulate selected frames
+    Eigen::VectorXd acc;
+    Eigen::Index P = 0;
+    size_t kept = 0;
+
+    for (size_t i = 0; i < K; ++i) {
+        if (metrics[i] >= thresh) {
+            const Eigen::VectorXd& f = buf_dm[i];
+            if (P == 0) {
+                P = f.size();
+                if (P == 0) {
+                    std::cerr << "[I0_update_lucky] First selected frame is empty.\n";
+                    return;
+                }
+                acc = Eigen::VectorXd::Zero(P);
+            }
+            if (f.size() != P) {
+                // Skip inconsistent frames silently; they shouldn't occur
+                continue;
+            }
+            acc += f;
+            ++kept;
+        }
+    }
+
+    if (kept == 0) {
+        std::cerr << "[I0_update_lucky] No frames met the " << p << "th percentile (thresh="
+                  << thresh << ").\n";
+        return;
+    }
+
+    rtc_config.I0_dm_runtime = acc / static_cast<double>(kept);
+    std::cout << "[I0_update_lucky] Updated I0_dm_runtime using top " << p
+              << "th percentile (" << kept << "/" << K << " frames).\n";
 }
 
 void N0_update() {
@@ -5637,10 +5711,15 @@ COMMANDER_REGISTER(m)
 
     m.def("I0_update", I0_update,
             "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
-            
+
+    m.def("I0_update_lucky", [](){
+        I0_update_lucky(95.0, 10);  // default: top 10% frames, require >=10 frames available
+    });
+
     m.def("N0_update", N0_update,
             "Update N0 reference: averages img telemetry, corrects exterior pixels, and projects to DM space");
             
+
     m.def("dark_update", dark_update,
       "Average the telemetry RAW img buffer and store to reduction.dark (ADU).");
 
