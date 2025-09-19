@@ -431,61 +431,61 @@ int write_telemetry_to_fits(const bdr_telem &telemetry, const std::string &filen
         throw std::runtime_error("Error writing SNR column");
 
     
-    //// ================== Append reference snapshots as image HDUs ==================
-    // {
-    //     // Snapshot the current references under the telemetry/config mutex
-    //     Eigen::VectorXd I0, N0, DARK;
-    //     {
-    //         std::lock_guard<std::mutex> lk(telemetry_mutex);
-    //         I0   = rtc_config.I0_dm_runtime;          // DM-space reference (double)
-    //         N0   = rtc_config.N0_dm_runtime;          // DM-space normalization ref
-    //         DARK = rtc_config.reduction.dark;         // per-pixel dark (raw ADU)
-    //     }
+    // ================== Append reference snapshots as image HDUs ==================
+    {
+        // Snapshot the current references under the telemetry/config mutex
+        Eigen::VectorXd I0, N0, DARK;
+        {
+            std::lock_guard<std::mutex> lk(telemetry_mutex);
+            I0   = rtc_config.I0_dm_runtime;          // DM-space reference (double)
+            N0   = rtc_config.N0_dm_runtime;          // DM-space normalization ref
+            DARK = rtc_config.reduction.dark;         // per-pixel dark (raw ADU)
+        }
 
-    //     auto write_vector_image_ext = [&](const char* extname,
-    //                                     const Eigen::VectorXd& v) -> void {
-    //         if (v.size() <= 0) return;
+        auto write_vector_image_ext = [&](const char* extname,
+                                        const Eigen::VectorXd& v) -> void {
+            if (v.size() <= 0) return;
 
-    //         // Create a 1D DOUBLE image [len]
-    //         int status_local = 0;
-    //         long naxes[1]    = { static_cast<long>(v.size()) };
+            // Create a 1D DOUBLE image [len]
+            int status_local = 0;
+            long naxes[1]    = { static_cast<long>(v.size()) };
 
-    //         if (fits_create_img(fptr, DOUBLE_IMG, 1, naxes, &status_local) || status_local) {
-    //             fits_report_error(stderr, status_local);
-    //             throw std::runtime_error(std::string("Error creating image HDU for ") + extname);
-    //         }
+            if (fits_create_img(fptr, DOUBLE_IMG, 1, naxes, &status_local) || status_local) {
+                fits_report_error(stderr, status_local);
+                throw std::runtime_error(std::string("Error creating image HDU for ") + extname);
+            }
 
-    //         // Label the extension
-    //         if (fits_update_key(fptr, TSTRING, const_cast<char*>("EXTNAME"),
-    //                             (void*)extname, nullptr, &status_local) || status_local) {
-    //             fits_report_error(stderr, status_local);
-    //             throw std::runtime_error(std::string("Error setting EXTNAME for ") + extname);
-    //         }
+            // Label the extension
+            if (fits_update_key(fptr, TSTRING, const_cast<char*>("EXTNAME"),
+                                (void*)extname, nullptr, &status_local) || status_local) {
+                fits_report_error(stderr, status_local);
+                throw std::runtime_error(std::string("Error setting EXTNAME for ") + extname);
+            }
 
-    //         // Optional: annotate length
-    //         long vlen = static_cast<long>(v.size());
-    //         if (fits_update_key(fptr, TLONG, const_cast<char*>("VLEN"),
-    //                             &vlen, const_cast<char*>("vector length"), &status_local) || status_local) {
-    //             fits_report_error(stderr, status_local);
-    //             throw std::runtime_error(std::string("Error writing VLEN for ") + extname);
-    //         }
+            // Optional: annotate length
+            long vlen = static_cast<long>(v.size());
+            if (fits_update_key(fptr, TLONG, const_cast<char*>("VLEN"),
+                                &vlen, const_cast<char*>("vector length"), &status_local) || status_local) {
+                fits_report_error(stderr, status_local);
+                throw std::runtime_error(std::string("Error writing VLEN for ") + extname);
+            }
 
-    //         // Write data
-    //         std::vector<double> buf(v.data(), v.data() + v.size());
-    //         long firstelem = 1;
-    //         long nelem     = vlen;
-    //         if (fits_write_img(fptr, TDOUBLE, firstelem, nelem, buf.data(), &status_local) || status_local) {
-    //             fits_report_error(stderr, status_local);
-    //             throw std::runtime_error(std::string("Error writing data for ") + extname);
-    //         }
-    //     };
+            // Write data
+            std::vector<double> buf(v.data(), v.data() + v.size());
+            long firstelem = 1;
+            long nelem     = vlen;
+            if (fits_write_img(fptr, TDOUBLE, firstelem, nelem, buf.data(), &status_local) || status_local) {
+                fits_report_error(stderr, status_local);
+                throw std::runtime_error(std::string("Error writing data for ") + extname);
+            }
+        };
 
-    //     // I0 and N0 are DM-space (length ~140 or 144). DARK is raw-pixel (len_img).
-    //     write_vector_image_ext("I0_DM_REF",   I0);
-    //     write_vector_image_ext("N0_DM_REF",   N0);
-    //     write_vector_image_ext("DARK_REF",    DARK);
-    // }
-    // // ============================================================================
+        // I0 and N0 are DM-space (length ~140 or 144). DARK is raw-pixel (len_img).
+        write_vector_image_ext("I0_DM_REF",   I0);
+        write_vector_image_ext("N0_DM_REF",   N0);
+        write_vector_image_ext("DARK_REF",    DARK);
+    }
+    // ============================================================================
 
 
     
