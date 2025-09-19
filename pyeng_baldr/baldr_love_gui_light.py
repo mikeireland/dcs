@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""
-Light‑weight Baldr live GUI
----------------------------
-Goals vs original:
-- Keep the ZMQ command‑line interface intact.
-- Default update rate ≈ 2 Hz (editable).
-- 1D plots: only "strehl proxy" (rmse_est) and e_LO (RMS). Keep 10 s rolling history (time‑based).
-- 2D views: only latest frame for "signal", "e_HO", "img_dm", "c_LO", "c_HO" (no history).
-- Use pyqtgraph PlotWidget + ImageItem (faster than ImageView), avoid autoLevels per frame.
-- Avoid unnecessary copies; cast arrays to float32; prune histories aggressively.
-
-Run:
-  python baldr_live_gui_light.py --beams 1,2
-
-"""
-
 import sys, time, json, zmq
 from collections import deque
 import numpy as np
@@ -22,7 +6,7 @@ import argparse
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QComboBox, QTextEdit, QLineEdit, QLabel, QDoubleSpinBox,
+    QComboBox, QTextEdit, QLineEdit, QLabel, QDoubleSpinBox, QCheckBox
 )
 from PyQt5.QtCore import QTimer
 import pyqtgraph as pg
@@ -128,9 +112,22 @@ class Panel2D(QWidget):
         super().__init__()
         self.client = client
 
+        # top controls
         top = QHBoxLayout()
         self.field = QComboBox(); self.field.addItems(self.CHOICES)
-        top.addWidget(QLabel("2D field:")); top.addWidget(self.field); top.addStretch(1)
+        top.addWidget(QLabel("2D field:")); top.addWidget(self.field)
+
+        # Color-level controls
+        self.auto_levels = QCheckBox("auto"); self.auto_levels.setChecked(True)
+        self.min_box = QDoubleSpinBox(); self.min_box.setRange(-1e9, 1e9); self.min_box.setDecimals(6)
+        self.max_box = QDoubleSpinBox(); self.max_box.setRange(-1e9, 1e9); self.max_box.setDecimals(6)
+        self.apply_levels_btn = QPushButton("apply")
+        self.apply_levels_btn.clicked.connect(self._apply_levels_clicked)
+        top.addStretch(1)
+        top.addWidget(QLabel("levels:")); top.addWidget(self.auto_levels)
+        top.addWidget(QLabel("min"));   top.addWidget(self.min_box)
+        top.addWidget(QLabel("max"));   top.addWidget(self.max_box)
+        top.addWidget(self.apply_levels_btn)
 
         self.view = pg.PlotWidget()
         self.view.setAspectLocked(True)
@@ -141,6 +138,10 @@ class Panel2D(QWidget):
         self.setLayout(lay)
 
         self._levels = None
+
+    def _apply_levels_clicked(self):
+        self._levels = (float(self.min_box.value()), float(self.max_box.value()))
+        self.auto_levels.setChecked(False)
 
     def tick(self):
         name = self.field.currentText()
@@ -160,7 +161,8 @@ class Panel2D(QWidget):
                 img = vec.reshape(12, 12)
             else:
                 return
-        if self._levels is None:
+
+        if self.auto_levels.isChecked() or self._levels is None:
             finite = np.isfinite(img)
             if not np.any(finite):
                 return
@@ -168,6 +170,11 @@ class Panel2D(QWidget):
             if vmax <= vmin:
                 vmax = vmin + 1.0
             self._levels = (vmin, vmax)
+            # mirror into widgets (without disabling auto)
+            self.min_box.blockSignals(True); self.max_box.blockSignals(True)
+            self.min_box.setValue(self._levels[0]); self.max_box.setValue(self._levels[1])
+            self.min_box.blockSignals(False); self.max_box.blockSignals(False)
+
         self.imgitem.setImage(img.T, autoLevels=False, levels=self._levels)
 
 # ---------- 1D Panel ----------
@@ -190,11 +197,23 @@ class Panel1D(QWidget):
         top.addStretch(1)
         top.addWidget(QLabel("Hz:")); top.addWidget(self.rate)
 
+        # y-lims controls
+        yctl = QHBoxLayout()
+        self.yauto = QCheckBox("auto y"); self.yauto.setChecked(True)
+        self.ymin = QDoubleSpinBox(); self.ymin.setRange(-1e9, 1e9); self.ymin.setDecimals(6)
+        self.ymax = QDoubleSpinBox(); self.ymax.setRange(-1e9, 1e9); self.ymax.setDecimals(6)
+        self.apply_y = QPushButton("apply y")
+        self.apply_y.clicked.connect(self._apply_y_clicked)
+        self.reset_btn = QPushButton("reset")
+        self.reset_btn.clicked.connect(self.reset_history)
+        yctl.addWidget(self.yauto); yctl.addWidget(QLabel("ymin")); yctl.addWidget(self.ymin)
+        yctl.addWidget(QLabel("ymax")); yctl.addWidget(self.ymax); yctl.addWidget(self.apply_y); yctl.addWidget(self.reset_btn)
+
         self.plot = pg.PlotWidget()
         self.plot.showGrid(x=True, y=True, alpha=0.3)
         self.curve = self.plot.plot()
 
-        lay = QVBoxLayout(); lay.addLayout(top); lay.addWidget(self.plot)
+        lay = QVBoxLayout(); lay.addLayout(top); lay.addLayout(yctl); lay.addWidget(self.plot)
         self.setLayout(lay)
 
         self.t_hist = deque()
@@ -236,6 +255,15 @@ class Panel1D(QWidget):
             return float(np.sqrt(np.nanmean(arr * arr)))
         return np.nan
 
+    def reset_history(self):
+        self.t_hist.clear(); self.v_hist.clear()
+        self.plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    def _apply_y_clicked(self):
+        self.plot.disableAutoRange(axis=pg.ViewBox.YAxis)
+        self.plot.setYRange(float(self.ymin.value()), float(self.ymax.value()))
+        self.yauto.setChecked(False)
+
     def tick(self):
         now = time.time()
         if self.field.currentText() == "strehl proxy":
@@ -251,6 +279,13 @@ class Panel1D(QWidget):
             xs = [t - t0 for t in self.t_hist]
             ys = list(self.v_hist)
             self.curve.setData(xs, ys)
+            if self.yauto.isChecked():
+                self.plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+                vb = self.plot.getViewBox()
+                yr = vb.viewRange()[1]
+                self.ymin.blockSignals(True); self.ymax.blockSignals(True)
+                self.ymin.setValue(yr[0]); self.ymax.setValue(yr[1])
+                self.ymin.blockSignals(False); self.ymax.blockSignals(False)
 
 # ---------- CLI widget ----------
 class CommandLine(QWidget):
@@ -294,6 +329,30 @@ class MainWindow(QWidget):
         header = QLabel(f"Beam {beam} — {addr}")
         header.setStyleSheet("font-weight:600; padding:2px 4px;")
         left.addWidget(header)
+
+        # Servo controls
+        servo_row = QHBoxLayout()
+        btn_lo_open = QPushButton("Open LO"); btn_lo_close = QPushButton("Close LO")
+        btn_ho_open = QPushButton("Open HO"); btn_ho_close = QPushButton("Close HO")
+        servo_row.addWidget(btn_lo_open); servo_row.addWidget(btn_lo_close)
+        servo_row.addWidget(btn_ho_open); servo_row.addWidget(btn_ho_close)
+        left.addLayout(servo_row)
+
+        # Wire up (adjust strings if your server uses different verbs)
+        btn_lo_open.clicked.connect(lambda: self.cli_append(self.client.send_raw("open_LO")))
+        btn_lo_close.clicked.connect(lambda: self.cli_append(self.client.send_raw("close_LO")))
+        btn_ho_open.clicked.connect(lambda: self.cli_append(self.client.send_raw("open_HO")))
+        btn_ho_close.clicked.connect(lambda: self.cli_append(self.client.send_raw("close_HO")))
+
+        # Update LO Ki gain
+        ki_row = QHBoxLayout()
+        ki_row.addWidget(QLabel("LO ki:"))
+        self.ki_edit = QLineEdit(); self.ki_edit.setPlaceholderText("e.g. 0.05")
+        ki_apply = QPushButton("update LO Ki gain")
+        ki_row.addWidget(self.ki_edit); ki_row.addWidget(ki_apply)
+        left.addLayout(ki_row)
+        ki_apply.clicked.connect(self._apply_ki)
+
         self.cli = CommandLine(self.client)
         left.addWidget(self.cli)
 
@@ -306,12 +365,26 @@ class MainWindow(QWidget):
         root = QHBoxLayout(); root.addLayout(left, 1); root.addLayout(right, 2)
         self.setLayout(root)
 
+        # 2D update timer (~2 Hz)
         self.timer2d = QTimer(self)
         self.timer2d.timeout.connect(self.panel2d.tick)
         self.timer2d.start(500)
 
-# ---------- Run ----------
+    def cli_append(self, reply: str):
+        if hasattr(self, 'cli') and hasattr(self.cli, 'history'):
+            self.cli.history.append(str(reply))
 
+    def _apply_ki(self):
+        try:
+            val = float(self.ki_edit.text())
+        except ValueError:
+            self.cli_append("[input error] LO ki must be a number")
+            return
+        payload = ["LO", "ki", "all", val]
+        reply = self.client.send_raw(f"update_ctrl_param {json.dumps(payload)}")
+        self.cli_append(reply)
+
+# ---------- Run ----------
 def run_app():
     app = QApplication(sys.argv)
     windows = []
@@ -323,7 +396,6 @@ def run_app():
         w.move(x0 + k * dx, y0 + k * dy)
         w.show()
         windows.append(w)
-
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
