@@ -2664,10 +2664,11 @@ void I0_update_lucky(double percentile = 90.0, int min_samples = 10) {
 //               << "th percentile (" << kept << "/" << K << " frames).\n";
 // }
 
+// try deal better with edges!!!! 
 void N0_update() {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>, already per-frame normalized
+    Eigen::VectorXd mean_dm;
     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
         std::cerr << "[N0_update] Error: cannot form temporal mean of img_dm.\n";
         return;
@@ -2686,7 +2687,8 @@ void N0_update() {
 
     // Inner-pupil mean on the temporally averaged DM vector
     constexpr double THRESH = 0.7;
-    const Eigen::ArrayXd mask = (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
+    const Eigen::ArrayXd mask =
+        (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
     const double n_inside = mask.sum();
     if (n_inside <= 0.0) {
         std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask.\n";
@@ -2694,14 +2696,51 @@ void N0_update() {
     }
     const double inner_mean = (mean_dm.array() * mask).sum() / n_inside;
 
-    // Replace exterior pixels with inner_mean
-    mean_dm = (mask * mean_dm.array() + (1.0 - mask) * inner_mean).matrix();
+    // Set N0_dm_runtime to a constant vector of size P filled with inner_mean
+    rtc_config.N0_dm_runtime = Eigen::VectorXd::Constant(P, inner_mean);
 
-    // Runtime projected clear-pupil reference (same normalization space)
-    rtc_config.N0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
-
-    std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
+    std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P
+              << ", value=" << inner_mean << ").\n";
 }
+
+// void N0_update() {
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>, already per-frame normalized
+//     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+//         std::cerr << "[N0_update] Error: cannot form temporal mean of img_dm.\n";
+//         return;
+//     }
+
+//     const Eigen::Index P = mean_dm.size();
+//     if (P == 0) {
+//         std::cerr << "[N0_update] Error: img_dm mean has zero length.\n";
+//         return;
+//     }
+//     if (rtc_config.filters.inner_pupil_filt_dm.size() != P) {
+//         std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch ("
+//                   << rtc_config.filters.inner_pupil_filt_dm.size() << " vs " << P << ").\n";
+//         return;
+//     }
+
+//     // Inner-pupil mean on the temporally averaged DM vector
+//     constexpr double THRESH = 0.7;
+//     const Eigen::ArrayXd mask = (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
+//     const double n_inside = mask.sum();
+//     if (n_inside <= 0.0) {
+//         std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask.\n";
+//         return;
+//     }
+//     const double inner_mean = (mean_dm.array() * mask).sum() / n_inside;
+
+//     // Replace exterior pixels with inner_mean
+//     mean_dm = (mask * mean_dm.array() + (1.0 - mask) * inner_mean).matrix();
+
+//     // Runtime projected clear-pupil reference (same normalization space)
+//     rtc_config.N0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
+
+//     std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
+// }
 
 void dark_update() {
     pauseRTC();  // stop the loop while we replace the dark
