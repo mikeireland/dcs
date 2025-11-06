@@ -729,7 +729,8 @@ class BackEndServer:
                 # Handle other parameters as needed
                 logging.warning(f"Unknown parameter: {name} = {value}")
                 return self.create_response(f"ERROR: Unknown parameter '{name}'")
-            time.sleep(0.1)
+            logging.info("snoozing for a moment to try to fix gain reset issue")
+            time.sleep(0.5)
 
         # If both NDIT and DIT are non-zero, we compute the total integration time.
         logging.info(f"Recv: DIT={dit}, NDIT={ndit} (total itime={dit*ndit})")

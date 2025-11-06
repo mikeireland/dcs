@@ -889,25 +889,34 @@ void rtc(){
 
         int32_t *raw = subarray.array.SI32;
         Eigen::Map<const Eigen::Array<int32_t, Eigen::Dynamic, 1>> rawArr(raw, totalPixels);
-        Eigen::VectorXd img = rawArr.cast<double>();
+        Eigen::VectorXd img = rawArr.cast<double>(); // img IS ALWAYS RAW , AND WHAT WE KEEP IN TELEMETRY. WE NEED THIS TO MAKE DARKS ETC
+
+        // images have 1000 aduoffset. We could subtract this here.. but better to have a live background estimate
+        //img -= 1000.0; // quick and dirty background subtraction - should be dark + bias
+        // 18/9/2025
+        if (rtc_config.reduction.dark.size() != img.size()) {
+            rtc_config.reduction.dark = Eigen::VectorXd::Constant(img.size(), 1000.0);
+        }
+        Eigen::VectorXd img_red = img - rtc_config.reduction.dark;
 
 
         // --- Bad-pixel repair -> subframe flux -> normalization ---
         // If we have bad pixels listed, set those indices to the frame median BEFORE summing.
         // post TTonsky
         if (rtc_config.pixels.bad_pixels.size() > 0) {
-            const double med = median_of(img);
+            const double med = median_of(img_red);
             const auto& bp = rtc_config.pixels.bad_pixels; // Eigen::Matrix<int32_t, Dyn, 1>
             for (Eigen::Index k = 0; k < bp.size(); ++k) {
                 const int32_t idx = bp(k);
                 if (idx >= 0 && idx < img.size()) {
-                    img(idx) = med;
+                    img_red(idx) = med;
                 }
             }
         }
 
         // Compute subframe flux (sum of intensities) and store it globally.
-        g_subframe_int = img.sum();
+        //g_subframe_int = img.sum();
+        g_subframe_int = img_red.sum();   // was img.sum()
 
         // ===== New: skip this RTC iteration if flux is invalid =====
         bool bad_flux_frame = (!std::isfinite(g_subframe_int) || g_subframe_int <= 0.0);
@@ -923,7 +932,7 @@ void rtc(){
 
             // Nothing else this iteration: do NOT normalize, do NOT project, do NOT update telem/ctrl
             // (If you need to record a 'dropped' mark in telemetry, do it here.)
-            continue;  // <-- EARLY EXIT from this RTC loop iteration
+            //continue;  // <-- EARLY EXIT from this RTC loop iteration
         }
 
         // // Guard against pathological cases (negative/zero/NaN/Inf)
@@ -962,21 +971,31 @@ void rtc(){
         // model of residual rms in DM units using secondary obstruction 
         //dm_rms_est_1 = img[ rtc_config.pixels.exterior_pixels ].template cast<double>().mean(); //rtc_config.m_s_runtime * ( img[  rtc_config.sec_idx ] - rtc_config.reduction.dark[ rtc_config.sec_idx ] - rtc_config.reduction.bias[ rtc_config.sec_idx ] ) +  rtc_config.b_s_runtime;
         // new using average of all exterior pixels.
+        // double sum_ext_px = 0.0;
+        // for (Eigen::Index k = 0; k < rtc_config.pixels.exterior_pixels.size(); ++k) {
+        //     sum_ext_px += img(rtc_config.pixels.exterior_pixels(k));
+        // }
+        // double dm_rms_est_1 = (rtc_config.pixels.exterior_pixels.size() > 0)
+        //     ? sum_ext_px / static_cast<double>(rtc_config.pixels.exterior_pixels.size())
+        //     : std::numeric_limits<double>::quiet_NaN();
+
+        // 18/9/2025 - do it on reduced image (dark subtracted)
         double sum_ext_px = 0.0;
         for (Eigen::Index k = 0; k < rtc_config.pixels.exterior_pixels.size(); ++k) {
-            sum_ext_px += img(rtc_config.pixels.exterior_pixels(k));
+            sum_ext_px += img_red(rtc_config.pixels.exterior_pixels(k));  // was img(...)
         }
         double dm_rms_est_1 = (rtc_config.pixels.exterior_pixels.size() > 0)
             ? sum_ext_px / static_cast<double>(rtc_config.pixels.exterior_pixels.size())
             : std::numeric_limits<double>::quiet_NaN();
-            
 
         //std::cout << dm_rms_est_1 << std::endl;
 
         // go to dm space subtracting dark (ADU/s) and bias (ADU) there
         // should actually read the current fps rather then get it from config file
-	// HERE WE DO OUR NORMALIZATION 
-        img_dm = (rtc_config.matrices.I2A *  img) / g_subframe_int ; //-  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
+	    // HERE WE DO OUR NORMALIZATION 
+        //img_dm = (rtc_config.matrices.I2A *  img) / g_subframe_int ; //-  rtc_config.dark_dm_runtime - rtc_config.reduction.bias_dm; //1 / fps * rtc_config.reduction.dark_dm;
+
+        img_dm = (rtc_config.matrices.I2A * img_red) / g_subframe_int; //18/9/2025
 
         //sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
@@ -995,8 +1014,9 @@ void rtc(){
         size_t M = rtc_config.telem.signal.size();
 
         // added correct scaling to scale the reference relative to the current subframe flux
-        double flux_scaling = g_subframe_int / rtc_config.reference_pupils.intern_flx_I0 ; // we want to keep the signal in flux units (adu/s) so we multiply by subframe sum here
-        sig = (img_dm - flux_scaling * rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
+        double flux_scaling = g_subframe_int / rtc_config.reference_pupils.intrn_flx_I0 ; // we want to keep the signal in flux units (adu/s) so we multiply by subframe sum here
+	// remove flux scaling mult.
+        sig = (img_dm - rtc_config.I0_dm_runtime).cwiseQuotient(rtc_config.N0_dm_runtime); //(img_dm - rtc_config.reference_pupils.I0_dm).cwiseQuotient(rtc_config.reference_pupils.norm_pupil_dm);
         
         // add to telemetry! 
         rtc_config.telem.signal.push_back(sig);       // 'sig' is Eigen::VectorXd
@@ -1487,7 +1507,7 @@ void rtc(){
             rtc_config.telem.HO_servo_mode.push_back(servo_mode_HO);          // 'c_HO' is Eigen::VectorXd
 
             //std::cout << "img size: " << img.size() << std::endl;
-            rtc_config.telem.img.push_back(img);          // 'img' is Eigen::VectorXd
+            rtc_config.telem.img.push_back(img);     // we do the RAW img here, not the reduced dark subtracted image     // 'img' is Eigen::VectorXd
             //std::cout << "img_dm size: " << img_dm.size() << std::endl;
             rtc_config.telem.img_dm.push_back(img_dm);          // 'img' is Eigen::VectorXd
             //std::cout << ", sig size: " << sig.size() << std::endl;

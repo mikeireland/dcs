@@ -222,7 +222,8 @@ struct Settings {
     double gd_gain;
     double kp;
     double search_delta;
-    std::string servo_mode, offload_mode, delay_line_type;
+    std::string delay_line_type;
+    int offload_mode, servo_mode;
 };
 
 
@@ -305,6 +306,8 @@ public:
 
     // Clean-up and join the FFT thread.
     void stop();
+    
+    void set_bad_pixels(std::vector<int> kx, std::vector<int> ky);
 private:
     // The window function to apply to the image before FFT.
     double *window;

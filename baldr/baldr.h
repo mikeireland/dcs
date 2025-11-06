@@ -305,7 +305,7 @@ struct bdr_refence_pupils {
     Eigen::VectorXd norm_pupil; // Filtered reference intensity unitless //(ADU/s/gain)
     Eigen::VectorXd norm_pupil_dm; // Interpolated to DM pixels unitless //(ADU/s/gain)
     Eigen::VectorXd I0_dm;      // Interpolated to DM pixels unitless //(ADU/s/gain)
-    double intern_flx_I0; // internal source flux in ADU - used for Strehl estimation
+    double intrn_flx_I0; // internal source flux in ADU - used for Strehl estimation
     
     // update all dm reference pupils
     void project_to_dm( Eigen::MatrixXd I2A ){
@@ -539,7 +539,7 @@ struct bdr_telem {
         "snr"
     };
     // Constructor that sets a fixed capacity for each ring buffer.
-    bdr_telem(size_t capacity = 5000) // 10000 capacity is about 150 MB in the buffer
+    bdr_telem(size_t capacity = 10) // 10000 capacity is about 150 MB in the buffer
       : counter(0),
         timestamp(capacity),
         LO_servo_mode(capacity),

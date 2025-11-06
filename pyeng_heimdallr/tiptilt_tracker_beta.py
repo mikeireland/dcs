@@ -50,7 +50,7 @@ im_offset = 1000
 chn = 1  # DM test channel
 dmids = np.array([1, 2, 4]) # controling everything relative to Beam 3
 ndm = 3
-a0 = 0.15
+a0 = 0.08
 
 dms, sems = [], []
 
@@ -160,7 +160,7 @@ class App(QtWidgets.QMainWindow):
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(2000)
+        self.timer.start(200)
 
     # ------------------------------------------------------
     def refresh(self):
@@ -181,14 +181,14 @@ class MyMainWidget(QWidget):
         # ---------------------------------------------------------------------
         #                              top menu
         # ---------------------------------------------------------------------
-        self.zmq_context = zmq.Context()
-        self.socket = self.zmq_context.socket(zmq.REQ)
-        self.socket.setsockopt(zmq.RCVTIMEO, 10000)
-        self.socket.connect("tcp://192.168.100.2:5555")
+        # self.zmq_context = zmq.Context()
+        # self.socket = self.zmq_context.socket(zmq.REQ)
+        # self.socket.setsockopt(zmq.RCVTIMEO, 10000)
+        # self.socket.connect("tcp://192.168.100.2:5555")
 
-        self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
-                            'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
-        self.ndevs = len(self.dms_devlist)
+        # self.dms_devlist = ['HTTI1', 'HTTI2', 'HTTI3', 'HTTI4',
+        #                     'HTTP1', 'HTTP2', 'HTTP3', 'HTTP4']
+        # self.ndevs = len(self.dms_devlist)
 
         self.actionOpen = QtWidgets.QAction(
             QtGui.QIcon(":/images/open.png"), "&Open...", self)
@@ -221,8 +221,11 @@ class MyMainWidget(QWidget):
 
         # response matrices in tip-tilt
         tmp = np.loadtxt("tt_calibration.txt")
-        self.rx = tmp[:3,:]
-        self.ry = tmp[:3,:]
+        self.rx = np.round(tmp[:3,:], 1)
+        self.ry = np.round(tmp[:3,:], 1)
+
+        self.rx[np.abs(self.rx) < 20] = 0.0
+        self.ry[np.abs(self.ry) < 20] = 0.0
         
         # # control matrices
         self.cx = np.linalg.pinv(self.rx.T)
@@ -347,24 +350,25 @@ class MyMainWidget(QWidget):
 
         for ii in range(ndm):
             print(f"calibrating response of DM #{dmids[ii]}:")
-            phi = []
+            tmp = []
             # send DM tip command
             dms[ii].set_data(a0 * tt_modes[0])
             time.sleep(1)
             for kk in range(nav):
-                phi.append(self.fourier_signal())
-            phi = np.mean(np.array(phi), axis=0)
+                tmp.append(self.fourier_signal())
+            phi = np.mean(np.array(tmp), axis=0)
+            # phi_err = np.std(np.array(tmp), axis=0)
             btx, bty = self.get_slopes(phi)
 
             rx[ii,:] = (btx - btx0) / a0
 
-            phi = []
+            tmp = []
             # send DM tilt command
             dms[ii].set_data(a0 * tt_modes[1])
             time.sleep(1)
             for kk in range(nav):
-                phi.append(self.fourier_signal())
-            phi = np.mean(np.array(phi), axis=0)
+                tmp.append(self.fourier_signal())
+            phi = np.mean(np.array(tmp), axis=0)
             btx, bty = self.get_slopes(phi)
             ry[ii,:] = (bty - bty0) / a0
 
@@ -476,22 +480,22 @@ class MyMainWidget(QWidget):
         ty = hdlr0.PINV.dot(bty)
 
         # ---------------------------------------
-        # print("\rbtx = " + np.array2string(
-        #     btx, formatter={'float_kind':lambda x: "%+5.2f" % x}) + " ty = " +
-        #       np.array2string(bty, formatter={'float_kind':lambda x: "%+5.2f" % x}),
-        #       end='', flush=True)
-        offset = np.pi / 2
-        colors = 255 * cmap((phi_f + offset) / (2*offset))
-        self.scatter_plot.setData(x=uu, y=vv, pen=colors, brush=colors, size=8)
+        print("\rbtx = " + np.array2string(
+            tx, formatter={'float_kind':lambda x: "%+5.2f" % x}) + " ty = " +
+              np.array2string(ty, formatter={'float_kind':lambda x: "%+5.2f" % x}),
+              end='', flush=True)
+        # offset = np.pi / 2
+        # colors = 255 * cmap((phi_f + offset) / (2*offset))
+        # self.scatter_plot.setData(x=uu, y=vv, pen=colors, brush=colors, size=8)
         # pass
 
     # =========================================================================
     def trigger_calibration(self):
         print("start calibration")
-        # self.calib_thread = GenericThread(
-        #     self.calibrate_response_dm, a0=a0)
         self.calib_thread = GenericThread(
-            self.calibrate_response_mds, step_sz=10)
+            self.calibrate_response_dm, a0=a0)
+        # self.calib_thread = GenericThread(
+        #     self.calibrate_response_mds, step_sz=10)
         self.calib_thread.start()
 
     # =========================================================================
@@ -508,12 +512,14 @@ class MyMainWidget(QWidget):
 
     # =========================================================================
     def trigger_iteration(self):
-        self.iteration_mds()
+        self.iteration_dm()
+        # self.iteration_mds()
 
     # =========================================================================
     def cloop(self):
-        while keepgoing:
-            self.iteration_mds()
+        while self.keepgoing:
+            self.iteration_dm()
+            # self.iteration_mds()
             time.sleep(0.05)
 
     # =========================================================================
@@ -539,7 +545,7 @@ class MyMainWidget(QWidget):
         corrx = self.cx.dot(btx)
         corry = self.cy.dot(bty)
 
-        gain = 0.5
+        gain = 0.01
 
         for ii in range(ndm):
             correc = (corrx[ii] * tt_modes[0] + corry[ii] * tt_modes[1])

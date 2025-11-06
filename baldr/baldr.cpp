@@ -710,8 +710,8 @@ bdr_rtc_config readBDRConfig(const toml::table& config, const std::string& beamK
                 rtc.reference_pupils.I0 = convertTomlArrayToEigenMatrix(*ctrl_tbl["I0"].as_array(),rtc.reference_pupils.I0,"I0");
                 rtc.reference_pupils.N0 = convertTomlArrayToEigenMatrix(*ctrl_tbl["N0"].as_array(),rtc.reference_pupils.N0,"NO");
                 rtc.reference_pupils.norm_pupil = convertTomlArrayToEigenMatrix(*ctrl_tbl["norm_pupil"].as_array(),rtc.reference_pupils.norm_pupil,"norm_pupil");
-                rtc.reference_pupils.intern_flx_I0 = ctrl_tbl["intern_flx_I0"].value_or(1.0);
-                std::cout << "rtc.reference_pupils.intern_flx_I0 " << rtc.reference_pupils.intern_flx_I0 << std::endl;
+                rtc.reference_pupils.intrn_flx_I0 = ctrl_tbl["intrn_flx_I0"].value_or(1.0);
+                std::cout << "rtc.reference_pupils.intrn_flx_I0 " << rtc.reference_pupils.intrn_flx_I0 << std::endl;
             }catch(const std::exception& ex) {
                 std::cerr << "Error processing rtc.reference_pupils " << ex.what() << std::endl;
                 std::exit(1);
@@ -2408,26 +2408,267 @@ static bool temporal_mean(const Container& buf, Eigen::VectorXd& mean_out) {
     mean_out.array() /= static_cast<double>(n);
     return true;
 }
+
+// original errounous version that doesnt consistently update intrn_flx_I0!!
+// void I0_update() {
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     Eigen::VectorXd mean_dm;   // <rtc_config.telem.img_dm>, already per-frame normalized in the loop
+//     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+//         std::cerr << "[I0_update] Error: cannot form temporal mean of img_dm.\n";
+//         return;
+//     }
+
+//     // Runtime projected reference in *same* normalization as img_dm
+//     rtc_config.I0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
+
+//     // I also need to update the rtc_config.reference_pupils.intrn_flx_I0 here to keep it consistent with the new I0_dm_runtime
+    
+//     // Psuedo code I need to finish here
+//     raw_imgs = temporal_mean(rtc_config.telem.img, imgs_tmp);
+//     ref_imgs_red = raw_imgs - rtc_config.reduction.dark; // subtract dark from subframe (size 32x32)
+//     rtc_config.reference_pupils.intrn_flx_I0 = ref_imgs_red.sum(); // sum of the mean image in the telem buffer
+//     // end pseudo code
+
+//     // Intentionally do NOT touch rtc_config.reference_pupils.I0 here to avoid mixing spaces.
+//     std::cout << "[I0_update] Updated I0_dm_runtime (len=" << mean_dm.size() << ").\n";
+// }
+
 void I0_update() {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-    Eigen::VectorXd mean_dm;   // <rtc_config.telem.img_dm>, already per-frame normalized in the loop
+    // I0 in DM-space from telemetry (already normalized in rtc loop)
+    Eigen::VectorXd mean_dm;   // average of telem.img_dm
     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
         std::cerr << "[I0_update] Error: cannot form temporal mean of img_dm.\n";
         return;
     }
+    rtc_config.I0_dm_runtime = mean_dm;  // same normalization as runtime img_dm
 
-    // Runtime projected reference in *same* normalization as img_dm
-    rtc_config.I0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
+    // Update intrn_flx_I0 to keep RTC scaling consistent with current I0
+    //    This must mirror rtc.cpp: img_red = img - reduction.dark; g_subframe_int = img_red.sum()
+    Eigen::VectorXd mean_img;  // average of RAW telem.img (per-frame ADU)
+    if (!temporal_mean(rtc_config.telem.img, mean_img)) {
+        std::cerr << "[I0_update] Warning: cannot form temporal mean of RAW img; "
+                     "leaving intrn_flx_I0 unchanged.\n";
+    } else {
+        // Ensure dark is initialized & sized; default to flat 1000 ADU if needed
+        if (rtc_config.reduction.dark.size() != mean_img.size()) {
+            rtc_config.reduction.dark = Eigen::VectorXd::Constant(mean_img.size(), 1000.0);
+        }
 
-    // Intentionally do NOT touch rtc_config.reference_pupils.I0 here to avoid mixing spaces.
-    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << mean_dm.size() << ").\n";
+        const Eigen::VectorXd mean_img_red = mean_img - rtc_config.reduction.dark;
+        const double sub_int = mean_img_red.sum();  // ADU per frame, matches g_subframe_int units
+
+        if (std::isfinite(sub_int) && sub_int > 0.0) {
+            rtc_config.reference_pupils.intrn_flx_I0 = sub_int;
+        } else {
+            std::cerr << "[I0_update] Warning: invalid intrn_flx_I0 candidate (" << sub_int
+                      << "); leaving previous value.\n";
+        }
+    }
+
+    std::cout << "[I0_update] Updated I0_dm_runtime (len=" << mean_dm.size()
+              << "); intrn_flx_I0=" << rtc_config.reference_pupils.intrn_flx_I0 << "\n";
 }
 
+
+
+
+// Lucky I0 update: use only the top-Nth percentile frames by dm_rms_est_1
+// percentile: e.g. 90.0 means "use frames >= 90th percentile of dm_rms_est_1"
+// min_samples: require at least this many frames in the telemetry buffers to proceed
+
+void I0_update_lucky(double percentile = 90.0, int min_samples = 10) {
+    std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+    // Shorthand refs (assumed index-aligned)
+    const auto& buf_dm   = rtc_config.telem.img_dm;        // vector<Eigen::VectorXd>
+    const auto& buf_snr  = rtc_config.telem.rmse_est;      // vector<double> (or similar)
+    const auto& buf_img  = rtc_config.telem.img;           // vector<Eigen::VectorXd> (RAW ADU)
+
+    const size_t K_dm  = buf_dm.size();
+    const size_t K_snr = buf_snr.size();
+    const size_t K_img = buf_img.size();
+    const size_t K     = std::min(K_dm, K_snr);
+
+    if (K < static_cast<size_t>(min_samples)) {
+        std::cerr << "[I0_update_lucky] Not enough telemetry: have " << K
+                  << " frames (min " << min_samples << ").\n";
+        return;
+    }
+
+    // Build metrics array
+    std::vector<double> metrics;
+    metrics.reserve(K);
+    for (size_t i = 0; i < K; ++i) {
+        metrics.push_back(static_cast<double>(buf_snr[i]));
+    }
+
+    // Clamp percentile (keep enough frames)
+    double p = std::max(50.0, std::min(99.9, percentile));
+    const size_t nth_idx = static_cast<size_t>(std::ceil((p / 100.0) * (K - 1)));
+
+    // Threshold at p-th percentile
+    std::vector<double> work = metrics;
+    std::nth_element(work.begin(), work.begin() + nth_idx, work.end());
+    const double thresh = work[nth_idx];
+
+    // Accumulators for selected frames
+    Eigen::VectorXd acc_dm;
+    Eigen::VectorXd acc_img;   // RAW frames (only if K_img is aligned/available)
+    Eigen::Index P_dm = 0, P_img = 0;
+    size_t kept = 0;
+
+    const bool can_update_intrn = (K_img >= K);  // require at least K raw frames for aligned indexing
+
+    for (size_t i = 0; i < K; ++i) {
+        if (metrics[i] >= thresh) {
+            // DM-space frame
+            const Eigen::VectorXd& fdm = buf_dm[i];
+            if (P_dm == 0) {
+                P_dm = fdm.size();
+                if (P_dm == 0) {
+                    std::cerr << "[I0_update_lucky] First selected img_dm frame is empty.\n";
+                    return;
+                }
+                acc_dm = Eigen::VectorXd::Zero(P_dm);
+            }
+            if (fdm.size() == P_dm) acc_dm += fdm;  // skip mismatched silently
+
+            // RAW frame (optional, for intrn update)
+            if (can_update_intrn) {
+                const Eigen::VectorXd& fimg = buf_img[i];
+                if (P_img == 0) {
+                    P_img = fimg.size();
+                    if (P_img == 0) {
+                        std::cerr << "[I0_update_lucky] First selected RAW img frame is empty.\n";
+                        // we can still proceed for I0_dm; just disable intrn update
+                    } else {
+                        acc_img = Eigen::VectorXd::Zero(P_img);
+                    }
+                }
+                if (P_img > 0 && fimg.size() == P_img) acc_img += fimg;
+            }
+
+            ++kept;
+        }
+    }
+
+    if (kept == 0 || P_dm == 0) {
+        std::cerr << "[I0_update_lucky] No valid frames met the " << p
+                  << "th percentile (thresh=" << thresh << ").\n";
+        return;
+    }
+
+    // Update I0_dm_runtime from selected frames
+    rtc_config.I0_dm_runtime = acc_dm / static_cast<double>(kept);
+
+    // Update intrn_flx_I0 from selected RAW frames, if available
+    if (P_img > 0 && acc_img.size() == P_img) {
+        Eigen::VectorXd mean_img = acc_img / static_cast<double>(kept);
+
+        // Ensure dark vector is sized; lazy default to 1000 ADU if needed
+        if (rtc_config.reduction.dark.size() != mean_img.size()) {
+            std::cerr << "[I0_update_lucky] Warning: reduction.dark is not same size as image. Using lazy 1000 ADU dark value (the default adu offset) " << std::endl;
+            rtc_config.reduction.dark = Eigen::VectorXd::Constant(mean_img.size(), 1000.0);
+        }
+
+        const Eigen::VectorXd mean_img_red = mean_img - rtc_config.reduction.dark;
+        const double sub_int = mean_img_red.sum();  // matches g_subframe_int units (ADU per frame)
+
+        if (std::isfinite(sub_int) && sub_int > 0.0) {
+            rtc_config.reference_pupils.intrn_flx_I0 = sub_int;
+        } else {
+            std::cerr << "[I0_update_lucky] Warning: invalid intrn_flx_I0 candidate (" << sub_int
+                      << "); leaving previous value.\n";
+        }
+    } else {
+        std::cerr << "[I0_update_lucky] Note: RAW img telemetry unavailable/mismatched; "
+                     "I0_dm_runtime updated, intrn_flx_I0 left unchanged.\n";
+    }
+
+    std::cout << "[I0_update_lucky] Updated I0_dm_runtime using top " << p
+              << "th percentile (" << kept << "/" << K << " frames). "
+              << "intrn_flx_I0=" << rtc_config.reference_pupils.intrn_flx_I0 << "\n";
+}
+
+// // errornous version that doesnt consistently update intrn_flx_I0!!
+// void I0_update_lucky(double percentile = 90.0, int min_samples = 10) {
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     // Shorthand refs
+//     const auto& buf_dm  = rtc_config.telem.img_dm;        // container of Eigen::VectorXd
+//     const auto& buf_snr = rtc_config.telem.dm_rms_est_1;  // container of double (or 1D Eigen)
+
+//     const size_t K_dm  = buf_dm.size();
+//     const size_t K_snr = buf_snr.size();
+//     const size_t K     = std::min(K_dm, K_snr);
+
+//     if (K < static_cast<size_t>(min_samples)) {
+//         std::cerr << "[I0_update_lucky] Not enough telemetry: have " << K
+//                   << " frames, need >= " << min_samples << ".\n";
+//         return;
+//     }
+
+//     // Copy metrics to a plain vector<double> so we can nth_element
+//     std::vector<double> metrics;
+//     metrics.reserve(K);
+//     for (size_t i = 0; i < K; ++i) {
+//         // If buf_snr is Eigen::VectorXd per-frame (1 element), adapt here; otherwise assume double.
+//         metrics.push_back(static_cast<double>(buf_snr[i]));
+//     }
+
+//     // Clamp percentile to a reasonable range (avoid empty selections)
+//     double p = std::max(50.0, std::min(99.9, percentile));  // default 90.0 is fine
+//     const size_t nth_idx = static_cast<size_t>(std::ceil((p / 100.0) * (K - 1)));
+
+//     // Find threshold at the p-th percentile
+//     std::vector<double> work = metrics;  // nth_element works in-place
+//     std::nth_element(work.begin(), work.begin() + nth_idx, work.end());
+//     const double thresh = work[nth_idx];
+
+//     // Accumulate selected frames
+//     Eigen::VectorXd acc;
+//     Eigen::Index P = 0;
+//     size_t kept = 0;
+
+//     for (size_t i = 0; i < K; ++i) {
+//         if (metrics[i] >= thresh) {
+//             const Eigen::VectorXd& f = buf_dm[i];
+//             if (P == 0) {
+//                 P = f.size();
+//                 if (P == 0) {
+//                     std::cerr << "[I0_update_lucky] First selected frame is empty.\n";
+//                     return;
+//                 }
+//                 acc = Eigen::VectorXd::Zero(P);
+//             }
+//             if (f.size() != P) {
+//                 // Skip inconsistent frames silently; they shouldn't occur
+//                 continue;
+//             }
+//             acc += f;
+//             ++kept;
+//         }
+//     }
+
+//     if (kept == 0) {
+//         std::cerr << "[I0_update_lucky] No frames met the " << p << "th percentile (thresh="
+//                   << thresh << ").\n";
+//         return;
+//     }
+
+//     rtc_config.I0_dm_runtime = acc / static_cast<double>(kept);
+//     std::cout << "[I0_update_lucky] Updated I0_dm_runtime using top " << p
+//               << "th percentile (" << kept << "/" << K << " frames).\n";
+// }
+
+// try deal better with edges!!!! 
 void N0_update() {
     std::lock_guard<std::mutex> lock(telemetry_mutex);
 
-    Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>, already per-frame normalized
+    Eigen::VectorXd mean_dm;
     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
         std::cerr << "[N0_update] Error: cannot form temporal mean of img_dm.\n";
         return;
@@ -2446,7 +2687,8 @@ void N0_update() {
 
     // Inner-pupil mean on the temporally averaged DM vector
     constexpr double THRESH = 0.7;
-    const Eigen::ArrayXd mask = (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
+    const Eigen::ArrayXd mask =
+        (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
     const double n_inside = mask.sum();
     if (n_inside <= 0.0) {
         std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask.\n";
@@ -2454,14 +2696,98 @@ void N0_update() {
     }
     const double inner_mean = (mean_dm.array() * mask).sum() / n_inside;
 
-    // Replace exterior pixels with inner_mean
-    mean_dm = (mask * mean_dm.array() + (1.0 - mask) * inner_mean).matrix();
+    // Set N0_dm_runtime to a constant vector of size P filled with inner_mean
+    rtc_config.N0_dm_runtime = Eigen::VectorXd::Constant(P, inner_mean);
 
-    // Runtime projected clear-pupil reference (same normalization space)
-    rtc_config.N0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
-
-    std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
+    std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P
+              << ", value=" << inner_mean << ").\n";
 }
+
+// void N0_update() {
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     Eigen::VectorXd mean_dm;    // <rtc_config.telem.img_dm>, already per-frame normalized
+//     if (!temporal_mean(rtc_config.telem.img_dm, mean_dm)) {
+//         std::cerr << "[N0_update] Error: cannot form temporal mean of img_dm.\n";
+//         return;
+//     }
+
+//     const Eigen::Index P = mean_dm.size();
+//     if (P == 0) {
+//         std::cerr << "[N0_update] Error: img_dm mean has zero length.\n";
+//         return;
+//     }
+//     if (rtc_config.filters.inner_pupil_filt_dm.size() != P) {
+//         std::cerr << "[N0_update] Error: inner_pupil_filt_dm size mismatch ("
+//                   << rtc_config.filters.inner_pupil_filt_dm.size() << " vs " << P << ").\n";
+//         return;
+//     }
+
+//     // Inner-pupil mean on the temporally averaged DM vector
+//     constexpr double THRESH = 0.7;
+//     const Eigen::ArrayXd mask = (rtc_config.filters.inner_pupil_filt_dm.array() > THRESH).cast<double>();
+//     const double n_inside = mask.sum();
+//     if (n_inside <= 0.0) {
+//         std::cerr << "[N0_update] Error: no valid pixels inside inner pupil mask.\n";
+//         return;
+//     }
+//     const double inner_mean = (mean_dm.array() * mask).sum() / n_inside;
+
+//     // Replace exterior pixels with inner_mean
+//     mean_dm = (mask * mean_dm.array() + (1.0 - mask) * inner_mean).matrix();
+
+//     // Runtime projected clear-pupil reference (same normalization space)
+//     rtc_config.N0_dm_runtime = mean_dm; // in the rtc we already normalize the img_dm by the sum(subframe) so no need to repeat here ! we just update with the average telem.img_dm image  
+
+//     std::cout << "[N0_update] Updated N0_dm_runtime (len=" << P << ").\n";
+// }
+
+void dark_update() {
+    pauseRTC();  // stop the loop while we replace the dark
+
+    Eigen::VectorXd mean_img;  // average of RAW frames (ADU)
+    bool ok = false;
+
+    {
+        // Limit the mutex lifetime to this scope block
+        std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+        // Compute temporal mean of the RAW telemetry buffer
+        if (!temporal_mean(rtc_config.telem.img, mean_img)) {
+            std::cerr << "[dark_update] Error: telemetry img buffer is empty or inconsistent.\n";
+        } else if (mean_img.size() <= 0) {
+            std::cerr << "[dark_update] Error: mean_img has zero length.\n";
+        } else {
+            // Optional sanity: check against the current image_length if you track it
+            // if (mean_img.size() != rtc_config.image_length) { ...warn... }
+
+            rtc_config.reduction.dark = mean_img;  // store per-pixel dark in ADU
+            ok = true;
+        }
+    } // mutex released here
+
+    if (ok) {
+        std::cerr << "[dark_update] reduction.dark updated from telem.img (P="
+                  << mean_img.size() << ")\n";
+    }
+
+    resumeRTC();  // always resume, even if it failed
+}
+// void dark_update() {
+//    
+//     std::lock_guard<std::mutex> lock(telemetry_mutex);
+
+//     Eigen::VectorXd mean_img;  // average of RAW frames (ADU)
+//     if (!temporal_mean(rtc_config.telem.img, mean_img)) {
+//         std::cerr << "[dark_update] Error: telemetry img buffer is empty or inconsistent.\n";
+//         return;
+//     }
+
+//     rtc_config.reduction.dark = mean_img;  // store per-pixel dark in ADU
+//     std::cerr << "[dark_update] reduction.dark updated from telem.img (P=" 
+//               << mean_img.size() << ")\n";
+//     
+// }
 
 // void N0_update() {
 
@@ -5590,10 +5916,18 @@ COMMANDER_REGISTER(m)
 
     m.def("I0_update", I0_update,
             "Update I0_dm_runtime by averaging the telemetry img_dm buffer (no arguments required).");
-            
+
+    m.def("I0_update_lucky", [](){
+        I0_update_lucky(95.0, 10);  // default: top 10% frames, require >=10 frames available
+    });
+
     m.def("N0_update", N0_update,
             "Update N0 reference: averages img telemetry, corrects exterior pixels, and projects to DM space");
             
+
+    m.def("dark_update", dark_update,
+      "Average the telemetry RAW img buffer and store to reduction.dark (ADU).");
+
     m.def("set_telem_save_format", set_telem_save_format,
           "Update the telemetry output format. Acceptable values: \"json\", \"fits\".\n"
           "Usage: set_telem_format [\"json\"] or set_telem_format [\"fits\"]",

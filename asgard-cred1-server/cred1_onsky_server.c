@@ -123,7 +123,7 @@ void trigger_save_dark();
 void set_split_mode(int _mode);
 void set_dark_sub_mode(int _mode);
 void set_crop_mode(int _mode);
-void set_ndmr_mode(int _mode);
+void set_ndmr_mode(unsigned int _mode);
 void show_cam_conf();
 
 /* =========================================================================
@@ -256,12 +256,16 @@ void optimize_cropping_parameters() {
 
   for (int ii = 0; ii < nroi; ii++) {
     if (strncmp(ROI[ii].name, "baldr", strlen("baldr")) == 0)
-      if (ROI[ii].y0 <= camconf->bal_min_row)
-	camconf->bal_min_row = ROI[ii].y0;
+      if (ROI[ii].y0 <= camconf->bal_min_row){
+		camconf->bal_min_row = ROI[ii].y0;
+		printf("Found a lower baldr row %d\n", camconf->bal_min_row);
+	}
     
     if (strncmp(ROI[ii].name, "hei_", strlen("hei_")) == 0)
-      if (ROI[ii].y0 + ROI[ii].xsz >= camconf->hei_max_row)
-	camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
+      if (ROI[ii].y0 + ROI[ii].xsz >= camconf->hei_max_row){
+		camconf->hei_max_row = ROI[ii].y0 + ROI[ii].xsz;
+		printf("Found a higher hei row %d\n", camconf->hei_max_row);
+	}
   }
   camconf->bal_min_row -= 2;
   camconf->hei_max_row += 16;
@@ -1143,7 +1147,7 @@ void set_crop_mode(int _mode) {
  * not fully functional yet and available for preliminary debugging.
  * implementation of time signatures for the different channels is missing
  * ------------------------------------------------------------------------- */
-void set_ndmr_mode(int _mode) {
+void set_ndmr_mode(unsigned int _mode) {
   char cmd_cli[CMDSIZE];  // holder for commands sent to the camera CLI
   char out_cli[OUTSIZE];  // holder for CLI responses
 
