@@ -137,7 +137,7 @@ void ForwardFt::loop() {
                             if (dx==0 && dy==0) continue;
                             if (x+dx<0 || x+dx>=(int)subim_sz) continue;
                             if (y+dy<0 || y+dy>=(int)subim_sz) continue;
-                            sum += (double)(subarray->array.SI32[(x+dx)*subim_sz + (y+dy)]);
+                            sum += (double)(subarray->array.SI32[(y+dy)*subim_sz + (x+dx)]);
                             count++;
                         }
                     }
